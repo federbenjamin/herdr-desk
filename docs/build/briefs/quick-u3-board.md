@@ -7,7 +7,7 @@ Unit 3 of the plan `~/.claude/plans/task-runner-plugin.md` (v3, approved 2026-10
 
 Branch contract: commits on `quick/u3-board` (builders: on the harness-named branch of your own tree). No push and no PR from a builder; the session pushes at SHIP.
 
-Operator instruction for the whole plan (2026-10-03): "Make sure there is very thorough hand testing and code coverage". It is why this brief carries nine hand-test claims, seven test slices, and a coverage floor for the new package.
+Operator instruction for the whole plan (2026-10-03): "Make sure there is very thorough hand testing and code coverage". It is why this brief carries ten hand-test claims, seven test slices, and a coverage floor for the new package.
 
 ## Spec
 
@@ -143,7 +143,7 @@ Rejected:
 6. **The last note under a row costs one `tasks.get` per `started` or `blocked` task on each refresh.** The refresh runs every 3 seconds and after each write; the calls of one refresh run at the same time, and a `Tick` starts no refresh while one is unanswered. Assumption: a desk holds few such tasks at once. Rejected: a new list endpoint that carries last notes, which would change the server while U2 changes it.
 7. **Opening a ref.** An `http` or `https` URL with a host goes to the OS opener (`open` on darwin, `xdg-open` elsewhere). Anything else is a file path: made absolute against the task's project, it must exist, and it opens in the herdr plugin `herdr-file-viewer` when herdr lists that plugin (`herdr plugin pane open --plugin herdr-file-viewer --entrypoint file-viewer --env HERDR_FILE_VIEWER_OPEN=<abs path> --focus`; source: that plugin's CHANGELOG, "Launch open target … `HERDR_FILE_VIEWER_OPEN`"). With no viewer the status line says so. A ref is text an agent wrote: it reaches an argv only as one whole argument that starts with `http://`, `https://`, or `/`, never through a shell.
 8. **`n` on a `blocked` task asks for the answer.** It opens an `answer:` line. Enter with text appends a note on the task, then sets `ready`. Enter on an empty line sets `ready` alone (the answer is already in a note). This is the plan's "writes a `note`, never a replace".
-9. **The hand test drives a real terminal with tmux**, on a private server (`tmux -L`), so no pane opens on anyone's screen. One claim uses the running herdr; it links a temp copy of the manifest under the id `desk-e2e`, so it never touches an installed `desk` plugin, its binary, or its home.
+9. **The hand test drives a real terminal with tmux**, on a private server (`tmux -L`), so no pane opens on anyone's screen. One claim (H25) uses the running herdr; it links a temp copy of the manifest under the id `desk-e2e`, so it never touches an installed `desk` plugin, its binary, or its home. Operator ruling, 2026-10-04: H25 runs once, in the run's last hand-test run, and opens its panes without taking focus; H26 proves the logic of `scripts/open-pane.sh` against a stub `herdr` on every run.
 10. **`internal/board` joins the 90% packages in `scripts/coverage.sh`.**
 
 ## Rules every part follows
@@ -511,13 +511,15 @@ Keys: `↓` `j` and `↑` scroll. `n s b r x a f k P ? q ctrl+c` do what they do
 - scripts/e2e/h23-capture-popup.sh
 - scripts/e2e/h24-runner-keys.sh
 - scripts/e2e/h25-herdr-panes.sh
+- scripts/e2e/h26-open-pane-stub.sh
+- scripts/open-pane.sh — finds the board pane by a field a rename leaves alone; herdr 0.9.1's busy-popup answer
 - README.md — the board, its keys, the capture popup
 - profiles/claude-code/skills/desk/SKILL.md — an agent never opens the board
 - .claude/build/notes.md — the builders and hand-tester sections
 
 ## Why the parts wait
 
-P2 calls `board.Run`, `board.Capture`, `board.Sections`, `board.Age`, and `model.ParseCapture`, and its scripts drive the real board. It cannot compile or run before P1 is merged. P1 is planned near `PART_MAX_LINES` and is not cut: the two pages, the prompts, and the layouts are one state machine over one `State`, and a cut would freeze an interface between two halves that nothing else needs.
+P2 calls `board.Run`, `board.Capture`, `board.Sections`, `board.Age`, and `model.ParseCapture`, and its scripts drive the real board. It cannot compile or run before P1 is merged. P1 is planned near `PART_MAX_LINES` and is not cut: the two pages, the prompts, and the layouts are one state machine over one `State`, and a cut would freeze an interface between two halves that nothing else needs. P3 was added after P2 reported (operator ruling, 2026-10-04) and edits a script P2 wrote, so it waits for P2.
 
 ## Parts
 
@@ -535,6 +537,13 @@ P2 calls `board.Run`, `board.Capture`, `board.Sections`, `board.Age`, and `model
   - deliverables: 21, 22, 23, 24, 25, 26, 27, 28
   - after: P1
   - tests: W7
+- P3 · open-pane.sh survives a renamed pane, and the stub-herdr proof of it
+  - model: opus — `## Design` 9 names its files: how the herdr claims run
+  - files: scripts/open-pane.sh, scripts/e2e/h26-open-pane-stub.sh, scripts/e2e/h25-herdr-panes.sh
+  - test files: none
+  - deliverables: 29, 30
+  - after: P2
+  - tests: none
 
 ## Test slices
 
@@ -569,7 +578,7 @@ P2 calls `board.Run`, `board.Capture`, `board.Sections`, `board.Age`, and `model
 
 ## How the hand test runs
 
-Each claim is one script under `scripts/e2e/`, as in U1. H17 to H24 run the board in a detached tmux session on a private server (`tmux -L`), with temp XDG directories, send keys with `tmux send-keys`, read the screen with `tmux capture-pane -p`, and read the store with `desk list --json` and `desk show --json`. Nothing opens on a screen. H24 seeds one run row with `sqlite3` while the daemon is stopped, and puts a stub `herdr` in `HERDR_BIN_PATH` that logs its argv. H25 uses the running herdr: it builds `desk` into a temp folder, copies `herdr-plugin.toml` and `scripts/` there with the id changed to `desk-e2e`, the `[[build]]` and `[[startup]]` blocks removed, and each pane command wrapped as `env XDG_…=<temp> <temp>/desk …`, links that copy, invokes its actions, and on exit closes the panes it opened and unlinks `desk-e2e`. It never touches an installed `desk` plugin, binary, or home. Each script prints `ok: <fact>` as it proves a fact, and `E2E PASS` last.
+Each claim is one script under `scripts/e2e/`, as in U1. H17 to H24 run the board in a detached tmux session on a private server (`tmux -L`), with temp XDG directories, send keys with `tmux send-keys`, read the screen with `tmux capture-pane -p`, and read the store with `desk list --json` and `desk show --json`. Nothing opens on a screen. H24 seeds one run row with `sqlite3` while the daemon is stopped, and puts a stub `herdr` in `HERDR_BIN_PATH` that logs its argv. H25 uses the running herdr: it builds `desk` into a temp folder, copies `herdr-plugin.toml` and `scripts/` there with the id changed to `desk-e2e`, the `[[build]]` and `[[startup]]` blocks removed, and each pane command wrapped as `env XDG_…=<temp> <temp>/desk …`, links that copy, invokes its actions, and on exit closes the panes it opened and unlinks `desk-e2e`. It never touches an installed `desk` plugin, binary, or home. H25 opens every pane without taking focus (its temp copy of `open-pane.sh` opens with `--no-focus`); only the second `open-board`, the one that must focus the board, moves focus, and the script gives focus back. herdr gives a popup no pane id to type into or read, so H25 opens the manifest's capture entrypoint as a split pane, which runs the same `desk capture`; its `ok:` lines still say popup. H25 runs once, in the run's last hand-test run. H26 runs `scripts/open-pane.sh` itself against a stub `herdr` on `HERDR_BIN_PATH` that logs its argv and answers `pane list` from fixtures recorded from a real herdr; it opens nothing on any screen. Each script prints `ok: <fact>` as it proves a fact, and `E2E PASS` last.
 
 ## Hand test
 
@@ -600,6 +609,9 @@ Each claim is one script under `scripts/e2e/`, as in U1. H17 to H24 run the boar
 - H25 · in the running herdr, open-board opens the board pane and a second press focuses it; capture lands a task and shows a refusal
   - run: `bash scripts/e2e/h25-herdr-panes.sh`
   - pass: exit 0; the output holds `ok: open-board opened one pane titled desk and it is still open after 2 s`, `ok: a second open-board left one pane and it is focused`, `ok: the capture popup landed a task`, `ok: a refused line shows unknown-project in the popup`, `ok: every pane this script opened is closed and desk-e2e is unlinked`, and `E2E PASS`
+- H26 · open-pane.sh focuses the open board pane even after a title plugin renamed it, opens one when none is open, and takes a busy popup as done — against a stub herdr
+  - run: `bash scripts/e2e/h26-open-pane-stub.sh`
+  - pass: exit 0; the output holds `ok: with no board pane, board opens one`, `ok: with a board pane whose label was renamed, board focuses it and opens none`, `ok: capture opens the popup`, `ok: a busy popup exits 0`, `ok: an unknown pane name exits 2`, and `E2E PASS`
 
 ## Deliverables
 
@@ -631,6 +643,8 @@ Each claim is one script under `scripts/e2e/`, as in U1. H17 to H24 run the boar
 26. `README.md`: the intro no longer says the board comes later; the `desk` row describes the board on a terminal and the static text off one; a section lists every key of both pages; the `desk capture` row describes the popup. (`.claude/build/notes.md` §builders: Docs)
 27. `profiles/claude-code/skills/desk/SKILL.md` says an agent never runs bare `desk` or `desk capture` on a terminal: the board is the user's. (`.claude/build/notes.md` §builders: Docs)
 28. `.claude/build/notes.md`: the builders line "No runtime UI in this repo until the board (U3)" becomes the rule that board logic lives in `State.Update` and is tested there; the hand-tester section names `tmux` and `sqlite3` among the tools and says H25 opens and closes panes in the running herdr under the id `desk-e2e`. (§Design 9)
+29. `scripts/open-pane.sh` finds the open board pane by a field of herdr's pane list that a rename of the pane leaves alone, and takes herdr 0.9.1's `a popup pane is already open` answer as done (exit 0). Before: it matched the label `desk`, which a title plugin rewrites seconds after the pane opens, so a second press opened a second pane; and it matched `popup already open`, a text herdr 0.9.1 does not print. After: a second press focuses the one board pane, renamed or not, and a second capture press exits 0. (defect 1; P2 builder's report)
+30. `scripts/e2e/h26-open-pane-stub.sh` exists: it runs `scripts/open-pane.sh` against a stub `herdr` whose `pane list` answers are fixtures recorded from a real herdr, prints the `ok:` lines its claim names, opens nothing on a screen, and passes `shellcheck -S info`. `scripts/e2e/h25-herdr-panes.sh` still passes against the changed `open-pane.sh`. (operator ruling, 2026-10-04)
 
 ```yaml
 description: desk U3 — the bubbletea board, the capture popup, the client calls for kill and pause
@@ -690,6 +704,10 @@ deliverables:
   - name: SKILL.md says an agent never opens the board
     covered_by: [judgment]
   - name: build notes updated for the board and the hand tester
+    covered_by: [judgment]
+  - name: open-pane.sh finds a renamed board pane and takes the busy-popup answer as done
+    covered_by: [judgment]
+  - name: h26 proves open-pane.sh against a stub herdr; h25 still passes
     covered_by: [judgment]
 ```
 
