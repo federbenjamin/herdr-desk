@@ -1,0 +1,6 @@
+# desk's build steps: the global /build flow names a step, this file names the command.
+checks      = "go vet ./... && go test ./... && test -z \"$(gofmt -l .)\""
+exit_checks = "go vet ./... && go test ./... && test -z \"$(gofmt -l .)\""
+tests       = "go test ./..."
+install     = "go mod download"
+notes       = ".claude/build/notes.md"
