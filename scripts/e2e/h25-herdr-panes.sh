@@ -8,7 +8,8 @@
 # using herdr. An EXIT trap closes exactly the panes that run in the temp plugin folder and unlinks desk-e2e, also
 # when a check fails. It never closes another pane, never runs desk setup, and never reads or writes herdr's
 # config.toml. The capture entrypoint is opened as a split pane: a popup has no pane id, and herdr's API can only
-# close it, so a popup cannot be read or typed into.
+# close it, so a popup cannot be read or typed into. Every pane opens without focus; only the second open-board
+# moves focus, to the board, and the script gives it back to the pane that had it.
 # shellcheck source=scripts/e2e/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 HERDR=${HERDR_BIN_PATH:-herdr}
@@ -16,6 +17,7 @@ ID=desk-e2e
 LINKED=0
 OPENED=()
 PANE=""
+ORIG=""
 
 command -v "$HERDR" >/dev/null 2>&1 || fail "herdr is not installed"
 command -v jq >/dev/null 2>&1 || fail "jq is not installed"
@@ -54,7 +56,7 @@ await_board() {
 # open_capture: open the manifest's capture entrypoint as a split pane, record it, and leave its id in PANE.
 open_capture() {
   local out
-  out=$("$HERDR" plugin pane open --plugin "$ID" --entrypoint capture --placement split --focus) ||
+  out=$("$HERDR" plugin pane open --plugin "$ID" --entrypoint capture --placement split --no-focus) ||
     fail "herdr plugin pane open failed: $out"
   PANE=$(jq -r '.result.plugin_pane.pane.pane_id' <<<"$out")
   { [ -n "$PANE" ] && [ "$PANE" != null ]; } || fail "no pane id in: $out"
@@ -77,6 +79,20 @@ pane_wait() {
   fail "timed out waiting for '$2' in pane $1"
 }
 
+# focused: the id of the pane that has focus.
+focused() { "$HERDR" pane list | jq -r '[.result.panes[] | select(.focused == true)][0].pane_id // ""'; }
+
+# restore_focus gives focus back to the pane that had it when the script started. The one place the script takes
+# focus is the second open-board, whose job is to focus the board; zooming a pane on and off is how herdr focuses
+# one by id.
+restore_focus() {
+  [ -n "$ORIG" ] || return 0
+  [ "$(focused 2>/dev/null)" = "$ORIG" ] && return 0
+  pane_open "$ORIG" || return 0
+  "$HERDR" pane zoom "$ORIG" --on >/dev/null 2>&1 || true
+  "$HERDR" pane zoom "$ORIG" --off >/dev/null 2>&1 || true
+}
+
 # h25_cleanup closes the panes this script opened: the ones it recorded, and any other pane that runs in the temp
 # plugin folder. Then it unlinks desk-e2e.
 h25_cleanup() {
@@ -85,6 +101,7 @@ h25_cleanup() {
   for id in "${OPENED[@]:-}" $strays; do
     if [ -n "$id" ] && pane_open "$id"; then "$HERDR" pane close "$id" >/dev/null 2>&1 || true; fi
   done
+  restore_focus
   if [ "$LINKED" = 1 ]; then "$HERDR" plugin unlink "$ID" >/dev/null 2>&1 || true; fi
 }
 trap 'h25_cleanup; cleanup' EXIT
@@ -96,7 +113,11 @@ fi
 build
 PLUG="$E2E/plugin"
 mkdir -p "$PLUG/scripts"
-cp "$REPO/scripts/open-pane.sh" "$PLUG/scripts/open-pane.sh"
+# The copy opens the board without taking focus, so the first open-board leaves the user's focus alone and the
+# second one, which must focus the board, is the only step that moves it (restore_focus puts it back).
+sed 's/ --focus$/ --no-focus/' "$REPO/scripts/open-pane.sh" >"$PLUG/scripts/open-pane.sh"
+grep -q -- '--no-focus' "$PLUG/scripts/open-pane.sh" || fail "the temp open-pane.sh keeps --focus"
+ORIG=$(focused)
 python3 - "$REPO/herdr-plugin.toml" "$PLUG/herdr-plugin.toml" "$BIN/desk" "$E2E/home" <<'PY'
 import json
 import re
@@ -143,7 +164,12 @@ for _ in $(seq 1 100); do
   fi
   sleep 0.1
 done
-[ "$found" = 1 ] || fail "the board pane is not focused after the second open-board"
+if [ "$found" != 1 ]; then
+  "$HERDR" plugin log list --plugin "$ID" | jq -c '.result.logs[-1] | {exit_code, status, stdout: (.stdout | .[0:700])}' >&2
+  "$HERDR" pane list | jq -c '.result.panes[] | select(.pane_id == "'"$BOARD"'") | {pane_id, label, focused}' >&2
+  fail "the board pane is not focused after the second open-board"
+fi
+restore_focus
 ok "a second open-board left one pane and it is focused"
 
 open_capture
