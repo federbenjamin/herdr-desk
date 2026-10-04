@@ -381,6 +381,7 @@ const (
 	CodeSecretDetected  = "secret-detected"
 	CodeNotAllowed      = "not-allowed"
 	CodeBackupOff       = "backup-off"
+	CodeBadInput        = "bad-input"        // exit 2: a value the store does not know (a status, an isolation, a step op, a session id) or a merged event with no branch
 	CodeHomeUnreachable = "home-unreachable" // exit 3
 	CodeScanFailed      = "scan-failed"      // exit 3
 )
@@ -479,6 +480,8 @@ type Backup struct {
 func Default() Config                   // runner off, cap 1, 20 runs a day, 180 minutes, poll 30, on_merged "review"
 func Load(path string) (Config, error)  // a missing file is Default(), nil; unknown keys and bad values are errors
 func (c Config) Save(path string) error // 0600, written to a temp file then renamed; keeps the WARNING comment
+// ValidIsolation reports whether s is "", self, worktree, or in-place. The store checks a task's isolation with it.
+func ValidIsolation(s string) bool
 func (c Config) Validate() error        // on_merged, isolation values, listen and client.home as host:port, listen never a wildcard host
 func (c Config) IsClient() bool         // Client.Home != ""
 
@@ -800,7 +803,7 @@ The session hook is a command like any other (`internal/cli/hook.go`), tested th
 
 ### The command line (the contract `internal/cli` implements and the hand test drives)
 
-Task ids: `T12`, `t12`, and `12` name the same task. Exit codes: 0 done or already true; 1 refused; 2 usage; 3 store or home I/O (`home-unreachable`, `scan-failed`, and any other failure to reach or read the home). A refusal prints `desk <command>: <code>: <message>` on stderr and nothing on stdout. Every command that reads or changes tasks takes `--json`.
+Task ids: `T12`, `t12`, and `12` name the same task. Exit codes: 0 done or already true; 1 refused; 2 usage, and the refusal `bad-input`; 3 store or home I/O (`home-unreachable`, `scan-failed`, and any other failure to reach or read the home). A refusal prints `desk <command>: <code>: <message>` on stderr and nothing on stdout. Every command that reads or changes tasks takes `--json`.
 
 The caller's session is the first of: `--session <id>`, the `DESK_SESSION` variable, the variable named by `[agent] session_env`. The run id is `DESK_RUN` when it is a positive integer.
 
@@ -1028,9 +1031,9 @@ Before, for every line: the file or behaviour does not exist.
 3. `internal/model` holds the types, constants, and helpers of `## Public surface`, with no import outside the standard library; `internal/version.Version` is `"dev"` unless set at link time. (spec: Store; §Public surface)
 4. `internal/secretscan`: `Scanner` is a func type; `Builtin()` finds each of the five patterns and returns the pattern's name, never the match; `Command(argv)` passes the text on stdin and maps exit 0 to clean, 1 to the pattern `command`, anything else or a failed start to an error; `FromConfig` picks between them. (spec: Store; §Corrections 9)
 5. `internal/store.Open` creates the database (parent 0700, file 0600, WAL) with the five tables `events`, `tasks`, `steps`, `runs`, `sessions` as the spec's Store block writes them, changed only by corrections 11 and 12, through a numbered migration; opening an existing file changes nothing. (spec: Store)
-6. `AddTask`, `SetTask`, and `Step` each write one event and update `tasks`/`steps` in the same transaction; task numbers count up from 1; a patch that changes nothing writes no event and returns the task; step ids are `s1`, `s2`, … and are never reused; `ListTasks` returns the tasks `Filter.Match` accepts, and `Filter.Live` is true only for a filter that narrows the live board; `GetTask` returns the task and its events; `unknown-task`, `unknown-step`, `empty-title`, `unknown-project` are returned as `*model.Refusal`; a known project is a project path some existing task carries, a `Project` that is not an absolute path is a bare name, and it resolves to the one known project with that base name, with none or several being `unknown-project`. (spec: Store, CLI)
+6. `AddTask`, `SetTask`, and `Step` each write one event and update `tasks`/`steps` in the same transaction; task numbers count up from 1; a patch that changes no field and carries no `Ref` writes no event and returns the task (a patch with only a `Ref` writes one `set` event); an unknown status, an isolation `config.ValidIsolation` rejects, and an unknown step op are returned as `bad-input`; step ids are `s1`, `s2`, … and are never reused; `ListTasks` returns the tasks `Filter.Match` accepts, and `Filter.Live` is true only for a filter that narrows the live board; `GetTask` returns the task and its events; `unknown-task`, `unknown-step`, `empty-title`, `unknown-project`, `bad-input` are returned as `*model.Refusal`; a known project is a project path some existing task carries, a `Project` that is not an absolute path is a bare name, and it resolves to the one known project with that base name, with none or several being `unknown-project`. (spec: Store, CLI)
 7. Policy in the write path: an agent actor setting or adding `ready` or `done` gets `not-allowed`, and with `AgentsMayArm` only `ready` is allowed; `review` with `Merged` writes the `OnMerged` status; the text fields of a write (title, notes, thread, step text, note and decision text, ref, tags) are joined and scanned once before the insert, a hit returns `secret-detected` naming the pattern and writes nothing, a scanner error returns `scan-failed` and writes nothing. (spec: The model, Store; Design 4)
-8. Journal events and reads: `Note`, `Decide`, `Merged`, `Compacted`, `Continues` each append one event with the actor's session, who, run, and tags; `Continues` also records the link in the `sessions` table; `Decide` with `Replaces` naming no decision event returns `unknown-event`; `SessionEvents` returns the chain's events (cycle-guarded) plus every `merged` event, by id, and each task the chain created with `Created`, `DoneAt`, and `Tags`; `ListRuns` returns the `runs` rows; `ExportEvents` writes every event as one JSON line, by id. (spec: Store, Journal)
+8. Journal events and reads: `Note`, `Decide`, `Merged`, `Compacted`, `Continues` each append one event with the actor's session, who, and run; `Note` and `Decide` carry the tags they are given and `Merged`, `Compacted`, `Continues` carry none; `Merged` with an empty branch, and `Continues` whose two ids are equal or fail `model.ValidSessionID`, return `bad-input`; `Continues` also records the link in the `sessions` table; `Decide` with `Replaces` naming no decision event returns `unknown-event`; `SessionEvents` returns the chain's events (cycle-guarded) plus every `merged` event, by id, and each task the chain created with `Created`, `DoneAt`, and `Tags`; `ListRuns` returns the `runs` rows (none until U2 writes them); `ExportEvents` writes every event as one JSON line, by id. (spec: Store, Journal)
 9. `internal/config`: `ResolvePaths` follows the XDG variables with the HOME fallbacks; `Load` of a missing file is `Default()`; `Save` writes 0600 through a rename and the saved text keeps a comment starting `WARNING:` directly above `agents_may_arm`; `Validate` refuses a wildcard `listen` host (empty, `0.0.0.0`, `::`), a bad `on_merged`, and a bad isolation; `AddRoot` and `RemoveRoot` edit the roots list; `ReadToken`, `WriteToken`, and `RotateToken` keep the token file at 0600. (spec: Config, Daemon and API)
 10. `internal/journal.Build` and `View.Markdown` render Work log, Todo, and Decisions by the rules in §Journal rules below, and each of the nine ported tests has a Go test with the same claim. (spec: Journal; §Corrections 5)
 11. `internal/api` server: the ten methods over `POST /v1/<method>` with the status codes of `## Public surface`, through one shared decode, call, encode adapter; on the untrusted handler a request without the exact token (constant-time compare, token read per request) gets 401 and `backup.run` is not served; bodies over 1 MiB get 413; an `AppendRequest` whose set field does not match its kind gets 400; who is derived from the actor's session and no `who` field is read. (spec: Daemon and API; Design 2, 3)
@@ -1056,7 +1059,7 @@ Before, for every line: the file or behaviour does not exist.
 
 ## Journal rules
 
-`Build` works on ids. Let C be the ids of the chain's `compacted` events and M(b) the ids of every `merged` event for branch b. A line's scope is its `branch:<b>` tag's branch, else `session`.
+`Build` works on ids. Let C be the ids of the chain's `compacted` events and M(b) the ids of every `merged` event whose `MergedData.Branch` is b (a merged event carries no tags). A line's scope is its `branch:<b>` tag's branch, else `session`.
 
 - **Work log** holds notes, `compacted` markers, and `merged` lines, by id. A note renders `- HH:MMZ [<scope>] <text>`, with `T<n>: ` before the text when it names a task and ` (<ref>)` after it when it has a ref. A marker renders `- HH:MMZ [session] compacted`. A merged event renders `- HH:MMZ [<branch>] merged #<pr> (<sha>)`, leaving out the part it lacks.
 - **Todo** holds the chain's tasks, by number: `- [ ] [<scope>] T<n> <title>`, `[x]` when done, and ` (<status>)` after the title when the status is neither `open` nor `done`.
