@@ -48,6 +48,7 @@ func newSpawnFixture(t *testing.T, root, isolation string) *spawnFixture {
 	cfg.Runner.Cap = 3
 	cfg.Runner.MaxRunsPerDay = 20
 	cfg.Roots = []config.Root{{Path: root, About: "test root", Isolation: isolation}}
+	cfg.Agent.Router = []string{spawnRouterScript(t)}
 	cfg.Agent.Models = []string{"model-a"}
 	return &spawnFixture{
 		t:      t,
@@ -135,6 +136,12 @@ func TestTickStartsInPlaceRunWithSessionWorkspaceEnvironmentNoteAndNotification(
 	if !regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`).MatchString(run.Session) {
 		t.Fatalf("run session = %q, want lower-case UUID", run.Session)
 	}
+	other := newSpawnFixture(t, t.TempDir(), "self")
+	otherTask := other.arm("another session", other.config.Roots[0].Path, "self")
+	other.runner().Tick(other.ctx)
+	if otherRun := other.runFor(otherTask.Number); otherRun.Session == run.Session {
+		t.Fatalf("sessions = %q and %q, want a fresh session for each spawn", run.Session, otherRun.Session)
+	}
 	workspaces := f.herdr.Workspaces()
 	if len(workspaces) != 1 {
 		t.Fatalf("workspaces = %#v, want one", workspaces)
@@ -196,7 +203,7 @@ func TestTickQuotesWorkerExecutableAndRefusesSingleQuotes(t *testing.T) {
 				}
 				return
 			}
-			if run.State != model.RunFailed || f.task(task.Number).Status != model.StatusBlocked {
+			if run.State != model.RunFailed || f.task(task.Number).Task.Status != model.StatusBlocked {
 				t.Fatalf("run = %#v; task = %#v, want failed run and blocked task", run, f.task(task.Number).Task)
 			}
 			spawnAssertFailureNote(t, f.task(task.Number).History, run.ID, tc.wantReasonIn)
@@ -262,7 +269,7 @@ func TestTickBlocksTaskWhenWorktreeRootIsNotAGitRepository(t *testing.T) {
 
 	f.runner().Tick(f.ctx)
 	run := f.runFor(task.Number)
-	if run.State != model.RunFailed || f.task(task.Number).Status != model.StatusBlocked || len(f.herdr.Workspaces()) != 0 {
+	if run.State != model.RunFailed || f.task(task.Number).Task.Status != model.StatusBlocked || len(f.herdr.Workspaces()) != 0 {
 		t.Fatalf("run = %#v; task = %#v; workspaces = %#v, want failed blocked task without a workspace", run, f.task(task.Number).Task, f.herdr.Workspaces())
 	}
 	spawnAssertFailureNote(t, f.task(task.Number).History, run.ID, "")
@@ -308,7 +315,7 @@ func TestTickFailsAndBlocksWhenCreatingTheWorkspaceFails(t *testing.T) {
 
 	f.runner().Tick(f.ctx)
 	run := f.runFor(task.Number)
-	if run.State != model.RunFailed || f.task(task.Number).Status != model.StatusBlocked || len(f.herdr.Workspaces()) != 0 {
+	if run.State != model.RunFailed || f.task(task.Number).Task.Status != model.StatusBlocked || len(f.herdr.Workspaces()) != 0 {
 		t.Fatalf("run = %#v; task = %#v; workspaces = %#v, want failed blocked spawn without workspace", run, f.task(task.Number).Task, f.herdr.Workspaces())
 	}
 	spawnAssertFailureNote(t, f.task(task.Number).History, run.ID, "create denied")
@@ -322,7 +329,8 @@ func TestTickClosesOpenedPaneAndBlocksWhenStartingWorkerFails(t *testing.T) {
 
 	f.runner().Tick(f.ctx)
 	run := f.runFor(task.Number)
-	if run.State != model.RunFailed || f.task(task.Number).Status != model.StatusBlocked || !reflect.DeepEqual(f.herdr.Closed(), []string{run.Pane}) {
+	workspaces := f.herdr.Workspaces()
+	if run.State != model.RunFailed || f.task(task.Number).Task.Status != model.StatusBlocked || len(workspaces) != 1 || run.Workspace != workspaces[0].ID || run.Pane != workspaces[0].Pane || !reflect.DeepEqual(f.herdr.Closed(), []string{run.Pane}) {
 		t.Fatalf("run = %#v; task = %#v; closed panes = %#v, want failed blocked task and closed pane", run, f.task(task.Number).Task, f.herdr.Closed())
 	}
 	spawnAssertFailureNote(t, f.task(task.Number).History, run.ID, "run denied")
@@ -333,6 +341,15 @@ func spawnNotifyScript(t *testing.T, output string) string {
 	path := filepath.Join(t.TempDir(), "notify")
 	if err := os.WriteFile(path, []byte("#!/bin/sh\nprintf 'notified\\n' >> "+fmt.Sprintf("%q", output)+"\n"), 0o700); err != nil {
 		t.Fatalf("write notify script: %v", err)
+	}
+	return path
+}
+
+func spawnRouterScript(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "router")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatalf("write router script: %v", err)
 	}
 	return path
 }
