@@ -32,7 +32,9 @@ expect "good token 200" 200 "$(code status "$TOKEN")"
 expect "no token 401 on a write" 401 "$(code tasks.add)"
 
 got=$(code backup.run "$TOKEN")
-[ "$got" != 200 ] && [ "$got" != 409 ] || fail "backup.run answered $got over TCP"
+if [ "$got" = 200 ] || [ "$got" = 409 ]; then
+  fail "backup.run answered $got over TCP"
+fi
 say "backup.run not served on tcp (HTTP $got)"
 
 NEW=$(on home desk token rotate)
