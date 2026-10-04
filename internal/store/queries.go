@@ -302,38 +302,6 @@ func (s *Store) doneAt(ctx context.Context, tasks []model.Task) (map[int]int64, 
 	return out, rows.Err()
 }
 
-// ListRuns returns every run, by id.
-func (s *Store) ListRuns(ctx context.Context) ([]model.Run, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, task, state, root, isolation, model, reason, session, workspace, pane,
-		started_ts, ended_ts, exit FROM runs ORDER BY id`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []model.Run{}
-	for rows.Next() {
-		var r model.Run
-		var started string
-		var ended sql.NullString
-		var exit sql.NullInt64
-		if err := rows.Scan(&r.ID, &r.Task, &r.State, &r.Root, &r.Isolation, &r.Model, &r.Reason, &r.Session,
-			&r.Workspace, &r.Pane, &started, &ended, &exit); err != nil {
-			return nil, err
-		}
-		if r.StartedTS, err = parseTS(started); err != nil {
-			return nil, err
-		}
-		if ended.Valid {
-			if r.EndedTS, err = parseTS(ended.String); err != nil {
-				return nil, err
-			}
-		}
-		r.Exit = int(exit.Int64)
-		out = append(out, r)
-	}
-	return out, rows.Err()
-}
-
 // CountByStatus counts the live tasks (not archived, not done) by status; each live status has an entry.
 func (s *Store) CountByStatus(ctx context.Context) (map[model.Status]int, error) {
 	out := map[model.Status]int{}

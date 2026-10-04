@@ -1,5 +1,6 @@
-// Package store is desk's SQLite store. The daemon is its one user; every write goes through one private
-// append that scans for secrets, inserts the event, and updates the state tables in one transaction.
+// Package store is desk's SQLite store. The daemon is its one user; every event goes through one private
+// append that scans for secrets, inserts the event, and updates the state tables in one transaction. Run rows
+// are runner state, outside the event log: UpdateRun writes them directly.
 package store
 
 import (

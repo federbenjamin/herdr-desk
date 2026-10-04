@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/pelletier/go-toml/v2"
 
@@ -18,14 +19,15 @@ import (
 
 // Config is the file $XDG_CONFIG_HOME/desk/config.toml.
 type Config struct {
-	Home       Home       `toml:"home"`
-	Client     Client     `toml:"client"`
-	Runner     Runner     `toml:"runner"`
-	Roots      []Root     `toml:"roots"`
-	Agent      Agent      `toml:"agent"`
-	Notify     Notify     `toml:"notify"`
-	SecretScan SecretScan `toml:"secret_scan"`
-	Backup     Backup     `toml:"backup"`
+	Home       Home        `toml:"home"`
+	Client     Client      `toml:"client"`
+	Runner     Runner      `toml:"runner"`
+	Roots      []Root      `toml:"roots"`
+	Agent      Agent       `toml:"agent"`
+	Router     RouterFiles `toml:"router"`
+	Notify     Notify      `toml:"notify"`
+	SecretScan SecretScan  `toml:"secret_scan"`
+	Backup     Backup      `toml:"backup"`
 }
 
 // Home is set on the home machine only.
@@ -57,11 +59,19 @@ type Root struct {
 	Isolation string `toml:"isolation"` // "" | self | worktree | in-place
 }
 
-// Agent: Router and Worker are written by a profile and read by the runner (U2). SessionEnv is read by the CLI.
+// Agent: Router, Worker, and Models are written by a profile and read by the runner. SessionEnv is read by the
+// CLI.
 type Agent struct {
 	Router     []string `toml:"router"`
 	Worker     []string `toml:"worker"`
 	SessionEnv string   `toml:"session_env"`
+	Models     []string `toml:"models"` // the models the router may pick; the worker's {model}
+}
+
+// RouterFiles replaces the built-in router prompt and schema; "" keeps the built-in.
+type RouterFiles struct {
+	System string `toml:"system"` // a file path
+	Schema string `toml:"schema"` // a file path
 }
 
 // Notify: written by setup; read by the runner (U2).
@@ -158,11 +168,25 @@ func WriteFileAtomic(path string, b []byte) error {
 	return os.Rename(tmp, path)
 }
 
-// Validate checks on_merged, each root's isolation, and that listen and client.home are host:port, with
-// listen never on a wildcard host. An empty on_merged reads as "review".
+// Validate checks on_merged, that the runner's four limits are at least 1, each root's isolation, and that
+// listen and client.home are host:port, with listen never on a wildcard host. An empty on_merged reads as
+// "review".
 func (c Config) Validate() error {
 	if _, ok := model.OnMergedStatus(c.Runner.OnMerged); !ok {
 		return fmt.Errorf("runner.on_merged must be \"review\" or \"done\", not %q", c.Runner.OnMerged)
+	}
+	for _, l := range []struct {
+		key string
+		n   int
+	}{
+		{"runner.cap", c.Runner.Cap},
+		{"runner.max_runs_per_day", c.Runner.MaxRunsPerDay},
+		{"runner.max_run_minutes", c.Runner.MaxRunMinutes},
+		{"runner.poll_seconds", c.Runner.PollSeconds},
+	} {
+		if l.n < 1 {
+			return fmt.Errorf("%s must be at least 1, not %d", l.key, l.n)
+		}
 	}
 	for _, r := range c.Roots {
 		if !model.ValidIsolation(r.Isolation) {
@@ -236,4 +260,33 @@ func (c *Config) RemoveRoot(path string) error {
 		}
 	}
 	return fmt.Errorf("no root %q", path)
+}
+
+// Expand substitutes {name} in each element of an argv template with vars[name], each element in one pass: a
+// substituted value is never scanned again. A placeholder vars does not hold is left as written.
+func Expand(template []string, vars map[string]string) []string {
+	out := make([]string, len(template))
+	for i, elem := range template {
+		var b strings.Builder
+		for rest := elem; rest != ""; {
+			open := strings.IndexByte(rest, '{')
+			if open < 0 {
+				b.WriteString(rest)
+				break
+			}
+			b.WriteString(rest[:open])
+			rest = rest[open:]
+			if end := strings.IndexByte(rest, '}'); end > 0 {
+				if v, ok := vars[rest[1:end]]; ok {
+					b.WriteString(v)
+					rest = rest[end+1:]
+					continue
+				}
+			}
+			b.WriteByte('{')
+			rest = rest[1:]
+		}
+		out[i] = b.String()
+	}
+	return out
 }
