@@ -85,6 +85,11 @@ func TestOfflineBareDeskUsesSnapshotBannerAndLiveBoard(t *testing.T) {
 
 func setSnapshotAge(t *testing.T, path string, age time.Duration) {
 	t.Helper()
+	setSnapshotTime(t, path, time.Now().Add(-age))
+}
+
+func setSnapshotTime(t *testing.T, path string, ts time.Time) {
+	t.Helper()
 	var snap struct {
 		TS    time.Time    `json:"ts"`
 		Tasks []model.Task `json:"tasks"`
@@ -96,7 +101,7 @@ func setSnapshotAge(t *testing.T, path string, age time.Duration) {
 	if err := json.Unmarshal(contents, &snap); err != nil {
 		t.Fatalf("decode snapshot: %v", err)
 	}
-	snap.TS = time.Now().Add(-age)
+	snap.TS = ts
 	contents, err = json.Marshal(snap)
 	if err != nil {
 		t.Fatalf("encode snapshot: %v", err)
@@ -141,4 +146,22 @@ func firstLine(text string) string {
 		return text[:at]
 	}
 	return text
+}
+
+func TestOfflineNoticeNamesTheSnapshotTimeInUTCWithAZ(t *testing.T) {
+	home := testutil.StartHome(t, testutil.HomeOptions{Listen: true})
+	clientMachine := testutil.NewClientMachine(t, home)
+	getenv := clientMachine.Getenv(nil)
+	cwd := t.TempDir()
+	requireSuccess(t, runDesk(t, getenv, cwd, "", "add", "-t", "saved task"))
+	requireSuccess(t, runDesk(t, getenv, cwd, "", "list"))
+	home.Stop()
+
+	// The stamp is written in another zone; the line must still read as UTC, like every other time desk prints.
+	setSnapshotTime(t, clientMachine.Paths.Snapshot(), time.Date(2026, 10, 4, 21, 29, 54, 0, time.FixedZone("west", -7*3600)))
+	result := runDesk(t, getenv, cwd, "", "list")
+	requireSuccess(t, result)
+	if want := "showing the snapshot from 2026-10-05 04:29Z\n"; !strings.HasSuffix(result.stderr, want) {
+		t.Errorf("offline notice = %q, want it to end with %q", result.stderr, want)
+	}
 }

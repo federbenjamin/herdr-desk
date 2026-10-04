@@ -1,16 +1,50 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/federbenjamin/desk/internal/api"
+	"github.com/federbenjamin/desk/internal/config"
 	"github.com/federbenjamin/desk/internal/journal"
 	"github.com/federbenjamin/desk/internal/model"
 	"github.com/federbenjamin/desk/internal/store"
 )
+
+// sessionViewPath is the file the hook writes a session's view to on this machine.
+func (a *app) sessionViewPath(session string) string {
+	return filepath.Join(a.paths.SessionsDir(), session+".md")
+}
+
+// writeSessionView writes a session's view to its file and returns the path. The hook and every write that
+// refreshes the view go through it.
+func (a *app) writeSessionView(session string, data model.SessionData) (string, error) {
+	path := a.sessionViewPath(session)
+	return path, config.WriteFileAtomic(path, []byte(journal.Build(data, false).Markdown()))
+}
+
+// refreshSessionView brings the session's view file up to date after a write by that session succeeded, so the
+// path the hook gave the agent holds the entry it just made. It does nothing when the session is empty or the hook
+// wrote no file on this machine. The write has already succeeded, so a failure here is a warning.
+func (a *app) refreshSessionView(cmd *cobra.Command, c *api.Client, session string) {
+	if session == "" {
+		return
+	}
+	if _, err := os.Stat(a.sessionViewPath(session)); err != nil {
+		return
+	}
+	data, err := c.SessionView(a.ctx, session)
+	if err == nil {
+		_, err = a.writeSessionView(session, data)
+	}
+	if err != nil {
+		a.warn(cmd, "the write succeeded, but the session view file was not refreshed: %v", err)
+	}
+}
 
 // appendEvent sends one journal event and prints e<id>, or queued when the home did not answer.
 func (a *app) appendEvent(cmd *cobra.Command, r api.AppendRequest) error {
@@ -27,6 +61,7 @@ func (a *app) appendEvent(cmd *cobra.Command, r api.AppendRequest) error {
 		a.say("queued")
 		return nil
 	}
+	a.refreshSessionView(cmd, c, r.Actor.Session)
 	a.say("e%d", ev.ID)
 	return nil
 }
@@ -122,7 +157,7 @@ func (a *app) sessionCmd() *cobra.Command {
 		Short: "Print a session's journal (default: the caller's session)",
 		Args:  cobra.MaximumNArgs(1),
 	}
-	cmd.RunE = a.do(func(_ *cobra.Command, args []string) error {
+	cmd.RunE = a.do(func(cmd *cobra.Command, args []string) error {
 		actor, err := a.actor()
 		if err != nil {
 			return err
@@ -144,8 +179,12 @@ func (a *app) sessionCmd() *cobra.Command {
 			if !model.ValidSessionID(continues) {
 				return badSessionID()
 			}
-			if _, _, err := c.Append(a.ctx, api.AppendRequest{Actor: actor, Kind: model.KindContinues, From: continues}); err != nil {
+			_, queued, err := c.Append(a.ctx, api.AppendRequest{Actor: actor, Kind: model.KindContinues, From: continues})
+			if err != nil {
 				return err
+			}
+			if !queued {
+				a.refreshSessionView(cmd, c, actor.Session)
 			}
 		}
 		data, err := c.SessionView(a.ctx, actor.Session)

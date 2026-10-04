@@ -28,7 +28,7 @@ Task ids: `T12`, `t12`, and `12` name the same task.
 | tick steps | `desk steps T12 add "<text>"`, `toggle s1`, `rename s1 "<text>"`, `remove s1` |
 | record a fact | `desk note "<text>" --task T12 --ref <path-or-url>` |
 | record a decision | `desk decide "<text>" --tag k:v` (`--replaces e<id>` when it replaces one) |
-| read the session journal | `desk session <id> --md` (no id: the current session) |
+| read the session journal | `desk session <id> --md` (no id: the current session); the file the session-start hook named is rewritten after each write of yours, so reading that path is current too |
 
 Rules:
 
@@ -47,9 +47,9 @@ Never retry blind. Read the code first.
 | 0 | done, or already true | go on |
 | 1 | refused, with a stable code first on stderr: `desk <command>: <code>: <message>` | fix the cause; do not repeat the same call |
 | 2 | usage error, or the refusal `bad-input` | fix the arguments |
-| 3 | the store or the home could not be reached or read (`home-unreachable`, `scan-failed`) | do not retry in a loop; tell the user. `note` and `decide` are queued and sent later (stdout says `queued`) |
+| 3 | the store or the home could not be reached or read (`home-unreachable`, `bad-token`, `scan-failed`) | do not retry in a loop; tell the user. `note` and `decide` are queued and sent later (stdout says `queued`); for `bad-token` the user must fix the client's token first |
 
-Refusal codes you may see: `unknown-task`, `unknown-project`, `unknown-step`, `unknown-event`, `empty-title`, `empty-text`, `secret-detected`, `not-allowed`, `bad-input`, `home-unreachable`, `scan-failed`.
+Refusal codes you may see: `unknown-task`, `unknown-project`, `unknown-step`, `unknown-event`, `empty-title`, `empty-text`, `secret-detected`, `not-allowed`, `bad-input`, `home-unreachable`, `bad-token`, `scan-failed`.
 
 - `secret-detected` names the pattern, never the text. Remove the secret and write the call again.
 - `not-allowed` is final. Use `review` or `blocked`, or propose with `--thread agent`.

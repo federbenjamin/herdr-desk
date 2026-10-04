@@ -47,6 +47,15 @@ const maxSocketPath = 103
 
 var backupTick = time.Hour
 
+// checkSocketPath refuses a state folder whose socket path is over the limit, naming the path, its length, and the
+// limit.
+func checkSocketPath(p config.Paths) error {
+	if sock := p.Socket(); len(sock) > maxSocketPath {
+		return fmt.Errorf("the socket path %s is %d bytes, over the %d a unix socket allows; set XDG_STATE_HOME to a shorter folder", sock, len(sock), maxSocketPath)
+	}
+	return nil
+}
+
 // Instance is a running daemon.
 type Instance struct {
 	p       config.Paths
@@ -89,10 +98,10 @@ func Start(ctx context.Context, p config.Paths, c config.Config) (*Instance, err
 		}
 	}()
 
-	sock := p.Socket()
-	if len(sock) > maxSocketPath {
-		return nil, fmt.Errorf("the socket path %s is %d bytes, over the %d a unix socket allows", sock, len(sock), maxSocketPath)
+	if err := checkSocketPath(p); err != nil {
+		return nil, err
 	}
+	sock := p.Socket()
 	if i.st, err = store.Open(p.DB(), store.Options{
 		Scanner:      secretscan.FromConfig(c.SecretScan.Command),
 		AgentsMayArm: c.Runner.AgentsMayArm,
@@ -256,6 +265,16 @@ func ReadInfo(p config.Paths) (Info, error) {
 		return info, err
 	}
 	return info, json.Unmarshal(b, &info)
+}
+
+// Running returns the info of the daemon that holds the lock; ok is false when none does or its info file cannot
+// be read.
+func Running(p config.Paths) (info Info, ok bool) {
+	if held, err := lockHeld(p); err != nil || !held {
+		return Info{}, false
+	}
+	info, err := ReadInfo(p)
+	return info, err == nil
 }
 
 // lockHeld reports whether a daemon holds the lock. No lock file means none does.

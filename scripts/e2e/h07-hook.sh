@@ -20,6 +20,7 @@ first=$(head -n 1 <<<"$OUT")
 say "startup ok"
 
 run 0 as_agent home "$S" desk note "remember this"
+grep -q "remember this" "$VIEW" || fail "the view file lacks the note right after desk note"
 run_in 0 "$(hook_input "$S" resume)" on home desk hook start --format claude-code
 out_has "$VIEW"
 grep -q "remember this" "$VIEW" || fail "the view file lacks the note after resume"

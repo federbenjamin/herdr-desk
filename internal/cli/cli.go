@@ -15,6 +15,7 @@ import (
 
 	"github.com/federbenjamin/desk/internal/api"
 	"github.com/federbenjamin/desk/internal/config"
+	"github.com/federbenjamin/desk/internal/daemon"
 	"github.com/federbenjamin/desk/internal/model"
 	"github.com/federbenjamin/desk/internal/store"
 )
@@ -61,7 +62,7 @@ func exitCode(err error) int {
 		switch r.Code {
 		case model.CodeBadInput:
 			return exitUsage
-		case model.CodeHomeUnreachable, model.CodeScanFailed:
+		case model.CodeHomeUnreachable, model.CodeScanFailed, model.CodeBadToken:
 			return exitIO
 		}
 		return exitRefused
@@ -78,6 +79,9 @@ type app struct {
 	session    string // --session
 	started    bool   // a command's own code began; an error before it is a usage error
 	unanswered string // why the last write was queued, from api.ClientOptions.Unreachable
+
+	usedHome    bool // the command made a client, so it talked to the daemon
+	wroteConfig bool // the command wrote the config file
 }
 
 // Run runs one desk command and returns its exit code. args excludes the program name.
@@ -104,19 +108,34 @@ func Run(ctx context.Context, args []string, env Env) int {
 	}
 	root.SetArgs(args)
 	cmd, err := root.ExecuteContextC(ctx)
-	if err == nil {
-		return exitOK
+	code := exitOK
+	if err != nil {
+		code = exitUsage
+		if a.started {
+			code = exitCode(err)
+		}
+		name := "desk"
+		if cmd != nil {
+			name = cmd.CommandPath()
+		}
+		fmt.Fprintf(env.Stderr, "%s: %s\n", name, err)
 	}
-	code := exitUsage
-	if a.started {
-		code = exitCode(err)
+	if a.usedHome || a.wroteConfig {
+		a.warnStaleConfig()
 	}
-	name := "desk"
-	if cmd != nil {
-		name = cmd.CommandPath()
-	}
-	fmt.Fprintf(env.Stderr, "%s: %s\n", name, err)
 	return code
+}
+
+// warnStaleConfig says so, once, when the daemon running on this machine started before the config file was
+// last written: the daemon reads the file only at start. A client runs no daemon, so it has nothing to say.
+func (a *app) warnStaleConfig() {
+	c, err := config.Load(a.paths.ConfigFile())
+	if err != nil || c.IsClient() {
+		return
+	}
+	if info, ok := daemon.Running(a.paths); ok && a.paths.ConfigChangedSince(info.StartedTS) {
+		fmt.Fprintln(a.env.Stderr, "desk: the config file changed after the daemon started; run `desk daemon restart` to apply it")
+	}
 }
 
 // do wraps a command's body so Run can tell its errors from cobra's argument errors.
@@ -168,6 +187,7 @@ func (a *app) client() (*api.Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	a.usedHome = true
 	return api.NewClient(api.ClientOptions{
 		Paths:  a.paths,
 		Config: c,
@@ -176,7 +196,10 @@ func (a *app) client() (*api.Client, error) {
 			fmt.Fprintf(a.env.Stderr, "desk: a queued %s was refused: %s\n", kind, r.Error())
 		},
 		Unreachable: func(err error) {
-			a.unanswered = strings.TrimPrefix(err.Error(), model.CodeHomeUnreachable+": ")
+			a.unanswered = err.Error()
+			if r, ok := model.AsRefusal(err); ok {
+				a.unanswered = r.Msg
+			}
 		},
 	}), nil
 }

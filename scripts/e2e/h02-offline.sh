@@ -19,6 +19,8 @@ err_has "home-unreachable"
 run 0 on cli desk
 first=$(head -n 1 <<<"$OUT")
 case "$first" in *"offline (snapshot "*) ;; *) fail "the board's first line is '$first'" ;; esac
+[[ "$ERR" =~ showing\ the\ snapshot\ from\ [0-9]{4}-[0-9]{2}-[0-9]{2}\ [0-9]{2}:[0-9]{2}Z$ ]] ||
+  fail "the offline notice does not give the snapshot time in UTC with a Z: $ERR"
 out_has "seen before the outage"
 
 run 0 on cli desk list --json

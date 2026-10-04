@@ -1,7 +1,11 @@
 // Package config owns desk's files on disk: where they live, the config file, and the token.
 package config
 
-import "path/filepath"
+import (
+	"os"
+	"path/filepath"
+	"time"
+)
 
 // Paths are desk's four XDG directories; each ends in /desk.
 type Paths struct{ ConfigDir, StateDir, DataDir, CacheDir string }
@@ -27,6 +31,12 @@ func ResolvePaths(getenv func(string) string) Paths {
 
 // ConfigFile is ConfigDir/config.toml.
 func (p Paths) ConfigFile() string { return filepath.Join(p.ConfigDir, "config.toml") }
+
+// ConfigChangedSince reports whether the config file was written after t. A missing file was not.
+func (p Paths) ConfigChangedSince(t time.Time) bool {
+	info, err := os.Stat(p.ConfigFile())
+	return err == nil && info.ModTime().After(t)
+}
 
 // TokenFile is ConfigDir/token.
 func (p Paths) TokenFile() string { return filepath.Join(p.ConfigDir, "token") }

@@ -3,13 +3,10 @@ package cli
 import (
 	"encoding/json"
 	"io"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
 
 	"github.com/federbenjamin/desk/internal/api"
-	"github.com/federbenjamin/desk/internal/config"
-	"github.com/federbenjamin/desk/internal/journal"
 	"github.com/federbenjamin/desk/internal/model"
 	"github.com/federbenjamin/desk/internal/store"
 )
@@ -55,15 +52,15 @@ func (a *app) hookCmd() *cobra.Command {
 			}
 		}
 		data, err := c.SessionView(a.ctx, in.SessionID)
-		if r, ok := model.AsRefusal(err); ok && r.Code == model.CodeHomeUnreachable {
+		if r, ok := model.AsRefusal(err); ok && (r.Code == model.CodeHomeUnreachable || r.Code == model.CodeBadToken) {
 			a.say("desk: this session's journal is not loaded: %s", r.Msg)
 			return nil
 		}
 		if err != nil {
 			return err
 		}
-		path := filepath.Join(a.paths.SessionsDir(), in.SessionID+".md")
-		if err := config.WriteFileAtomic(path, []byte(journal.Build(data, false).Markdown())); err != nil {
+		path, err := a.writeSessionView(in.SessionID, data)
+		if err != nil {
 			return err
 		}
 		a.say("desk journal for this session: %s", path)

@@ -188,8 +188,11 @@ func TestFetchOrBuildFallsBackToSource(t *testing.T) {
 		t.Errorf("DESK_OUT holds %q, want the binary the go stub wrote", got)
 	}
 	log := readFile(t, r.goLog)
-	if !strings.Contains(log, "build -o "+r.out+" ./cmd/desk") {
+	if !strings.Contains(log, "-o "+r.out+" ./cmd/desk") || !strings.Contains(log, "build ") {
 		t.Errorf("go was not asked to build ./cmd/desk into DESK_OUT:\n%s", log)
+	}
+	if want := "-X github.com/federbenjamin/desk/internal/version.Version=" + testVersion + "+src"; !strings.Contains(log, want) {
+		t.Errorf("go was not asked to set the version to the manifest's with a +src suffix (%s):\n%s", want, log)
 	}
 	if !strings.Contains(log, filepath.Join(r.dir, "repo")) {
 		t.Errorf("go did not run in DESK_REPO_ROOT:\n%s", log)

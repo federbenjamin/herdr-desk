@@ -83,7 +83,8 @@ func (c *Client) enqueue(r AppendRequest) error {
 }
 
 // Flush forwards the outbox in order and returns how many entries it sent. It stops when the home cannot be
-// reached, or answers in a way a retry may change (scan-failed, a 500), keeping what was not sent. An entry the
+// reached, or answers in a way a retry may change (scan-failed, a 500, bad-token: the fault is the token),
+// keeping what was not sent. An entry the
 // home refuses for a cause in the entry itself (any other refusal, a 400, a 413) will never be accepted: it is
 // removed, reported through ClientOptions.Refused, and Flush goes on. A line that does not parse is removed the
 // same way, reported with the code bad-input. The entries kept replace the outbox through a rename, so a
@@ -148,7 +149,7 @@ func (c *Client) Flush(ctx context.Context) (int, error) {
 // change.
 func refusedForGood(err error) *model.Refusal {
 	if ref, ok := model.AsRefusal(err); ok {
-		if ref.Code == model.CodeHomeUnreachable || ref.Code == model.CodeScanFailed {
+		if ref.Code == model.CodeHomeUnreachable || ref.Code == model.CodeScanFailed || ref.Code == model.CodeBadToken {
 			return nil
 		}
 		return ref

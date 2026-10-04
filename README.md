@@ -111,10 +111,15 @@ With the home unreachable, a client:
   snapshot of its last read, marked offline;
 - refuses every other read and every task write with `home-unreachable` (exit 3);
 - accepts `note`, `decide`, and the hook's records into a local outbox and forwards them on the next
-  successful call (`queued` on stdout, and stderr says why the home did not answer). Delivery is at
-  least once. A queued entry the home refuses is dropped and named on stderr; one it cannot take yet
-  (`scan-failed`, a server error) stays queued, and the command that tried to forward it fails
-  naming the outbox file.
+  successful call (`queued` on stdout, and stderr says why the home did not take them: it did not
+  answer, or it refused the token with `bad-token`). Delivery is at least once. A queued entry the
+  home refuses is dropped and named on stderr; one it cannot take yet (`scan-failed`, a server
+  error) stays queued, and the command that tried to forward it fails naming the outbox file. A
+  forward the home answers with `bad-token` keeps every entry queued: the token is at fault, not
+  the entry. Run `desk client add` with the home's current token and the next call sends them.
+
+The offline notice on stderr gives the snapshot's time in UTC, like every time desk prints:
+`desk list: the home did not answer; showing the snapshot from 2026-10-04 19:29Z`.
 
 ## Commands
 
@@ -127,10 +132,13 @@ stdout.
 | 0 | done, or already true |
 | 1 | the item was refused; stderr starts with a stable code |
 | 2 | usage error |
-| 3 | store or home I/O (`home-unreachable`, `scan-failed`, any failure to reach or read the home) |
+| 3 | store or home I/O (`home-unreachable`, `bad-token`, `scan-failed`, any failure to reach or read the home) |
 
 Refusal codes: `unknown-task`, `unknown-step`, `unknown-project`, `unknown-event`, `empty-title`,
-`secret-detected`, `not-allowed` (an agent set `ready` or `done`), `backup-off`.
+`secret-detected`, `not-allowed` (an agent set `ready` or `done`), `backup-off`, `bad-token` (exit 3:
+the home refused this client's token, HTTP 401; `desk client add` with the current token fixes it).
+`desk daemon status` is the one command that exits 1 with no code on stderr: it exits 1 when no
+daemon answers, so a script can ask whether one runs.
 
 | command | does |
 |---|---|
@@ -145,15 +153,15 @@ Refusal codes: `unknown-task`, `unknown-step`, `unknown-project`, `unknown-event
 | `desk note --merged --branch <b> [--pr <n>] [--sha <sha>] [<text>]` | records that a branch merged |
 | `desk decide <text> [--tag <k:v>]… [--replaces e<id>] [--task <task>]` | appends a decision |
 | `desk session [<id>] [--md] [--all] [--continues <old-id>]` | prints the session's journal view; `--json` prints it with the keys `session`, `work`, `todo`, `decisions`; `--all` shows hidden lines; `--continues` first links the session to an older one |
-| `desk capture` | reads one line on stdin: words starting `#` set the thread, `@` the project, the rest is the title |
-| `desk daemon [run]` · `stop` · `restart` · `status` | runs or controls the daemon. A second `run` prints `already running` and exits 0; on a client it prints that there is nothing to run and exits 0. `status` never starts a daemon; its JSON carries `backup_ts`, the last successful backup (`null` when none), and `backup_error`, the error of a failed attempt since, so a failing nightly backup shows there |
+| `desk capture` | reads one line on stdin: words starting `#` set the thread, `@` the project, the rest is the title. On a terminal (the herdr popup) a refused line prints its error and asks again, so the pane does not close on it; an empty line or end of input exits 0. Off a terminal it takes one line and exits with the code of its refusal, as every command does |
+| `desk daemon [run]` · `stop` · `restart` · `status` | runs or controls the daemon. A second `run` prints `already running` and exits 0; on a client it prints that there is nothing to run and exits 0. `status` never starts a daemon and exits 1 when none answers; its JSON carries `backup_ts`, the last successful backup (`null` when none), `backup_error`, the error of a failed attempt since, so a failing nightly backup shows there, and `config_changed`, true when the config file was written after the daemon started |
 | `desk token [show]` · `rotate` | prints or rotates the token |
 | `desk client add <host:port> [--token-file <path>]` | joins a home; the token comes from the file or stdin, never an argument |
-| `desk roots [list]` · `add <path> [--about <a>] [--isolation <i>]` · `remove <path>` | edits `[[roots]]` |
+| `desk roots [list]` · `add <path> [--about <a>] [--isolation <i>]` · `remove <path>` | edits `[[roots]]`. `add` takes an existing directory (anything else is a usage error, exit 2); on a path already listed it changes only the fields whose flags you pass, and `--about ""` clears one |
 | `desk setup [--profile claude-code] [--listen <host:port>] [--runner on\|off] [--skill-dir <dir>] [--force] [--no-herdr]` | first-time setup; never prompts |
-| `desk hook start --format claude-code` | the session hook: reads the hook's JSON on stdin and prints the path of the session's journal view |
+| `desk hook start --format claude-code` | the session hook: reads the hook's JSON on stdin, writes the session's journal view to `<state>/sessions/<id>.md`, and prints the path. After that, every `note`, `decide`, `add`, `set`, `edit`, `capture`, and `session --continues` that succeeds for that session rewrites the file, on the home and on a client alike (a write that was queued does not, until the next one). With the home unreachable or refusing the token the hook prints one line saying the journal is not loaded and exits 0 |
 | `desk backup` | runs the backup now; a failed run exits 3 naming the git step that failed, with the remote shown as `<remote>` |
-| `desk version` | prints the version |
+| `desk version` | prints the version. A build made from source by the herdr plugin's install step carries the plugin manifest's version with `+src`, for example `0.1.0+src` |
 
 The session is the first of `--session <id>`, `$DESK_SESSION`, and the variable named by
 `[agent] session_env`. `DESK_HOOKS=off` makes `desk hook` do nothing.
@@ -202,6 +210,11 @@ command = []      # e.g. ["gitleaks", "stdin"]; exit 0 clean, 1 a secret, anythi
 git_remote = ""   # set to back up events.jsonl nightly to this git remote
 ```
 
+The daemon reads the config file once, when it starts. A change needs `desk daemon restart` (on the
+home) to take effect. While the file is newer than the running daemon, each command that talks to
+the daemon, and each that writes the file (`setup`, `roots`, `client add`), prints one line on stderr
+naming `desk daemon restart`, and `desk daemon status` shows `"config_changed": true`.
+
 A root named `scratch` (`$XDG_DATA_HOME/desk/scratch`, a git repo) is always present, so a task with
 no project can be routed.
 
@@ -212,7 +225,10 @@ the store is one SQLite file under `$XDG_DATA_HOME/desk`; the offline snapshot i
 ## Running the daemon
 
 herdr starts it for you (`[[startup]]` in `herdr-plugin.toml`), and any `desk` command starts it
-when the socket does not answer. To run it yourself, use `desk daemon &` or a service unit.
+when the socket does not answer. To run it yourself, use `desk daemon &` or a service unit. A unix
+socket path may be 103 bytes at most; when `$XDG_STATE_HOME/desk/desk.sock` is longer, the command
+that tried to start the daemon prints the path, its length, and the limit. Set `XDG_STATE_HOME` to a
+shorter folder.
 
 launchd, `~/Library/LaunchAgents/desk.daemon.plist`:
 

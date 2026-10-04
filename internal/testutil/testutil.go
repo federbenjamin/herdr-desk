@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/federbenjamin/desk/internal/api"
 	"github.com/federbenjamin/desk/internal/config"
@@ -94,6 +95,12 @@ func StartHome(t testing.TB, o HomeOptions) *Home {
 	}
 	if err := h.cfg.Save(h.Paths.ConfigFile()); err != nil {
 		t.Fatalf("testutil: save config: %v", err)
+	}
+	// The daemon started before this file was saved (the listen address is known only once it is up). Date the
+	// file before the start, as `desk setup` leaves it, so no command reports a config change that is not one.
+	before := time.Now().Add(-time.Minute)
+	if err := os.Chtimes(h.Paths.ConfigFile(), before, before); err != nil {
+		t.Fatalf("testutil: date config: %v", err)
 	}
 	return h
 }

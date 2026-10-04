@@ -29,6 +29,9 @@ func TestDaemonStatusOnAStoppedHomeExitsOneAndStartsNothing(t *testing.T) {
 	if result.exit != 1 || result.stdout != "" {
 		t.Fatalf("daemon status on a stopped home = (%d, %q, %q), want exit 1 and no status", result.exit, result.stdout, result.stderr)
 	}
+	if strings.Contains(result.stderr, "home-unreachable") || !strings.Contains(result.stderr, "did not answer") {
+		t.Fatalf("daemon status on a stopped home: stderr = %q, want the reason with no code (home-unreachable means exit 3)", result.stderr)
+	}
 }
 
 // holdLock takes the daemon lock as a daemon does at start, before it writes its info file.

@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/federbenjamin/desk/internal/config"
 )
@@ -299,5 +300,34 @@ func TestTokenOperationsKeepSingleTokenFilePrivate(t *testing.T) {
 	}
 	if got := info.Mode().Perm(); got != 0o600 {
 		t.Errorf("token permissions after RotateToken = %04o; want 0600", got)
+	}
+}
+
+func TestConfigChangedSinceComparesTheFileTimeAndTreatsAMissingFileAsUnchanged(t *testing.T) {
+	t.Parallel()
+
+	p := config.Paths{ConfigDir: filepath.Join(t.TempDir(), "desk")}
+	started := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
+	if p.ConfigChangedSince(started) {
+		t.Error("ConfigChangedSince(no file) = true, want false")
+	}
+	if err := config.Default().Save(p.ConfigFile()); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name  string
+		mtime time.Time
+		want  bool
+	}{
+		{"written after the start", started.Add(time.Second), true},
+		{"written before the start", started.Add(-time.Second), false},
+		{"written at the start", started, false},
+	} {
+		if err := os.Chtimes(p.ConfigFile(), test.mtime, test.mtime); err != nil {
+			t.Fatal(err)
+		}
+		if got := p.ConfigChangedSince(started); got != test.want {
+			t.Errorf("ConfigChangedSince(%s) = %t, want %t", test.name, got, test.want)
+		}
 	}
 }

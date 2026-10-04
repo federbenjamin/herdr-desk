@@ -27,8 +27,9 @@ type ClientOptions struct {
 	Refused func(kind model.Kind, r *model.Refusal)
 	// Token, when set, is used in place of the token file; `client add` checks a home with it before saving it.
 	Token string
-	// Unreachable is called with the error each time a write is queued because the home did not answer;
-	// nil → not reported. Append's results are unchanged: (Event{}, true, nil).
+	// Unreachable is called with the error each time a write is queued because the home could not take it now:
+	// it did not answer (home-unreachable) or refused the token (bad-token); nil → not reported. Append's
+	// results are unchanged: (Event{}, true, nil).
 	Unreachable func(err error)
 }
 
@@ -81,10 +82,23 @@ func isUnreachable(err error) bool {
 	return ok && r.Code == model.CodeHomeUnreachable
 }
 
-// call forwards the outbox, then sends one request. When the outbox finds the home unreachable, so is the call;
-// an outbox that cannot be forwarded for another reason ends the call with that reason.
+// badToken is the home's 401. The fault is the client's token, never the entry, so a journal write the home
+// answers this way is queued like one it did not answer.
+func (c *Client) badToken() error {
+	return &model.Refusal{Code: model.CodeBadToken, Msg: fmt.Sprintf("%s refused the token (HTTP 401); run `desk client add` with the home's current token", c.where())}
+}
+
+// cannotTake reports an error that says the home cannot take a write now, for a cause a later call may change
+// without touching the entry: it did not answer, or it refused the token.
+func cannotTake(err error) bool {
+	r, ok := model.AsRefusal(err)
+	return ok && (r.Code == model.CodeHomeUnreachable || r.Code == model.CodeBadToken)
+}
+
+// call forwards the outbox, then sends one request. When the outbox finds the home unreachable or refusing the
+// token, so does the call; an outbox that cannot be forwarded for another reason ends the call with that reason.
 func (c *Client) call(ctx context.Context, method string, req, res any) error {
-	if _, err := c.Flush(ctx); isUnreachable(err) {
+	if _, err := c.Flush(ctx); cannotTake(err) {
 		return err
 	} else if err != nil {
 		return fmt.Errorf("the queued entries in %s could not be forwarded: %w", c.o.Paths.Outbox(), err)
@@ -160,7 +174,7 @@ func (c *Client) post(ctx context.Context, method string, body []byte, res any) 
 	case resp.StatusCode == http.StatusConflict && eb.Code != "":
 		return &model.Refusal{Code: eb.Code, Msg: eb.Message}
 	case resp.StatusCode == http.StatusUnauthorized:
-		return &httpError{resp.StatusCode, fmt.Sprintf("%s refused the token (HTTP 401)", c.where())}
+		return c.badToken()
 	default:
 		return &httpError{resp.StatusCode, fmt.Sprintf("%s answered HTTP %d: %s", c.where(), resp.StatusCode, eb.Message)}
 	}
@@ -239,13 +253,14 @@ func (c *Client) Step(ctx context.Context, a store.Actor, number int, op model.S
 	return t, err
 }
 
-// Append sends one journal event. queued=true means the home was unreachable and the event is in the outbox.
+// Append sends one journal event. queued=true means the home did not answer or refused the token, and the event
+// is in the outbox.
 func (c *Client) Append(ctx context.Context, r AppendRequest) (ev model.Event, queued bool, err error) {
 	if !r.valid() {
 		return model.Event{}, false, fmt.Errorf("an append of kind %q must set exactly the field its kind names", r.Kind)
 	}
 	err = c.call(ctx, MethodEventsAppend, r, &ev)
-	if !isUnreachable(err) {
+	if !cannotTake(err) {
 		return ev, false, err
 	}
 	if qerr := c.enqueue(r); qerr != nil {
