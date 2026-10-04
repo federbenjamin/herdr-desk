@@ -145,8 +145,8 @@ func TestStartRunCreatesRoutingRunAndMarksTaskStarted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetTask() error = %v", err)
 	}
-	if detail.Status != model.StatusStarted {
-		t.Errorf("task status after StartRun = %q, want %q", detail.Status, model.StatusStarted)
+	if detail.Task.Status != model.StatusStarted {
+		t.Errorf("task status after StartRun = %q, want %q", detail.Task.Status, model.StatusStarted)
 	}
 	if len(detail.History) < 2 {
 		t.Fatalf("history length after StartRun = %d, want creation and set events", len(detail.History))
