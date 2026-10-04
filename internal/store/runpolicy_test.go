@@ -226,7 +226,10 @@ func TestSetTaskRejectsAStatusFromAnOlderRunWithoutWritingAnEvent(t *testing.T) 
 	if _, err := st.SetTask(ctx, store.Actor{}, task.Number, model.Patch{Status: &ready}); err != nil {
 		t.Fatalf("rearm task: %v", err)
 	}
-	_, newestRun := startRunPolicyOnTask(t, st, task.Number)
+	newestRun, err := startRunPolicyOnTask(t, st, task.Number)
+	if err != nil {
+		t.Fatalf("start newest run: %v", err)
+	}
 	before, err := st.GetTask(ctx, task.Number)
 	if err != nil {
 		t.Fatalf("read task before stale update: %v", err)
@@ -327,7 +330,8 @@ func TestSetTaskStatusLeavingStartedEndsTheLiveRunForEveryActor(t *testing.T) {
 		st := openRunPolicyStore(t, &now, false)
 		task, _ := startRunPolicy(t, st, "unchanged started")
 		started := model.StatusStarted
-		if _, err := st.SetTask(ctx, store.Actor{}, task.Number, model.Patch{Status: &started}); err != nil {
+		title := "still started"
+		if _, err := st.SetTask(ctx, store.Actor{}, task.Number, model.Patch{Status: &started, Title: &title}); err != nil {
 			t.Fatalf("set unchanged started: %v", err)
 		}
 		got, ok, err := st.CurrentRun(ctx, task.Number)
@@ -344,21 +348,22 @@ func TestSetTaskOnlyLetsAgentsArmReadyTasksWhenConfigured(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
 		status      model.Status
+		thread      string
 		agentMayArm bool
 		actor       store.Actor
 		wantRefusal string
 		wantThread  string
 	}{
-		{"agent cannot arm ready task", model.StatusReady, false, store.Actor{Session: "agent"}, model.CodeNotAllowed, ""},
-		{"agent may set open task thread", model.StatusOpen, false, store.Actor{Session: "agent"}, "", "agent"},
-		{"configured agent may arm ready task", model.StatusReady, true, store.Actor{Session: "agent"}, "", "agent"},
-		{"user may arm ready task", model.StatusReady, false, store.Actor{}, "", "agent"},
+		{"agent cannot arm an already-agent ready task", model.StatusReady, "agent", false, store.Actor{Session: "agent"}, model.CodeNotAllowed, ""},
+		{"agent may set open task thread", model.StatusOpen, "", false, store.Actor{Session: "agent"}, "", "agent"},
+		{"configured agent may arm ready task", model.StatusReady, "", true, store.Actor{Session: "agent"}, "", "agent"},
+		{"user may arm ready task", model.StatusReady, "", false, store.Actor{}, "", "agent"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			now := time.Date(2026, time.October, 4, 12, 0, 0, 0, time.UTC)
 			st := openRunPolicyStore(t, &now, tc.agentMayArm)
-			task, err := st.AddTask(ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{Title: tc.name, Status: tc.status}})
+			task, err := st.AddTask(ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{Title: tc.name, Status: tc.status, Thread: tc.thread}})
 			if err != nil {
 				t.Fatalf("add task: %v", err)
 			}
