@@ -21,12 +21,13 @@ import (
 
 // ServerOptions configures a Server.
 type ServerOptions struct {
-	Store     *store.Store
-	Config    config.Config
-	Paths     config.Paths // the token is read with config.ReadToken on each TCP request, so a rotation needs no restart
-	StartedTS time.Time
-	Backup    func(ctx context.Context) (backup.Result, error) // nil → backup.run refuses backup-off
-	Runner    RunnerControl                                    // nil → runs.kill and runner.pause are unknown methods; runner_state is "off"
+	Store        *store.Store
+	Config       config.Config
+	Paths        config.Paths // the token is read with config.ReadToken on each TCP request, so a rotation needs no restart
+	StartedTS    time.Time
+	ConfigDigest string                                           // config.Config.Digest of the config the daemon started with, before it bound the listener; "" when unknown
+	Backup       func(ctx context.Context) (backup.Result, error) // nil → backup.run refuses backup-off
+	Runner       RunnerControl                                    // nil → runs.kill and runner.pause are unknown methods; runner_state is "off"
 }
 
 // RunnerControl is what the server needs from the runner. *runner.Runner satisfies it.
@@ -151,7 +152,7 @@ func (s *Server) status(ctx context.Context) (Status, error) {
 		BackupTS:     backupTS,
 		BackupError:  backupErr,
 
-		ConfigChanged: o.Paths.ConfigChangedSince(o.StartedTS),
+		ConfigChanged: o.Paths.ConfigChanged(o.ConfigDigest),
 	}, err
 }
 

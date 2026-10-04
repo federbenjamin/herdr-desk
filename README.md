@@ -32,7 +32,9 @@ herdr plugin install federbenjamin/desk
 
 herdr runs `scripts/fetch-or-build.sh`: it downloads the release binary for your platform, checks
 its SHA-256 against `checksums.txt`, and builds from source with Go when no release matches. When no
-`desk` is on your PATH it copies the binary to `~/.local/bin/desk` and says so.
+`desk` is on your PATH it copies the binary to `~/.local/bin/desk` and says so. A later install
+replaces that copy and tells you to run `desk daemon restart`; a `desk` from anywhere else
+(Homebrew, `go install`) is left alone.
 
 Then set up the home and the Claude Code plugin:
 
@@ -159,7 +161,7 @@ daemon answers, so a script can ask whether one runs.
 | `desk decide <text> [--tag <k:v>]… [--replaces e<id>] [--task <task>]` | appends a decision |
 | `desk session [<id>] [--md] [--all] [--continues <old-id>]` | prints the session's journal view; `--json` prints it with the keys `session`, `work`, `todo`, `decisions`; `--all` shows hidden lines; `--continues` first links the session to an older one |
 | `desk capture` | reads one line on stdin: words starting `#` set the thread, `@` the project, the rest is the title. On a terminal (the herdr popup) a refused line prints its error and asks again, so the pane does not close on it; an empty line or end of input exits 0. Off a terminal it takes one line and exits with the code of its refusal, as every command does |
-| `desk daemon [run]` · `stop` · `restart` · `status` | runs or controls the daemon. A second `run` prints `already running` and exits 0; on a client it prints that there is nothing to run and exits 0. `status` never starts a daemon and exits 1 when none answers; its JSON carries `backup_ts`, the last successful backup (`null` when none), `backup_error`, the error of a failed attempt since, so a failing nightly backup shows there, and `config_changed`, true when the config file was written after the daemon started |
+| `desk daemon [run]` · `stop` · `restart` · `status` | runs or controls the daemon. A second `run` prints `already running` and exits 0; on a client it prints that there is nothing to run and exits 0. `status` never starts a daemon and exits 1 when none answers; its JSON carries `backup_ts`, the last successful backup (`null` when none), `backup_error`, the error of a failed attempt since, so a failing nightly backup shows there, and `config_changed`, true when the config file now holds a different config from the one the daemon started with |
 | `desk runs [--all] [--json]` | one line per live run, oldest first: `run <id>  T<n>  <state>  <root>  <isolation>  <model>  <elapsed>` (`-` for a field not decided yet); `no live runs` when none. `--all` lists every run; `--json` prints the array |
 | `desk runs kill <task>` | kills the processes in the task's pane, closes the pane, ends the run `killed`, and blocks the task; prints `T<n> blocked`. `no-run` when the task has no live run; an agent gets `not-allowed` |
 | `desk runner [status]` · `pause` · `resume` | prints `runner <state>`, and ` · <live>/<cap> live` when the state is `on` or `paused`. `pause` starts no new runs, live runs go on, and the pause survives a restart; an agent gets `not-allowed` |
@@ -225,7 +227,7 @@ git_remote = ""   # set to back up events.jsonl nightly to this git remote
 ```
 
 The daemon reads the config file once, when it starts. A change needs `desk daemon restart` (on the
-home) to take effect. While the file is newer than the running daemon, each command that talks to
+home) to take effect. While the file holds a different config from the one the running daemon started with (a `touch`, or a rewrite with the same content, is not a change), each command that talks to
 the daemon, and each that writes the file (`setup`, `roots`, `client add`), prints one line on stderr
 naming `desk daemon restart`, and `desk daemon status` shows `"config_changed": true`.
 

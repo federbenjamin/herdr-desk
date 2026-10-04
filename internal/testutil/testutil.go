@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
-	"time"
 
 	"github.com/federbenjamin/desk/internal/api"
 	"github.com/federbenjamin/desk/internal/config"
@@ -70,7 +69,8 @@ type Home struct {
 	inst  *daemon.Instance
 }
 
-// StartHome writes the home's config (and its token when Listen) and starts its daemon in this process.
+// StartHome writes the home's config (and its token when Listen) and starts its daemon in this process. The
+// daemon starts from the file it just read, as `desk daemon run` does, so the file and the daemon agree.
 func StartHome(t testing.TB, o HomeOptions) *Home {
 	t.Helper()
 	cfg := o.Config
@@ -86,28 +86,34 @@ func StartHome(t testing.TB, o HomeOptions) *Home {
 		}
 		h.Token = token
 	}
-	h.cfg = cfg
+	if err := cfg.Save(h.Paths.ConfigFile()); err != nil {
+		t.Fatalf("testutil: save config: %v", err)
+	}
 	h.start(t)
 	t.Cleanup(h.Stop)
+	h.cfg = cfg
 	if o.Listen {
 		h.Addr = h.inst.Listen()
 		h.cfg.Home.Listen = h.Addr
 	}
-	if err := h.cfg.Save(h.Paths.ConfigFile()); err != nil {
-		t.Fatalf("testutil: save config: %v", err)
-	}
-	// The daemon started before this file was saved (the listen address is known only once it is up). Date the
-	// file before the start, as `desk setup` leaves it, so no command reports a config change that is not one.
-	before := time.Now().Add(-time.Minute)
-	if err := os.Chtimes(h.Paths.ConfigFile(), before, before); err != nil {
-		t.Fatalf("testutil: date config: %v", err)
-	}
 	return h
 }
 
+// start reads the config file and starts the daemon on it. Once the home has an address, the file is pinned to it
+// first (as a user pins a port), so a restart keeps the address and the file still equals what the daemon starts with.
 func (h *Home) start(t testing.TB) {
 	t.Helper()
-	inst, err := daemon.Start(context.Background(), h.Paths, h.cfg)
+	cfg, err := config.Load(h.Paths.ConfigFile())
+	if err != nil {
+		t.Fatalf("testutil: load config: %v", err)
+	}
+	if h.Addr != "" && cfg.Home.Listen != h.Addr {
+		cfg.Home.Listen = h.Addr
+		if err := cfg.Save(h.Paths.ConfigFile()); err != nil {
+			t.Fatalf("testutil: pin the address: %v", err)
+		}
+	}
+	inst, err := daemon.Start(context.Background(), h.Paths, cfg)
 	if err != nil {
 		t.Fatalf("testutil: start the home: %v", err)
 	}

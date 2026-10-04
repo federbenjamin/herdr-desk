@@ -81,6 +81,10 @@ func TestStartServesSecureEndpointsWritesInfoOnceAndCloseCleansUp(t *testing.T) 
 	if info.Listen == "" || info.Listen != instance.Listen() {
 		t.Fatalf("info listen = %q, instance Listen() = %q", info.Listen, instance.Listen())
 	}
+	// The digest is of the config as the file holds it ("127.0.0.1:0"), not of the address the daemon then bound.
+	if info.ConfigDigest != cfg.Digest() {
+		t.Fatalf("info config digest = %q, want %q (the config the daemon was given)", info.ConfigDigest, cfg.Digest())
+	}
 
 	if conn, err := net.DialTimeout("tcp", instance.Listen(), time.Second); err != nil {
 		t.Fatalf("dial TCP listener: %v", err)

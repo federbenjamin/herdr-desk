@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -121,9 +122,32 @@ func Load(path string) (Config, error) {
 	return c, nil
 }
 
+// Digest names the content of c: the SHA-256, in hex, of the bytes Save writes for it. Two configs with the same
+// digest behave the same, whatever the file they were read from looked like (comments, order, spacing, keys left at
+// their default).
+func (c Config) Digest() string {
+	b, err := toml.Marshal(c)
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%x", sha256.Sum256(b))
+}
+
+// ConfigChanged reports whether the config file now holds a different config from the one whose Digest the daemon
+// recorded when it started: the daemon reads the file only then. A missing file reads as Default(), and a file that
+// cannot be read or fails Load is a change. An empty started digest (a daemon that recorded none) is no change.
+// The file's times play no part: a touch, or a rewrite with the same content, is no change.
+func (p Paths) ConfigChanged(started string) bool {
+	if started == "" {
+		return false
+	}
+	c, err := Load(p.ConfigFile())
+	return err != nil || c.Digest() != started
+}
+
 // Save writes the config to path, 0600, through a temp file and a rename. The comment above
 // agents_may_arm is part of the struct, so every save keeps it. A file that already holds these bytes at 0600 is
-// left alone: its mtime says when the config last changed, and the stale-config check reads it.
+// left alone: there is nothing to write.
 func (c Config) Save(path string) error {
 	b, err := toml.Marshal(c)
 	if err != nil {

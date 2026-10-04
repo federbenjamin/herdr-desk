@@ -71,8 +71,9 @@ type Status struct {
 	// last attempt when it failed after that run, "" otherwise. Both come from the backup state file.
 	BackupTS    *time.Time `json:"backup_ts"`
 	BackupError string     `json:"backup_error"`
-	// ConfigChanged is true when the config file was written after the daemon started. The daemon reads the file
-	// once, at start, so it is still running on the old values until `desk daemon restart`.
+	// ConfigChanged is true when the config file now holds a different config from the one the daemon started
+	// with (a touch or a same-content rewrite is not a change). The daemon reads the file once, at start, so it
+	// is still running on the old values until `desk daemon restart`.
 	ConfigChanged bool `json:"config_changed"`
 }
 
