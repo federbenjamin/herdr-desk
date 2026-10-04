@@ -24,9 +24,10 @@ type Result struct {
 	Pushed    bool `json:"pushed"`
 }
 
-// state is the backup state file.
+// state is the backup state file: the last successful run, and the error of an attempt that failed after it.
 type state struct {
 	LastRun time.Time `json:"last_run"`
+	Error   string    `json:"error,omitempty"`
 }
 
 const (
@@ -35,14 +36,20 @@ const (
 )
 
 // Run exports every event to <BackupDir>/events.jsonl, commits when the file changed, pushes to the remote's
-// main branch, and records the time of the run in the backup state file.
+// main branch, and records the time of the run in the backup state file. A failed run records its error
+// there instead, keeping the last successful time; a later success clears the error.
 func Run(ctx context.Context, st *store.Store, p config.Paths, remote string) (Result, error) {
 	res, err := run(ctx, st, p, remote)
-	if err != nil && remote != "" {
-		// The remote may carry a credential, and the error reaches the daemon log and the API.
+	if err == nil {
+		return res, nil
+	}
+	if remote != "" {
+		// The remote may carry a credential, and the error reaches the daemon log, the API, and the state file.
 		err = errors.New(strings.ReplaceAll(err.Error(), remote, "<remote>"))
 	}
-	return res, err
+	s, _ := readState(p)
+	s.Error = err.Error()
+	return res, errors.Join(err, writeState(p, s))
 }
 
 func run(ctx context.Context, st *store.Store, p config.Paths, remote string) (Result, error) {
@@ -84,17 +91,33 @@ func run(ctx context.Context, st *store.Store, p config.Paths, remote string) (R
 	return res, writeState(p, state{LastRun: time.Now().UTC()})
 }
 
-// Due reports whether no run is recorded or the last recorded run is over 24 hours before now.
+// Due reports whether no successful run is recorded or the last one is over 24 hours before now, so a
+// failed run is tried again on the next tick.
 func Due(p config.Paths, now time.Time) bool {
-	b, err := os.ReadFile(p.BackupState())
-	if err != nil {
-		return true
-	}
-	var s state
-	if json.Unmarshal(b, &s) != nil || s.LastRun.IsZero() {
+	s, err := readState(p)
+	if err != nil || s.LastRun.IsZero() {
 		return true
 	}
 	return now.Sub(s.LastRun) > 24*time.Hour
+}
+
+// Last returns the last successful run, nil when none is recorded, and the error of an attempt that failed
+// after it, "" when none did. A state file that cannot be read is no record.
+func Last(p config.Paths) (*time.Time, string) {
+	s, _ := readState(p)
+	if s.LastRun.IsZero() {
+		return nil, s.Error
+	}
+	return &s.LastRun, s.Error
+}
+
+func readState(p config.Paths) (state, error) {
+	var s state
+	b, err := os.ReadFile(p.BackupState())
+	if err != nil {
+		return s, err
+	}
+	return s, json.Unmarshal(b, &s)
 }
 
 func export(ctx context.Context, st *store.Store, path string) (int, error) {

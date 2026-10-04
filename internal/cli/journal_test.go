@@ -83,6 +83,12 @@ func TestOfflineNoteQueuesAndForwardsOnTheNextJournalWrite(t *testing.T) {
 	if !strings.Contains(queued.stderr, "forward") {
 		t.Fatalf("offline note stderr = %q, want forwarding notice", queued.stderr)
 	}
+	if why := "the home at " + home.Addr + " did not answer: "; !strings.Contains(queued.stderr, why) || !strings.Contains(queued.stderr, "dial tcp") {
+		t.Fatalf("offline note stderr = %q, want %q and the dial error", queued.stderr, why)
+	}
+	if strings.Contains(queued.stderr, home.Token) || strings.Contains(queued.stderr, model.CodeHomeUnreachable) {
+		t.Fatalf("offline note stderr = %q, want neither the token nor a refusal code", queued.stderr)
+	}
 
 	home.Restart(t)
 	sent := runDeskWithEnv(t, client, t.TempDir(), []string{"note", "sent after reconnect"}, "", map[string]string{"DESK_SESSION": "offline-journal"}, nil)

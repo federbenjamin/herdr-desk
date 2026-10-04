@@ -264,20 +264,7 @@ func ClientAdd(ctx context.Context, p config.Paths, home, token string) error {
 	if err := cfg.Validate(); err != nil {
 		return badInput(err)
 	}
-	// The client reads its token from a token file, so the check runs on a scratch machine that holds
-	// only this token.
-	tmp, err := os.MkdirTemp("", "desk-client-add")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(tmp)
-	probe := config.Paths{ConfigDir: tmp, StateDir: tmp, DataDir: tmp, CacheDir: tmp}
-	if err := config.WriteToken(probe, token); err != nil {
-		return err
-	}
-	probeCfg := config.Default()
-	probeCfg.Client.Home = home
-	if _, err := api.NewClient(api.ClientOptions{Paths: probe, Config: probeCfg}).Status(ctx); err != nil {
+	if _, err := api.NewClient(api.ClientOptions{Paths: p, Config: cfg, Token: token}).Status(ctx); err != nil {
 		return err
 	}
 	if err := config.WriteToken(p, token); err != nil {

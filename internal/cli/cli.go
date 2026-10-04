@@ -71,13 +71,13 @@ func exitCode(err error) int {
 
 // app is one Run: the environment, the flags every command shares, and what is loaded once.
 type app struct {
-	ctx      context.Context
-	env      Env
-	paths    config.Paths
-	cfg      *config.Config
-	session  string // --session
-	started  bool   // a command's own code began; an error before it is a usage error
-	spawnErr error  // why the last daemon start failed
+	ctx        context.Context
+	env        Env
+	paths      config.Paths
+	cfg        *config.Config
+	session    string // --session
+	started    bool   // a command's own code began; an error before it is a usage error
+	unanswered string // why the last write was queued, from api.ClientOptions.Unreachable
 }
 
 // Run runs one desk command and returns its exit code. args excludes the program name.
@@ -168,32 +168,17 @@ func (a *app) client() (*api.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	var spawn func(config.Paths) error
-	if a.env.Spawn != nil {
-		spawn = func(p config.Paths) error {
-			a.spawnErr = a.env.Spawn(p)
-			return a.spawnErr
-		}
-	}
 	return api.NewClient(api.ClientOptions{
 		Paths:  a.paths,
 		Config: c,
-		Spawn:  spawn,
+		Spawn:  a.env.Spawn,
 		Refused: func(kind model.Kind, r *model.Refusal) {
 			fmt.Fprintf(a.env.Stderr, "desk: a queued %s was refused: %s\n", kind, r.Error())
 		},
+		Unreachable: func(err error) {
+			a.unanswered = strings.TrimPrefix(err.Error(), model.CodeHomeUnreachable+": ")
+		},
 	}), nil
-}
-
-// unanswered says why a write was queued: the daemon that would not start, or the home that did not answer.
-func (a *app) unanswered() string {
-	switch {
-	case a.spawnErr != nil:
-		return "the desk daemon did not start: " + a.spawnErr.Error()
-	case a.cfg != nil && a.cfg.IsClient():
-		return "the home at " + a.cfg.Client.Home + " did not answer"
-	}
-	return "the desk daemon did not answer"
 }
 
 // callerSession is the first of --session, DESK_SESSION, and the variable [agent] session_env names.

@@ -61,6 +61,10 @@ type Status struct {
 	StartedTS time.Time            `json:"started_ts"`
 	RunnerOn  bool                 `json:"runner_on"`
 	Tasks     map[model.Status]int `json:"tasks"`
+	// BackupTS is the last successful backup run, nil when none is recorded. BackupError is the error of the
+	// last attempt when it failed after that run, "" otherwise. Both come from the backup state file.
+	BackupTS    *time.Time `json:"backup_ts"`
+	BackupError string     `json:"backup_error"`
 }
 
 // TaskList is what tasks.list returns, and what Client.ListTasks returns when it answers from the snapshot.

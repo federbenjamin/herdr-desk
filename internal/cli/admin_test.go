@@ -38,6 +38,36 @@ func TestDaemonStatusReportsTheRunningHomeAndNeverSpawns(t *testing.T) {
 	}
 }
 
+func TestDaemonStatusPrintsTheLastBackupOutcome(t *testing.T) {
+	cfg := config.Default()
+	cfg.Backup.GitRemote = filepath.Join(t.TempDir(), "desk-user:s3cret-token@nowhere", "repo.git")
+	home := testutil.StartHome(t, testutil.HomeOptions{Config: cfg})
+	status := func() map[string]json.RawMessage {
+		t.Helper()
+		result := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"daemon", "status"}, "", nil, nil)
+		var keys map[string]json.RawMessage
+		if result.exit != 0 || json.Unmarshal([]byte(result.stdout), &keys) != nil {
+			t.Fatalf("daemon status = (%d, %q, %q), want its JSON", result.exit, result.stdout, result.stderr)
+		}
+		return keys
+	}
+	if got := status(); string(got["backup_ts"]) != "null" || string(got["backup_error"]) != `""` {
+		t.Fatalf("daemon status before any backup = backup_ts %s, backup_error %s; want null and empty", got["backup_ts"], got["backup_error"])
+	}
+
+	if run := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"backup"}, "", nil, nil); run.exit != 3 {
+		t.Fatalf("backup to a missing remote = (%d, %q, %q), want exit 3", run.exit, run.stdout, run.stderr)
+	}
+	got := status()
+	var msg string
+	if err := json.Unmarshal(got["backup_error"], &msg); err != nil || string(got["backup_ts"]) != "null" || !strings.Contains(msg, "git push") {
+		t.Fatalf("daemon status after a failed backup = backup_ts %s, backup_error %s; want null and the push's error", got["backup_ts"], got["backup_error"])
+	}
+	if strings.Contains(msg, "s3cret-token") {
+		t.Fatalf("daemon status backup_error = %q, want the remote left out", msg)
+	}
+}
+
 func TestDaemonRunTreatsAnExistingDaemonAndAClientAsSuccessfulNoops(t *testing.T) {
 	home := testutil.StartHome(t, testutil.HomeOptions{Listen: true})
 	running := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"daemon", "run"}, "", nil, nil)

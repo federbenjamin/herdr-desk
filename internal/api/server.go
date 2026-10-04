@@ -97,12 +97,15 @@ func NewServer(o ServerOptions) *Server {
 		}),
 		MethodStatus: bind(func(ctx context.Context, _ empty) (any, error) {
 			counts, err := st.CountByStatus(ctx)
+			backupTS, backupErr := backup.Last(o.Paths)
 			return Status{
-				Version:   version.Version,
-				Listen:    o.Config.Home.Listen,
-				StartedTS: o.StartedTS,
-				RunnerOn:  o.Config.Runner.Enabled,
-				Tasks:     counts,
+				Version:     version.Version,
+				Listen:      o.Config.Home.Listen,
+				StartedTS:   o.StartedTS,
+				RunnerOn:    o.Config.Runner.Enabled,
+				Tasks:       counts,
+				BackupTS:    backupTS,
+				BackupError: backupErr,
 			}, err
 		}),
 		MethodBackupRun: bind(func(ctx context.Context, _ empty) (any, error) {

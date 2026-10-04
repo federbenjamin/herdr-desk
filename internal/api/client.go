@@ -25,6 +25,11 @@ type ClientOptions struct {
 	Spawn   func(config.Paths) error // starts the daemon on a home; nil → never
 	// Refused is called once for each queued entry the home refuses for good; nil → the entry is dropped silently.
 	Refused func(kind model.Kind, r *model.Refusal)
+	// Token, when set, is used in place of the token file; `client add` checks a home with it before saving it.
+	Token string
+	// Unreachable is called with the error each time a write is queued because the home did not answer;
+	// nil → not reported. Append's results are unchanged: (Event{}, true, nil).
+	Unreachable func(err error)
 }
 
 // Client calls the home: through the unix socket on the home itself, through TCP with the token on a client.
@@ -122,9 +127,11 @@ func (c *Client) post(ctx context.Context, method string, body []byte, res any) 
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if c.o.Config.IsClient() {
-		token, err := config.ReadToken(c.o.Paths)
-		if err != nil {
-			return fmt.Errorf("read the token: %w", err)
+		token := c.o.Token
+		if token == "" {
+			if token, err = config.ReadToken(c.o.Paths); err != nil {
+				return fmt.Errorf("read the token: %w", err)
+			}
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
@@ -243,6 +250,9 @@ func (c *Client) Append(ctx context.Context, r AppendRequest) (ev model.Event, q
 	}
 	if qerr := c.enqueue(r); qerr != nil {
 		return model.Event{}, false, errors.Join(err, qerr)
+	}
+	if c.o.Unreachable != nil {
+		c.o.Unreachable(err)
 	}
 	return model.Event{}, true, nil
 }

@@ -335,6 +335,34 @@ func TestClientAddWritesOnlyAfterTheHomeAcceptsItsToken(t *testing.T) {
 	}
 }
 
+func TestClientAddChecksTheHomeWithoutWritingATemporaryToken(t *testing.T) {
+	home := testutil.StartHome(t, testutil.HomeOptions{Listen: true})
+	client := testutil.NewMachine(t)
+	tmp := t.TempDir()
+	if err := os.Chmod(tmp, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(tmp, 0o700) })
+	t.Setenv("TMPDIR", tmp)
+
+	if err := setup.ClientAdd(context.Background(), client.Paths, home.Addr, home.Token); err != nil {
+		t.Fatalf("ClientAdd with a temp folder it cannot write = %v, want the check made with the token in memory", err)
+	}
+	root := filepath.Dir(filepath.Dir(client.Paths.ConfigDir))
+	var files []string
+	if err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			files = append(files, path)
+		}
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{client.Paths.ConfigFile(), client.Paths.TokenFile()}; !reflect.DeepEqual(files, want) {
+		t.Errorf("ClientAdd wrote %q, want only %q", files, want)
+	}
+}
+
 func setupPaths(t *testing.T) (config.Paths, func(string) string) {
 	t.Helper()
 	base := t.TempDir()

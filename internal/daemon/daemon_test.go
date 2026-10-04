@@ -355,6 +355,41 @@ func TestBackupTickRunsDueBackupAndSkipsRecentRun(t *testing.T) {
 	}
 }
 
+func TestAFailingHourlyBackupShowsInStatusAndIsTriedAgainOnTheNextTick(t *testing.T) {
+	restoreTick := daemon.SetBackupTick(5 * time.Millisecond)
+	t.Cleanup(restoreTick)
+
+	paths := testutil.NewMachine(t).Paths
+	remote := filepath.Join(paths.DataDir, "remote.git")
+	cfg := config.Default()
+	cfg.Backup.GitRemote = remote
+	instance, err := daemon.Start(context.Background(), paths, cfg)
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	t.Cleanup(func() { _ = instance.Close() })
+	client := api.NewClient(api.ClientOptions{Paths: paths, Config: cfg})
+	status := func() api.Status {
+		t.Helper()
+		st, err := client.Status(context.Background())
+		if err != nil {
+			t.Fatalf("Status(): %v", err)
+		}
+		return st
+	}
+
+	pollUntil(t, 5*time.Second, func() bool { return status().BackupError != "" })
+	if st := status(); st.BackupTS != nil || !strings.Contains(st.BackupError, "git push") {
+		t.Fatalf("status after a failed hourly backup = (%v, %q), want no success and the push's error", st.BackupTS, st.BackupError)
+	}
+
+	initBareRepository(t, remote)
+	pollUntil(t, 5*time.Second, func() bool { return status().BackupTS != nil })
+	if st := status(); st.BackupError != "" {
+		t.Fatalf("status after the next tick's success = (%v, %q), want the error cleared", st.BackupTS, st.BackupError)
+	}
+}
+
 func pollUntil(t *testing.T, timeout time.Duration, condition func() bool) {
 	t.Helper()
 	if condition() {

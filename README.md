@@ -141,12 +141,12 @@ Refusal codes: `unknown-task`, `unknown-step`, `unknown-project`, `unknown-event
 | `desk set <task> [<status>] [--thread <t>] [--root <r>] [--isolation <i>] [--model <m>] [--archive\|--unarchive] [--ref <ref>] [--merged]` | patches fields; `review --merged` writes the status that `runner.on_merged` names |
 | `desk edit <task> [--title <t>] [--notes <n>]` | replaces the title or the notes |
 | `desk steps <task> add <text>` · `toggle <id>` · `rename <id> <text>` · `remove <id>` | step ids are `s1`, `s2`, … per task, never reused |
-| `desk note <text> [--task <task>] [--ref <ref>] [--branch <b>] [--tag <t>]…` | appends a note and prints `e<id>`, or `queued` when the home is unreachable |
+| `desk note <text> [--task <task>] [--ref <ref>] [--branch <b>] [--tag <t>]…` | appends a note and prints `e<id>`, or `queued` when the home is unreachable (stderr says why the home did not answer) |
 | `desk note --merged --branch <b> [--pr <n>] [--sha <sha>] [<text>]` | records that a branch merged |
 | `desk decide <text> [--tag <k:v>]… [--replaces e<id>] [--task <task>]` | appends a decision |
 | `desk session [<id>] [--md] [--all] [--continues <old-id>]` | prints the session's journal view; `--json` prints it with the keys `session`, `work`, `todo`, `decisions`; `--all` shows hidden lines; `--continues` first links the session to an older one |
 | `desk capture` | reads one line on stdin: words starting `#` set the thread, `@` the project, the rest is the title |
-| `desk daemon [run]` · `stop` · `restart` · `status` | runs or controls the daemon. A second `run` prints `already running` and exits 0; on a client it prints that there is nothing to run and exits 0. `status` never starts a daemon |
+| `desk daemon [run]` · `stop` · `restart` · `status` | runs or controls the daemon. A second `run` prints `already running` and exits 0; on a client it prints that there is nothing to run and exits 0. `status` never starts a daemon; its JSON carries `backup_ts`, the last successful backup (`null` when none), and `backup_error`, the error of a failed attempt since, so a failing nightly backup shows there |
 | `desk token [show]` · `rotate` | prints or rotates the token |
 | `desk client add <host:port> [--token-file <path>]` | joins a home; the token comes from the file or stdin, never an argument |
 | `desk roots [list]` · `add <path> [--about <a>] [--isolation <i>]` · `remove <path>` | edits `[[roots]]` |
