@@ -1,15 +1,19 @@
 package board_test
 
 import (
+	"errors"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/federbenjamin/desk/internal/api"
 	"github.com/federbenjamin/desk/internal/board"
 	"github.com/federbenjamin/desk/internal/model"
+	"github.com/federbenjamin/desk/internal/store"
 )
 
 var w3Now = time.Date(2026, time.October, 4, 15, 4, 5, 0, time.UTC)
@@ -251,4 +255,68 @@ func TestViewOfflineRefusesWritesButKeepsFiltersAvailable(t *testing.T) {
 		t.Fatalf("offline project filter emitted effects %#v", effects)
 	}
 	w3RequireContains(t, s.Text(), "desk  alpha ▾")
+}
+
+// w3Inject holds escape sequences that would act on a terminal: clear the screen, set the window title, blink,
+// and a C1 control.
+const w3Inject = "\x1b[2J\x1b]0;owned\x07\x1b[5m\u009b\r"
+
+var w3BoardSGR = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+// w3RequireInert fails when the screen holds a control character, or when Render holds anything but the board's
+// own colour sequences.
+func w3RequireInert(t *testing.T, s board.State) {
+	t.Helper()
+	for _, r := range s.Text() {
+		if r != '\n' && unicode.IsControl(r) {
+			t.Fatalf("Text holds the control character %q:\n%q", r, s.Text())
+		}
+	}
+	render := s.Render()
+	if strings.Contains(render, "\x1b[5m") {
+		t.Fatalf("Render holds an injected blink sequence:\n%q", render)
+	}
+	for _, r := range w3BoardSGR.ReplaceAllString(render, "") {
+		if r != '\n' && unicode.IsControl(r) {
+			t.Fatalf("Render holds the control character %q outside the board's colours:\n%q", r, render)
+		}
+	}
+}
+
+func TestViewTaskTextReachesTheTerminalAsInertText(t *testing.T) {
+	task := model.Task{
+		Number: 1, Status: model.StatusStarted, UpdatedTS: w3Now,
+		Title: "title" + w3Inject, Project: "/work/alpha" + w3Inject, Thread: "ops" + w3Inject,
+		Notes: "notes" + w3Inject + "\nsecond" + w3Inject, Root: "/root" + w3Inject, Isolation: "self" + w3Inject, Model: "m" + w3Inject,
+		Steps: []model.Step{{ShortID: "s1", Text: "step" + w3Inject}},
+	}
+	blocked := model.Task{Number: 2, Status: model.StatusBlocked, Title: "b", UpdatedTS: w3Now, Thread: "agent"}
+	data := board.Data{
+		Tasks:  []model.Task{task, blocked},
+		Runs:   []model.Run{{Task: 1, Root: "/root" + w3Inject, Isolation: "self" + w3Inject, Model: "m" + w3Inject, StartedTS: w3Now}},
+		Status: api.Status{RunnerState: "odd" + w3Inject},
+		Notes:  map[int]string{1: "last" + w3Inject, 2: "ask" + w3Inject},
+	}
+	history := []model.Event{
+		{TS: w3Now, Kind: model.KindNote, Data: model.MustData(model.NoteData{Text: "note" + w3Inject, Ref: "docs/a.md" + w3Inject})},
+		{TS: w3Now, Kind: model.KindDecision, Data: model.MustData(model.DecisionData{Text: "decide" + w3Inject})},
+		{TS: w3Now, Kind: model.KindSet, Data: model.MustData(model.Patch{Thread: &task.Thread, Ref: "https://example.test/" + w3Inject})},
+	}
+
+	for _, width := range []int{60, 90, 120} {
+		s := w3State(width, data)
+		w3RequireInert(t, s)
+		w3RequireContains(t, s.Text(), "title[2J]0;owned[5m")
+		s, _ = s.Update(press('G'))
+		s, _ = s.Update(named(tea.KeyEnter))
+		s, _ = s.Update(board.TaskLoaded{Detail: store.TaskDetail{Task: task, History: history}})
+		w3RequireInert(t, s)
+		if width >= 90 {
+			w3RequireContains(t, s.Text(), "docs/a.md[2J]0;owned[5m")
+		}
+		s, _ = s.Update(press('o'))
+		w3RequireInert(t, s)
+		s, _ = s.Update(board.Failed{Err: errors.New("refused" + w3Inject)})
+		w3RequireInert(t, s)
+	}
 }

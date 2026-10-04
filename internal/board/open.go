@@ -19,12 +19,9 @@ var herdrID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9:_.-]*$`)
 
 const viewerPlugin = "herdr-file-viewer"
 
-// focusArgvs are the commands that focus a run's pane. herdr has no focus-by-id: zooming the pane on and off
-// focuses it, as scripts/open-pane.sh does.
+// focusArgvs are the commands that focus a run's pane. herdr focuses by id only a pane a plugin owns, and a run's
+// pane is an agent's, so zooming it on and off is what focuses it.
 func focusArgvs(herdr string, r model.Run) ([][]string, error) {
-	if herdr == "" {
-		return nil, errors.New("f needs herdr, and herdr is not found")
-	}
 	for _, id := range []string{r.Workspace, r.Pane} {
 		if !herdrID.MatchString(id) {
 			return nil, fmt.Errorf("the run's workspace or pane id %q is not one herdr gives", id)
@@ -74,13 +71,21 @@ func viewerListArgv(herdr string) []string {
 	return []string{herdr, "plugin", "list", "--plugin", viewerPlugin, "--json"}
 }
 
-func hasViewer(out []byte) bool {
+// listsPlugin reads herdr's plugin list answer: true when it holds a plugin. An answer that is not that JSON is an
+// error, never "not installed".
+func listsPlugin(out []byte) (bool, error) {
 	var list struct {
-		Result struct {
+		Result *struct {
 			Plugins []json.RawMessage `json:"plugins"`
 		} `json:"result"`
 	}
-	return json.Unmarshal(out, &list) == nil && len(list.Result.Plugins) > 0
+	if err := json.Unmarshal(out, &list); err != nil {
+		return false, err
+	}
+	if list.Result == nil {
+		return false, errors.New("the answer has no result")
+	}
+	return len(list.Result.Plugins) > 0, nil
 }
 
 func viewerArgv(herdr, path string) []string {

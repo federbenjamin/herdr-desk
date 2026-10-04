@@ -1,6 +1,7 @@
 package board
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -148,13 +149,24 @@ type State struct {
 	waiting bool // a Refresh is unanswered
 	again   bool // a Tick came while waiting
 
-	prompt  prompt
-	adding  bool
-	add     CaptureState
-	editing bool
-	notes   textarea.Model
-	picking bool
-	pickSel int
+	prompt    prompt
+	adding    bool
+	add       CaptureState
+	editing   bool
+	notes     textarea.Model
+	notesFrom string // the task's notes when the editor opened, or when ctrl+s last warned that they changed
+	notesTop  int    // the editor's first drawn line
+	picking   bool
+	pickSel   int
+
+	// The typed text of the last notes save and the last answer, so a failure of its write opens it again.
+	notesOut, answerOut unsaved
+}
+
+// unsaved is text the user typed that a write carries, for a task.
+type unsaved struct {
+	task int
+	text string
 }
 
 // NewState returns the board page with no data, 80 columns by 24 rows.
@@ -177,8 +189,8 @@ func errText(err error) string {
 }
 
 // Update applies one message and returns the next State and the I/O it asks for. It does no I/O.
-// It takes tea.KeyPressMsg, tea.WindowSizeMsg, Loaded, TaskLoaded, Added, Failed, and Tick; any other message
-// changes nothing.
+// It takes tea.KeyPressMsg, tea.PasteMsg, tea.WindowSizeMsg, Loaded, TaskLoaded, Added, Failed, and Tick; any
+// other message changes nothing.
 func (s State) Update(msg tea.Msg) (State, []Effect) {
 	var eff []Effect
 	switch m := msg.(type) {
@@ -188,35 +200,28 @@ func (s State) Update(msg tea.Msg) (State, []Effect) {
 		}
 		s.status = ""
 		s, eff = s.key(m)
+	case tea.PasteMsg:
+		s, eff = s.paste(m)
 	case tea.WindowSizeMsg:
 		s.width, s.height = max(m.Width, 1), max(m.Height, 1)
 		s.add.width = s.width
 	case Loaded:
 		s.data = m.Data
-		s.waiting = false
-		s.follow()
-		if s.again {
-			s.again = false
-			s, eff = s.tick()
+		if s.data.Offline {
+			// A snapshot holds no history: the task page shows only what the snapshot holds.
+			s.detail, s.hasDetail = store.TaskDetail{}, false
 		}
+		s.follow()
+		s, eff = s.answered()
 	case TaskLoaded:
-		if m.Detail.Task.Number == s.shown() && s.shown() != 0 {
+		if m.Detail.Task.Number == s.shown() && s.shown() != 0 && !s.data.Offline {
 			s.detail, s.hasDetail = m.Detail, true
 		}
 	case Added:
 		s.adding = false
 		s, eff = s.tick()
 	case Failed:
-		if s.adding {
-			s.add, _ = s.add.Update(m)
-		} else {
-			s.status = errText(m.Err)
-		}
-		s.waiting = false
-		if s.again {
-			s.again = false
-			s, eff = s.tick()
-		}
+		s, eff = s.failed(m)
 	case Tick:
 		s, eff = s.tick()
 	default:
@@ -226,17 +231,108 @@ func (s State) Update(msg tea.Msg) (State, []Effect) {
 	return s, eff
 }
 
-func (s State) tick() (State, []Effect) {
+// effectErr is the error of an effect that failed, with the effect. Run's executor wraps every Failed's error
+// in one, so State can tell which outstanding write or refresh a failure answers. Its text is the error's.
+type effectErr struct {
+	effect Effect
+	err    error
+}
+
+func (e effectErr) Error() string { return e.err.Error() }
+func (e effectErr) Unwrap() error { return e.err }
+
+// answers reports whether a Failed answers an outstanding effect that match accepts. A Failed whose error names
+// no effect (one not made by Run's executor) answers every outstanding effect, as one unanswered request would.
+func answers(m Failed, match func(Effect) bool) bool {
+	var e effectErr
+	return !errors.As(m.Err, &e) || match(e.effect)
+}
+
+func (s State) failed(m Failed) (State, []Effect) {
+	text := errText(m.Err)
+	shown := false
+	switch {
+	case s.adding && s.add.busy && answers(m, func(e Effect) bool { _, ok := e.(AddTask); return ok }):
+		s, _ = s.toAdd(m)
+		shown = s.adding
+	case s.notesOut.task != 0 && answers(m, func(e Effect) bool {
+		set, ok := e.(SetTask)
+		return ok && set.Task == s.notesOut.task && set.Patch.Notes != nil
+	}):
+		u := s.notesOut
+		s.notesOut = unsaved{}
+		if s.inputOpen() {
+			break
+		}
+		if s.shown() != u.task {
+			s.page, s.taskNum, s.hasDetail, s.detail, s.taskTop = pageTask, u.task, false, store.TaskDetail{}, 0
+		}
+		s.editing, s.notes, s.notesTop = true, newNotes(u.text), 0
+		s.notesFrom = s.task().Notes
+	case s.answerOut.task != 0 && answers(m, func(e Effect) bool {
+		r, ok := e.(Rearm)
+		return ok && r.Task == s.answerOut.task && r.Answer != ""
+	}):
+		u := s.answerOut
+		s.answerOut = unsaved{}
+		if !s.inputOpen() {
+			s.prompt = newPrompt(promptAnswer, "answer: ", u.task, u.text)
+		}
+	}
+	if !shown {
+		s.status = text
+	}
+	if s.waiting && answers(m, func(e Effect) bool { _, ok := e.(Refresh); return ok }) {
+		return s.answered()
+	}
+	return s, nil
+}
+
+// inputOpen reports whether a text input, the notes editor, a prompt, or the pick list has the keys.
+func (s State) inputOpen() bool {
+	return s.adding || s.editing || s.prompt.kind != promptNone || s.picking
+}
+
+// answered closes the outstanding Refresh, and asks for the Tick that came while it was out.
+func (s State) answered() (State, []Effect) {
+	s.waiting = false
+	if !s.again {
+		return s, nil
+	}
+	s.again = false
+	return s.tick()
+}
+
+// refresh asks for a Refresh as the drawer stands. While one is out it asks for nothing and holds a Tick, which
+// the answer asks for, so one Refresh is out at a time.
+func (s State) refresh() (State, []Effect) {
 	if s.waiting {
 		s.again = true
 		return s, nil
 	}
 	s.waiting = true
-	eff := []Effect{Refresh{Done: s.drawer}}
-	if n := s.shown(); n != 0 && !s.data.Offline {
+	return s, []Effect{Refresh{Done: s.drawer}}
+}
+
+func (s State) tick() (State, []Effect) {
+	s, eff := s.refresh()
+	if n := s.shown(); eff != nil && n != 0 && !s.data.Offline {
 		eff = append(eff, LoadTask{Task: n})
 	}
 	return s, eff
+}
+
+// paste sends pasted text to the open text input as typing it would; with none open it changes nothing.
+func (s State) paste(m tea.PasteMsg) (State, []Effect) {
+	switch {
+	case s.adding:
+		return s.toAdd(m)
+	case s.editing:
+		s.notes = typeNotes(s.notes, m)
+	case s.prompt.kind != promptNone && !s.prompt.confirm():
+		s = s.typePrompt(m)
+	}
+	return s, nil
 }
 
 // shown is the task a page shows: the open task page's, or in the wide layout the selection's; 0 for none.
@@ -271,20 +367,33 @@ func (s *State) scroll() {
 		w, _ = s.split()
 	}
 	lines, selLine, span := s.boardLines(plain, w)
-	if selLine < s.top {
-		s.top = selLine
-	}
-	if selLine+span > s.top+body {
-		s.top = selLine + span - body
-	}
-	s.top = max(min(s.top, len(lines)-body), 0)
+	s.top = keepInView(s.top, selLine, span, body, len(lines))
 	if s.page == pageTask || s.wide() {
 		tw := s.width
 		if s.wide() {
 			_, tw = s.split()
 		}
-		s.taskTop = max(min(s.taskTop, len(s.taskBody(plain, tw))-body), 0)
+		task, stepLine := s.taskBody(plain, tw)
+		if stepLine >= 0 {
+			s.taskTop = keepInView(s.taskTop, stepLine, 1, body, len(task))
+		}
+		s.taskTop = max(min(s.taskTop, len(task)-body), 0)
+		if s.editing {
+			s.notesTop = keepInView(s.notesTop, s.notesCursor(tw), 1, body, len(s.notesLines(colour, tw)))
+		}
 	}
+}
+
+// keepInView returns the first drawn line of a list of n lines, body of them drawn, moved from top as little as
+// keeps lines at to at+span-1 drawn.
+func keepInView(top, at, span, body, n int) int {
+	if at < top {
+		top = at
+	}
+	if at+span > top+body {
+		top = at + span - body
+	}
+	return max(min(top, n-body), 0)
 }
 
 func (s State) selected() (model.Task, bool) {
@@ -307,7 +416,7 @@ func (s State) key(m tea.KeyPressMsg) (State, []Effect) {
 	k := m.String()
 	switch {
 	case s.adding:
-		return s.addKey(m)
+		return s.toAdd(m)
 	case s.editing:
 		return s.notesKey(m)
 	case s.prompt.kind != promptNone:
@@ -371,8 +480,7 @@ func (s State) boardKey(k string) (State, []Effect) {
 		s.drawer = !s.drawer
 		s.follow()
 		if s.drawer {
-			s.waiting = true
-			return s, []Effect{Refresh{Done: true}}
+			return s.refresh()
 		}
 		return s, nil
 	case "?":
@@ -495,19 +603,29 @@ func (s State) act(k string, t model.Task) (State, []Effect) {
 		s.prompt = newConfirm(promptKill, fmt.Sprintf("kill %s's run? y/n", taskID(t.Number)), t.Number)
 		return s, nil
 	case "P":
-		switch st := s.data.Status.RunnerState; st {
+		switch st := s.runnerWord(); st {
 		case api.RunnerStateOn:
 			return s, []Effect{PauseRunner{Paused: true}}
 		case api.RunnerStatePaused:
 			return s, []Effect{PauseRunner{Paused: false}}
-		case "":
-			s.status = "the runner is off"
 		default:
 			s.status = "the runner is " + st
 		}
 		return s, nil
 	}
 	return s, nil
+}
+
+// runnerWord is the runner's state as the header names it: Status.RunnerState, else on or off from RunnerOn for
+// a home that has no runner.
+func (s State) runnerWord() string {
+	switch {
+	case s.data.Status.RunnerState != "":
+		return s.data.Status.RunnerState
+	case s.data.Status.RunnerOn:
+		return api.RunnerStateOn
+	}
+	return api.RunnerStateOff
 }
 
 func (s State) nextProject() projFilter {
@@ -567,9 +685,10 @@ func (s State) matches(t model.Task) bool {
 	return strings.Contains(strings.ToLower(t.Title), q) || strings.Contains(strings.ToLower(taskID(t.Number)), q)
 }
 
-func (s State) addKey(m tea.KeyPressMsg) (State, []Effect) {
+// toAdd sends a message to the add box. Its Quit closes the box and does not end the program.
+func (s State) toAdd(msg tea.Msg) (State, []Effect) {
 	var eff []Effect
-	s.add, eff = s.add.Update(m)
+	s.add, eff = s.add.Update(msg)
 	var out []Effect
 	for _, e := range eff {
 		if _, quit := e.(Quit); quit {
@@ -629,9 +748,9 @@ func newInput(value string) textinput.Model {
 	return in
 }
 
-// typeInto sends a key to a text input. The input's value is copied first: a State is a value, and the input's
-// buffer would otherwise be shared with every earlier copy of it.
-func typeInto(in textinput.Model, m tea.KeyPressMsg) textinput.Model {
+// typeInto sends a key or a paste to a text input. The input's value is copied first: a State is a value, and the
+// input's buffer would otherwise be shared with every earlier copy of it.
+func typeInto(in textinput.Model, m tea.Msg) textinput.Model {
 	pos := in.Position()
 	in.SetValue(in.Value())
 	in.SetCursor(pos)
@@ -640,17 +759,32 @@ func typeInto(in textinput.Model, m tea.KeyPressMsg) textinput.Model {
 }
 
 func inputLine(p palette, in textinput.Model) string {
-	r := []rune(in.Value())
-	pos := min(in.Position(), len(r))
+	return withCursor(p, in.Value(), in.Position())
+}
+
+// withCursor draws a line with the cursor on its rune at col, or on a space after its end. The plain palette
+// draws no cursor.
+func withCursor(p palette, line string, col int) string {
 	if !p.colour {
-		return string(r)
+		return line
 	}
-	at := " "
-	after := ""
-	if pos < len(r) {
-		at, after = string(r[pos]), string(r[pos+1:])
+	r := []rune(line)
+	c := max(min(col, len(r)), 0)
+	at, after := " ", ""
+	if c < len(r) {
+		at, after = string(r[c]), string(r[c+1:])
 	}
-	return string(r[:pos]) + p.cursor(at) + after
+	return string(r[:c]) + p.cursor(at) + after
+}
+
+// typePrompt sends a key or a paste to the open prompt's line; the search prompt filters the rows as it changes.
+func (s State) typePrompt(m tea.Msg) State {
+	s.prompt.in = typeInto(s.prompt.in, m)
+	if s.prompt.kind == promptSearch {
+		s.search = s.prompt.in.Value()
+		s.follow()
+	}
+	return s
 }
 
 func (s State) promptKey(m tea.KeyPressMsg) (State, []Effect) {
@@ -680,6 +814,10 @@ func (s State) promptKey(m tea.KeyPressMsg) (State, []Effect) {
 		v := strings.TrimSpace(p.in.Value())
 		switch p.kind {
 		case promptAnswer:
+			s.answerOut = unsaved{}
+			if v != "" {
+				s.answerOut = unsaved{task: p.task, text: v}
+			}
 			return s, []Effect{Rearm{Task: p.task, Answer: v}}
 		case promptRoot:
 			return s, []Effect{SetTask{Task: p.task, Patch: model.Patch{Root: &v}}}
@@ -696,10 +834,5 @@ func (s State) promptKey(m tea.KeyPressMsg) (State, []Effect) {
 		}
 		return s, nil
 	}
-	s.prompt.in = typeInto(p.in, m)
-	if p.kind == promptSearch {
-		s.search = s.prompt.in.Value()
-		s.follow()
-	}
-	return s, nil
+	return s.typePrompt(m), nil
 }

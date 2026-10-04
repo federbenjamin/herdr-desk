@@ -1,6 +1,8 @@
 package board_test
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -301,6 +303,125 @@ func TestTaskPageNotesEditorDrawsEditsAndCancelsWithoutSaving(t *testing.T) {
 	wantEffects(t, effects, nil)
 	if text := s.Text(); strings.Contains(text, "editing") || !strings.Contains(text, "first\nsecond") {
 		t.Fatalf("cancelled notes editor = %q, want original saved notes", text)
+	}
+}
+
+func TestTaskPageAFailedNotesSaveOpensTheEditorAgainWithTheText(t *testing.T) {
+	task := model.Task{Number: 21, Title: "Save notes", Notes: "draft", Status: model.StatusOpen}
+	s := w4TaskPage(t, 90, task, nil)
+	s, _ = s.Update(press('e'))
+	s, _ = s.Update(tea.PasteMsg{Content: " two"})
+	s, effects := s.Update(ctrl('s'))
+	wantEffects(t, effects, []board.Effect{board.SetTask{Task: 21, Patch: model.Patch{Notes: w4String("draft two")}}})
+	if strings.Contains(s.Text(), "editing") {
+		t.Fatalf("ctrl+s left the editor open: %q", s.Text())
+	}
+	s, _ = s.Update(board.Failed{Err: errors.New("secret-found: the notes hold a token")})
+	if text := s.Text(); !strings.Contains(text, "NOTES  editing") || !strings.Contains(text, "draft two") || !strings.HasSuffix(text, "secret-found: the notes hold a token") {
+		t.Fatalf("a failed save = %q, want the editor back with the text and the error", text)
+	}
+	_, effects = s.Update(ctrl('s'))
+	wantEffects(t, effects, []board.Effect{board.SetTask{Task: 21, Patch: model.Patch{Notes: w4String("draft two")}}})
+}
+
+func TestTaskPageNotesSaveWarnsWhenTheNotesChangedWhileEditing(t *testing.T) {
+	task := model.Task{Number: 22, Title: "Shared notes", Notes: "mine", Status: model.StatusOpen}
+	s := w4TaskPage(t, 90, task, nil)
+	s, _ = s.Update(press('e'))
+	s, _ = s.Update(press('!'))
+	theirs := task
+	theirs.Notes = "theirs"
+	s, _ = s.Update(board.TaskLoaded{Detail: store.TaskDetail{Task: theirs}})
+	s, effects := s.Update(ctrl('s'))
+	wantEffects(t, effects, nil)
+	if text := s.Text(); !strings.Contains(text, "NOTES  editing") || !strings.HasSuffix(text, "T22's notes changed while you edited: ctrl+s replaces them, esc keeps them") {
+		t.Fatalf("a save over changed notes = %q, want the editor open and a warning", text)
+	}
+	_, effects = s.Update(ctrl('s'))
+	wantEffects(t, effects, []board.Effect{board.SetTask{Task: 22, Patch: model.Patch{Notes: w4String("mine!")}}})
+}
+
+func TestTaskPageNotesEditorKeepsTheCursorLineOnScreen(t *testing.T) {
+	var notes []string
+	for i := range 40 {
+		notes = append(notes, fmt.Sprintf("line %02d", i))
+	}
+	task := model.Task{Number: 23, Title: "Long notes", Notes: strings.Join(notes, "\n"), Status: model.StatusOpen}
+	s := w4TaskPage(t, 90, task, nil)
+	// The editor opens with the cursor at the end of the last line.
+	s, _ = s.Update(press('e'))
+	if text := s.Text(); !strings.Contains(text, "line 39") || strings.Contains(text, "line 00") {
+		t.Fatalf("the editor does not open on the cursor's line:\n%s", text)
+	}
+	for range 39 {
+		s, _ = s.Update(named(tea.KeyUp))
+	}
+	s, _ = s.Update(press('!'))
+	if text := s.Text(); !strings.Contains(text, "line 00!") || strings.Contains(text, "line 39") {
+		t.Fatalf("the editor did not scroll up to the cursor's line:\n%s", text)
+	}
+	for range 30 {
+		s, _ = s.Update(named(tea.KeyDown))
+	}
+	s, _ = s.Update(press('?'))
+	if text := s.Text(); !strings.Contains(text, "line 30?") || strings.Contains(text, "line 00!") {
+		t.Fatalf("the editor did not scroll down to the cursor's line:\n%s", text)
+	}
+	if !strings.Contains(s.Render(), "line 30?") {
+		t.Fatalf("the rendered editor does not show the cursor's line:\n%s", s.Render())
+	}
+}
+
+func TestTaskPageStepsModeKeepsTheSelectedStepOnScreen(t *testing.T) {
+	steps := []model.Step{{ShortID: "s1", Text: "first step"}, {ShortID: "s2", Text: "second step"}, {ShortID: "s3", Text: "last step"}}
+	task := model.Task{Number: 24, Title: "Steps below", Notes: strings.Repeat("note\n", 40), Status: model.StatusOpen, Steps: steps}
+	s := w4TaskPage(t, 90, task, nil)
+	s, _ = s.Update(press('t'))
+	if !strings.Contains(s.Text(), "▸ [ ] first step") {
+		t.Fatalf("steps mode does not show the selected step:\n%s", s.Text())
+	}
+	s, _ = s.Update(press('j'))
+	s, _ = s.Update(press('j'))
+	if !strings.Contains(s.Text(), "▸ [ ] last step") {
+		t.Fatalf("steps mode does not show the selected step after moving:\n%s", s.Text())
+	}
+}
+
+func TestTaskPageOfflineShowsOnlyWhatTheSnapshotHolds(t *testing.T) {
+	task := model.Task{Number: 25, Title: "Was online", Notes: "online notes", Status: model.StatusOpen}
+	history := []model.Event{{TS: w4Now, Kind: model.KindNote, Data: model.MustData(model.NoteData{Text: "online history"})}}
+	s := w4TaskPage(t, 90, task, history)
+	if !strings.Contains(s.Text(), "online history") {
+		t.Fatalf("online task page = %q, want its history", s.Text())
+	}
+	snap := task
+	snap.Notes = "snapshot notes"
+	s, _ = s.Update(board.Loaded{Data: board.Data{Offline: true, Tasks: []model.Task{snap}}})
+	if text := s.Text(); strings.Contains(text, "online history") || strings.Contains(text, "online notes") || !strings.Contains(text, "snapshot notes") {
+		t.Fatalf("offline task page = %q, want only the snapshot's task", text)
+	}
+	s, _ = s.Update(board.TaskLoaded{Detail: store.TaskDetail{Task: task, History: history}})
+	if strings.Contains(s.Text(), "online history") {
+		t.Fatalf("a TaskLoaded while offline put the history back: %q", s.Text())
+	}
+}
+
+func TestTaskPageHistorySaysWhichEventsAreUnreadable(t *testing.T) {
+	task := model.Task{Number: 26, Title: "Odd history", Status: model.StatusOpen}
+	var history []model.Event
+	for _, kind := range []model.Kind{model.KindTask, model.KindSet, model.KindStep, model.KindNote, model.KindDecision, model.KindMerged} {
+		history = append(history, model.Event{TS: w4Now, Kind: kind, Data: []byte(`{"text": 5, "status": 5, "op": 5, "branch": 5, "ref": 5}`)})
+	}
+	text := w4TaskPage(t, 90, task, history).Text()
+	for _, kind := range []string{"task", "set", "step", "note", "decision", "merged"} {
+		if !strings.Contains(text, "you     "+kind+" · unreadable") {
+			t.Errorf("history missing %q · unreadable:\n%s", kind, text)
+		}
+	}
+	for _, faked := range []string{"created · open", `note ""`, "FILES"} {
+		if strings.Contains(text, faked) {
+			t.Errorf("history draws an unreadable event as %q:\n%s", faked, text)
+		}
 	}
 }
 

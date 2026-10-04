@@ -34,8 +34,6 @@ func (s State) history() []model.Event {
 	return nil
 }
 
-var isolations = []string{"", "self", "worktree", "in-place"}
-
 func (s State) taskKey(k string) (State, []Effect) {
 	t := s.task()
 	if t.Number == 0 {
@@ -59,7 +57,7 @@ func (s State) taskKey(k string) (State, []Effect) {
 			return s, nil
 		}
 		s.editing = true
-		s.notes = newNotes(t.Notes)
+		s.notes, s.notesFrom, s.notesTop = newNotes(t.Notes), t.Notes, 0
 	case "t":
 		s.steps = true
 		s.stepSel = 0
@@ -75,6 +73,7 @@ func (s State) taskKey(k string) (State, []Effect) {
 		if s.refuse(k) {
 			return s, nil
 		}
+		isolations := model.Isolations()
 		next := isolations[(slices.Index(isolations, t.Isolation)+1)%len(isolations)]
 		return s, []Effect{SetTask{Task: t.Number, Patch: model.Patch{Isolation: &next}}}
 	case "o":
@@ -159,25 +158,38 @@ func (s State) notesKey(m tea.KeyPressMsg) (State, []Effect) {
 		s.editing = false
 		return s, nil
 	case "ctrl+s":
+		t := s.task()
+		if t.Notes != s.notesFrom {
+			// Someone wrote the notes while the editor was open; a save would replace their text.
+			s.notesFrom = t.Notes
+			s.status = taskID(t.Number) + "'s notes changed while you edited: ctrl+s replaces them, esc keeps them"
+			return s, nil
+		}
 		s.editing = false
 		v := s.notes.Value()
-		return s, []Effect{SetTask{Task: s.task().Number, Patch: model.Patch{Notes: &v}}}
+		s.notesOut = unsaved{task: t.Number, text: v}
+		return s, []Effect{SetTask{Task: t.Number, Patch: model.Patch{Notes: &v}}}
 	}
-	// Copy the buffer first, as typeInto does for a text input, then put the cursor back where it was.
-	row, col := s.notes.Line(), s.notes.Column()
-	ta := s.notes
+	s.notes = typeNotes(s.notes, m)
+	return s, nil
+}
+
+// typeNotes sends a key or a paste to the notes editor. It copies the buffer first, as typeInto does for a text
+// input, then puts the cursor back where it was.
+func typeNotes(ta textarea.Model, m tea.Msg) textarea.Model {
+	row, col := ta.Line(), ta.Column()
 	ta.SetValue(ta.Value())
 	ta.MoveToBegin()
 	for range row {
 		ta.CursorDown()
 	}
 	ta.SetCursorColumn(col)
-	s.notes, _ = ta.Update(m)
-	return s, nil
+	ta, _ = ta.Update(m)
+	return ta
 }
 
 func (s State) pickKey(k string) (State, []Effect) {
-	refs := s.pickRefs()
+	refs := s.refs()
 	switch k {
 	case "down", "j":
 		s.pickSel = min(s.pickSel+1, len(refs)-1)
@@ -194,13 +206,7 @@ func (s State) pickKey(k string) (State, []Effect) {
 	return s, nil
 }
 
-func (s State) pickRefs() []string {
-	if !s.picking {
-		return nil
-	}
-	return s.refs()
-}
-
+// refs are the distinct refs of the history's notes and sets, in order. An unreadable event has none.
 func (s State) refs() []string {
 	var out []string
 	for _, ev := range s.history() {
@@ -208,12 +214,14 @@ func (s State) refs() []string {
 		switch ev.Kind {
 		case model.KindNote:
 			var d model.NoteData
-			_ = json.Unmarshal(ev.Data, &d)
-			ref = d.Ref
+			if json.Unmarshal(ev.Data, &d) == nil {
+				ref = d.Ref
+			}
 		case model.KindSet:
 			var p model.Patch
-			_ = json.Unmarshal(ev.Data, &p)
-			ref = p.Ref
+			if json.Unmarshal(ev.Data, &p) == nil {
+				ref = p.Ref
+			}
 		}
 		if ref != "" && !slices.Contains(out, ref) {
 			out = append(out, ref)
@@ -230,13 +238,13 @@ func (s State) taskColumn(p palette, w, body int) []string {
 	left := p.id(taskID(t.Number)) + "  " + p.status(t.Status, string(t.Status)) + "  " + oneLine(t.Title)
 	right := base(t.Project)
 	if t.Thread != "" {
-		right = join(" · ", right, p.thread("#"+t.Thread))
+		right = join(" · ", right, p.thread("#"+oneLine(t.Thread)))
 	}
 	head := []string{spread(left, right, w), rule(w)}
 	if s.editing {
-		return append(head, fit(s.notesLines(p, w), 0, body)...)
+		return append(head, fit(s.notesLines(p, w), s.notesTop, body)...)
 	}
-	lines := s.taskBody(p, w)
+	lines, _ := s.taskBody(p, w)
 	for i := range lines {
 		lines[i] = cut(lines[i], w)
 	}
@@ -250,15 +258,19 @@ func orDash(v string) string {
 	return v
 }
 
-func (s State) taskBody(p palette, w int) []string {
+// taskBody is the task page under its head, and the index of the selected step's line in steps mode (else -1).
+func (s State) taskBody(p palette, w int) (lines []string, stepLine int) {
 	t := s.task()
-	lines := []string{
-		"root " + orDash(t.Root) + " · isolation " + orDash(t.Isolation) + " · model " + orDash(t.Model),
+	stepLine = -1
+	lines = []string{
+		"root " + orDash(oneLine(t.Root)) + " · isolation " + orDash(oneLine(t.Isolation)) + " · model " + orDash(oneLine(t.Model)),
 		"",
 		p.section("NOTES"),
 	}
 	if t.Notes != "" {
-		lines = append(lines, strings.Split(ansi.Wrap(t.Notes, max(w, 1), ""), "\n")...)
+		for _, l := range strings.Split(t.Notes, "\n") {
+			lines = append(lines, strings.Split(ansi.Wrap(clean(l), max(w, 1), ""), "\n")...)
+		}
 	}
 	if len(t.Steps) > 0 {
 		done := 0
@@ -276,6 +288,9 @@ func (s State) taskBody(p palette, w int) []string {
 			lead := ""
 			if s.steps {
 				lead = mark(i == s.stepSel)
+				if i == s.stepSel {
+					stepLine = len(lines)
+				}
 			}
 			lines = append(lines, lead+box+oneLine(st.Text))
 		}
@@ -297,27 +312,35 @@ func (s State) taskBody(p palette, w int) []string {
 	}
 	if refs := s.refs(); len(refs) > 0 {
 		lines = append(lines, "", p.section("FILES"))
-		lines = append(lines, refs...)
+		for _, r := range refs {
+			lines = append(lines, oneLine(r))
+		}
 	}
-	return lines
+	return lines, stepLine
 }
 
 func (s State) notesLines(p palette, w int) []string {
 	lines := []string{p.section("NOTES") + "  editing"}
 	row, col := s.notes.Line(), s.notes.Column()
 	for i, l := range strings.Split(s.notes.Value(), "\n") {
-		if i == row && p.colour {
-			r := []rune(l)
-			c := min(col, len(r))
-			at, after := " ", ""
-			if c < len(r) {
-				at, after = string(r[c]), string(r[c+1:])
-			}
-			l = string(r[:c]) + p.cursor(at) + after
+		if i == row {
+			l = withCursor(p, l, col)
 		}
 		lines = append(lines, strings.Split(ansi.Wrap(l, max(w, 1), ""), "\n")...)
 	}
 	return lines
+}
+
+// notesCursor is the index of the editor's drawn line that holds the cursor: the line its styled cell is on.
+func (s State) notesCursor(w int) int {
+	mark, _, _ := strings.Cut(colour.cursor("x"), "x")
+	lines := s.notesLines(colour, w)
+	for i, l := range lines {
+		if strings.Contains(l, mark) {
+			return i
+		}
+	}
+	return len(lines) - 1
 }
 
 func isRunner(ev model.Event) bool { return ev.Run != 0 && ev.Session == "" }
@@ -332,11 +355,17 @@ func (s State) who(ev model.Event) string {
 	return "you"
 }
 
+// eventText is a history line's text. An event whose data this client cannot read says so, and is never drawn
+// as an event with empty fields.
 func (s State) eventText(ev model.Event) string {
+	unreadable := string(ev.Kind) + " · unreadable"
+	read := func(v any) bool { return json.Unmarshal(ev.Data, v) == nil }
 	switch ev.Kind {
 	case model.KindTask:
 		var d model.TaskData
-		_ = json.Unmarshal(ev.Data, &d)
+		if !read(&d) {
+			return unreadable
+		}
 		st := d.Status
 		if st == "" {
 			st = model.StatusOpen
@@ -348,11 +377,15 @@ func (s State) eventText(ev model.Event) string {
 		return text
 	case model.KindSet:
 		var p model.Patch
-		_ = json.Unmarshal(ev.Data, &p)
+		if !read(&p) {
+			return unreadable
+		}
 		return s.setText(ev, p)
 	case model.KindStep:
 		var op model.StepOp
-		_ = json.Unmarshal(ev.Data, &op)
+		if !read(&op) {
+			return unreadable
+		}
 		what := op.Text
 		if what == "" {
 			what = op.ShortID
@@ -360,7 +393,9 @@ func (s State) eventText(ev model.Event) string {
 		return "step " + op.Op + " " + what
 	case model.KindNote:
 		var d model.NoteData
-		_ = json.Unmarshal(ev.Data, &d)
+		if !read(&d) {
+			return unreadable
+		}
 		text := `note "` + d.Text + `"`
 		if d.Ref != "" {
 			text += " [" + d.Ref + "]"
@@ -368,11 +403,15 @@ func (s State) eventText(ev model.Event) string {
 		return text
 	case model.KindDecision:
 		var d model.DecisionData
-		_ = json.Unmarshal(ev.Data, &d)
+		if !read(&d) {
+			return unreadable
+		}
 		return "decision " + d.Text
 	case model.KindMerged:
 		var d model.MergedData
-		_ = json.Unmarshal(ev.Data, &d)
+		if !read(&d) {
+			return unreadable
+		}
 		return "merged " + d.Branch
 	}
 	return string(ev.Kind)
@@ -411,8 +450,12 @@ func (s State) setText(ev model.Event, p model.Patch) string {
 	if p.Model != nil {
 		parts = append(parts, "model "+*p.Model)
 	}
-	if p.Archived != nil {
+	switch {
+	case p.Archived == nil:
+	case *p.Archived:
 		parts = append(parts, "archived")
+	default:
+		parts = append(parts, "unarchived")
 	}
 	if p.Merged {
 		parts = append(parts, "merged")

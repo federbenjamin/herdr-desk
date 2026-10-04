@@ -8,10 +8,13 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"charm.land/lipgloss/v2"
 
 	"github.com/federbenjamin/desk/internal/api"
 	"github.com/federbenjamin/desk/internal/board"
@@ -541,13 +544,14 @@ func TestRunShowsEveryEffectRefusal(t *testing.T) {
 		input string
 		err   string
 		load  bool
+		kept  string // the typed text a failed write gives back; ctrl+c closes its input before the quit
 	}{
 		{name: "load task", home: &fakeHome{tasks: []model.Task{{Number: 57, Title: "w5 load", Status: model.StatusOpen}}, get: errors.New("w5 load refused")}, input: "\r", err: "w5 load refused"},
 		{name: "set task", home: &fakeHome{tasks: []model.Task{{Number: 58, Title: "w5 set", Status: model.StatusOpen}}, set: errors.New("w5 set refused")}, input: "s", err: "w5 set refused"},
 		{name: "step task", home: &fakeHome{tasks: []model.Task{{Number: 59, Title: "w5 step", Status: model.StatusOpen, Steps: []model.Step{{ShortID: "w5", Text: "step"}}}}, step: errors.New("w5 step refused")}, input: "\rt\r", err: "w5 step refused"},
 		{name: "kill run", home: &fakeHome{tasks: []model.Task{{Number: 60, Title: "w5 kill", Status: model.StatusStarted}}, runs: []model.Run{{Task: 60, StartedTS: time.Now()}}, kill: errors.New("w5 kill refused")}, input: "ky", err: "w5 kill refused"},
 		{name: "pause runner", home: &fakeHome{status: api.Status{RunnerState: api.RunnerStateOn}, pause: errors.New("w5 pause refused")}, input: "P", err: "w5 pause refused"},
-		{name: "append rearm note", home: &fakeHome{tasks: []model.Task{{Number: 61, Title: "w5 rearm", Status: model.StatusBlocked}}, append: errors.New("w5 append refused")}, input: "nw5 answer\r", err: "w5 append refused"},
+		{name: "append rearm note", home: &fakeHome{tasks: []model.Task{{Number: 61, Title: "w5 rearm", Status: model.StatusBlocked}}, append: errors.New("w5 append refused")}, input: "nw5 answer\r", err: "w5 append refused", kept: "answer: w5 answer"},
 		{name: "focus run", home: &fakeHome{tasks: []model.Task{{Number: 62, Title: "w5 focus refusal", Status: model.StatusStarted}}, runs: []model.Run{{Task: 62, Workspace: "w5-workspace", Pane: "w5-pane", StartedTS: time.Now()}}}, exec: (&w5Executor{err: errors.New("w5 focus refused")}).w5Exec, input: "f", err: "w5 focus refused"},
 		{name: "open URL", home: &fakeHome{tasks: []model.Task{{Number: 63, Title: "w5 open refusal", Status: model.StatusOpen}}, detail: store.TaskDetail{Task: model.Task{Number: 63, Title: "w5 open refusal", Status: model.StatusOpen}, History: []model.Event{{Kind: model.KindNote, Data: model.MustData(model.NoteData{Ref: "https://example.test/w5-refusal"})}}}}, exec: (&w5Executor{err: errors.New("w5 open refused")}).w5Exec, input: "\r", err: "w5 open refused", load: true},
 	} {
@@ -565,6 +569,12 @@ func TestRunShowsEveryEffectRefusal(t *testing.T) {
 				}
 			}
 			eventually(t, "the effect refusal", func() bool { return strings.Contains(out.String(), test.err) })
+			if test.kept != "" {
+				eventually(t, "the kept text", func() bool { return strings.Contains(out.String(), test.kept) })
+				if _, err := io.WriteString(in, "\x03"); err != nil {
+					t.Fatalf("close the kept input: %v", err)
+				}
+			}
 			w5Quit(t, in, errs)
 		})
 	}
@@ -627,5 +637,189 @@ func TestRunDoesNotProbeForAViewerWithoutHerdr(t *testing.T) {
 	w5Quit(t, in, errs)
 	if got := exec.w5Calls(); len(got) != 0 {
 		t.Errorf("missing herdr ran %#v, want no command", got)
+	}
+}
+
+func w5Write(t *testing.T, in *io.PipeWriter, keys string) {
+	t.Helper()
+	if _, err := io.WriteString(in, keys); err != nil {
+		t.Fatalf("write %q: %v", keys, err)
+	}
+}
+
+func TestRunAWritesFailureDoesNotEndTheOutstandingRefresh(t *testing.T) {
+	release := make(chan struct{})
+	home := &fakeHome{
+		tasks:  []model.Task{{Number: 70, Title: "w5 guard", Status: model.StatusOpen}},
+		status: api.Status{RunnerState: api.RunnerStateOn},
+		pause:  errors.New("w5 pause refused"),
+		listHook: func(call int) error {
+			if call == 2 {
+				<-release
+			}
+			return nil
+		},
+	}
+	out := &lockedOutput{}
+	in, errs := w5StartRun(t, home, nil, out)
+	eventually(t, "the board draw", func() bool { return strings.Contains(out.String(), "w5 guard") })
+	// s lands, so the board asks for a refresh, which the home holds.
+	w5Write(t, in, "s")
+	eventually(t, "the held refresh", func() bool { return home.w5ListCalls() == 2 })
+	w5Write(t, in, "P")
+	eventually(t, "the pause refusal", func() bool { return strings.Contains(out.String(), "w5 pause refused") })
+	// The drawer asks for a refresh while one is out; ? proves d was taken first.
+	w5Write(t, in, "d?")
+	eventually(t, "the keys overlay", func() bool { return strings.Contains(out.String(), "KEYS") })
+	close(release)
+	eventually(t, "the drawer's refresh after the held one", func() bool {
+		return slices.ContainsFunc(home.w5ListFilters(), func(f store.Filter) bool { return len(f.Statuses) > 0 })
+	})
+	w5Quit(t, in, errs)
+	if got := home.mostLiveLists(); got != 1 {
+		t.Errorf("%d refreshes were out at once after a write failed, want 1", got)
+	}
+}
+
+func TestRunARefreshFailureIsNotShownAsTheRefusalOfAnOutstandingAdd(t *testing.T) {
+	gate := make(chan struct{})
+	home := &fakeHome{addGate: gate}
+	home.listHook = func(int) error {
+		if _, inputs := home.w5Add(); len(inputs) > 0 {
+			return errors.New("w5 list failed")
+		}
+		return nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	in, writer := io.Pipe()
+	t.Cleanup(func() { _ = writer.Close() })
+	out := &lockedOutput{}
+	errs := make(chan error, 1)
+	go func() {
+		errs <- board.Run(ctx, board.Options{Home: home, IsHome: true, In: in, Out: out, Refresh: 5 * time.Millisecond})
+	}()
+	eventually(t, "the empty board draw", func() bool { return out.Len() > 0 })
+	w5Write(t, writer, "+w5 add\r")
+	eventually(t, "the add, then a refresh failure while it is out", func() bool {
+		_, inputs := home.w5Add()
+		return len(inputs) == 1 && strings.Contains(out.String(), "w5 list failed")
+	})
+	// A refusal under the add box is drawn red; the status line is not.
+	if red := lipgloss.NewStyle().Foreground(lipgloss.Red).Render("w5 list failed"); strings.Contains(out.String(), strings.TrimSuffix(red, "\x1b[m")) {
+		t.Errorf("a refresh failure was drawn as the add's refusal: %q", out.String())
+	}
+	close(gate)
+	cancel()
+	if err := <-errs; err != nil {
+		t.Fatalf("Run error: %v", err)
+	}
+}
+
+func TestRunAFailedNotesSaveOpensTheEditorAgainWithTheText(t *testing.T) {
+	task := model.Task{Number: 72, Title: "w5 notes", Notes: "w5 draft", Status: model.StatusOpen}
+	home := &fakeHome{tasks: []model.Task{task}, detail: store.TaskDetail{Task: task}, set: errors.New("w5 save refused")}
+	out := &lockedOutput{}
+	in, errs := w5StartRun(t, home, nil, out)
+	eventually(t, "the board draw", func() bool { return strings.Contains(out.String(), task.Title) })
+	w5Write(t, in, "\re")
+	eventually(t, "the notes editor", func() bool { return strings.Contains(out.String(), "editing") })
+	before := len(home.w5SetPatches())
+	w5Write(t, in, "!\x13")
+	eventually(t, "the refused save", func() bool { return strings.Contains(out.String(), "w5 save refused") })
+	// The editor holds the text again, so a second ctrl+s sends it.
+	w5Write(t, in, "\x13")
+	eventually(t, "the second save", func() bool { return len(home.w5SetPatches()) == before+2 })
+	patches := home.w5SetPatches()
+	for _, p := range patches[before:] {
+		if p.Notes == nil || *p.Notes != "w5 draft!" {
+			t.Fatalf("saves = %#v, want the typed notes twice", patches[before:])
+		}
+	}
+	// ctrl+c closes the editor that the second failure opened again, then q quits.
+	w5Write(t, in, "\x03")
+	w5Quit(t, in, errs)
+}
+
+func TestRunAnAnswerTheHomeStoredIsNotGivenBackWhenReadyFails(t *testing.T) {
+	task := model.Task{Number: 73, Title: "w5 stored answer", Status: model.StatusBlocked}
+	home := &fakeHome{tasks: []model.Task{task}, set: errors.New("w5 ready refused")}
+	out := &lockedOutput{}
+	in, errs := w5StartRun(t, home, nil, out)
+	eventually(t, "the board draw", func() bool { return strings.Contains(out.String(), task.Title) })
+	w5Write(t, in, "nw5 answer\r")
+	eventually(t, "the refused ready", func() bool { return strings.Contains(out.String(), "w5 ready refused") })
+	// With no prompt given back, n opens an empty answer prompt and enter sends no second note.
+	w5Write(t, in, "n\r")
+	eventually(t, "the second ready", func() bool { return len(home.w5SetPatches()) == 2 })
+	w5Quit(t, in, errs)
+	if got := home.w5Append(); len(got) != 1 {
+		t.Errorf("the answer was appended %d times, want once", len(got))
+	}
+}
+
+func TestRunAsksAgainForTheViewerAfterAFailedOrUnreadableAnswer(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := model.Task{Number: 74, Title: "w5 viewer retry", Status: model.StatusOpen, Project: wd}
+	home := &fakeHome{tasks: []model.Task{task}, detail: store.TaskDetail{Task: task, History: []model.Event{{Kind: model.KindNote, Data: model.MustData(model.NoteData{Ref: "run_test.go"})}}}}
+	answers := []struct {
+		out []byte
+		err error
+	}{
+		{nil, errors.New("w5 herdr busy")},
+		{[]byte("not json"), nil},
+		{[]byte(`{}`), nil},
+		{[]byte(`{"result":{"plugins":[{}]}}`), nil},
+	}
+	var mu sync.Mutex
+	var calls [][]string
+	exec := func(_ context.Context, argv []string) ([]byte, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		calls = append(calls, argv)
+		if argv[1] == "plugin" && argv[2] == "list" {
+			a := answers[0]
+			answers = answers[1:]
+			return a.out, a.err
+		}
+		return nil, nil
+	}
+	count := func() int { mu.Lock(); defer mu.Unlock(); return len(calls) }
+	out := &lockedOutput{}
+	in, errs := w5StartRun(t, home, exec, out)
+	eventually(t, "the task draw", func() bool { return strings.Contains(out.String(), task.Title) })
+	w5Write(t, in, "\r")
+	eventually(t, "the task detail", func() bool { return strings.Contains(out.String(), "FILES") })
+	for i, want := range []string{"w5-herdr plugin list: w5 herdr busy", "invalid character", "the answer has no result"} {
+		w5Write(t, in, "o")
+		eventually(t, "the viewer error "+want, func() bool { return count() == i+1 && strings.Contains(out.String(), want) })
+	}
+	if !strings.Contains(out.String(), "w5-herdr plugin list: w5 herdr busy") {
+		t.Errorf("the viewer error does not name the command: %q", out.String())
+	}
+	w5Write(t, in, "o")
+	eventually(t, "the viewer opened after a clean answer", func() bool { return count() == 5 })
+	w5Write(t, in, "o")
+	eventually(t, "the second open without a probe", func() bool { return count() == 6 })
+	w5Quit(t, in, errs)
+	if strings.Contains(out.String(), "no file viewer is installed") {
+		t.Errorf("a failed probe was shown as a missing viewer: %q", out.String())
+	}
+}
+
+func TestRunMarksAnUnreadableLastNote(t *testing.T) {
+	task := model.Task{Number: 75, Title: "w5 odd note", Status: model.StatusBlocked}
+	home := &fakeHome{tasks: []model.Task{task}, detail: store.TaskDetail{Task: task, History: []model.Event{
+		{Kind: model.KindNote, Data: model.MustData(model.NoteData{Text: "w5 older note"})},
+		{Kind: model.KindNote, Data: []byte(`{"text": 5}`)},
+	}}}
+	out := &lockedOutput{}
+	in, errs := w5StartRun(t, home, nil, out)
+	eventually(t, "the unreadable note marker", func() bool { return strings.Contains(out.String(), "the last note is unreadable") })
+	w5Quit(t, in, errs)
+	if strings.Contains(out.String(), "w5 older note") {
+		t.Errorf("an older note was shown as the last one: %q", out.String())
 	}
 }

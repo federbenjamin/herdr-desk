@@ -156,8 +156,9 @@ type executor struct {
 	herdr string
 	exec  func(ctx context.Context, argv []string) ([]byte, error)
 
-	viewerOnce sync.Once
-	viewer     bool
+	viewerMu    sync.Mutex
+	viewerKnown bool // herdr gave a clean answer, which viewer holds
+	viewer      bool
 }
 
 func newExecutor(o Options) *executor {
@@ -181,9 +182,23 @@ func (x *executor) cmds(ctx context.Context, eff []Effect) tea.Cmd {
 			cmds = append(cmds, tea.Quit)
 			continue
 		}
-		cmds = append(cmds, func() tea.Msg { return x.run(ctx, e) })
+		cmds = append(cmds, func() tea.Msg { return x.answer(ctx, e) })
 	}
 	return tea.Batch(cmds...)
+}
+
+// answer runs one effect. A failure's error names the effect, so State can tell which outstanding write or
+// refresh it answers.
+func (x *executor) answer(ctx context.Context, e Effect) tea.Msg {
+	msg := x.run(ctx, e)
+	if f, ok := msg.(Failed); ok {
+		var named effectErr
+		if !errors.As(f.Err, &named) {
+			f.Err = effectErr{effect: e, err: f.Err}
+		}
+		return f
+	}
+	return msg
 }
 
 var user = store.Actor{}
@@ -248,9 +263,14 @@ func (x *executor) run(ctx context.Context, e Effect) tea.Msg {
 func (x *executor) do(ctx context.Context, argv []string) error {
 	out, err := x.exec(ctx, argv)
 	if err != nil {
-		return fmt.Errorf("%s: %v: %s", strings.Join(argv[:min(len(argv), 3)], " "), err, oneLine(string(out)))
+		return failure(argv, err, out)
 	}
 	return nil
+}
+
+// failure names the command that failed by its first three words, with its error and output.
+func failure(argv []string, err error, out []byte) error {
+	return fmt.Errorf("%s: %v: %s", strings.Join(argv[:min(len(argv), 3)], " "), err, oneLine(string(out)))
 }
 
 func (x *executor) rearm(ctx context.Context, e Rearm) tea.Msg {
@@ -264,12 +284,15 @@ func (x *executor) rearm(ctx context.Context, e Rearm) tea.Msg {
 			return Failed{Err: err}
 		}
 		if queued {
-			return Failed{Err: fmt.Errorf("the home did not answer: the answer is queued as a note, and %s is not set ready", taskID(e.Task))}
+			return Failed{Err: effectErr{effect: Rearm{Task: e.Task}, err: fmt.Errorf("the home did not answer: the answer is queued as a note, and %s is not set ready", taskID(e.Task))}}
 		}
 	}
+	// From here the answer is stored, so a failure names a Rearm with no answer to give back.
 	ready := model.StatusReady
-	_, err := x.home.SetTask(ctx, user, e.Task, model.Patch{Status: &ready})
-	return afterWrite(err)
+	if _, err := x.home.SetTask(ctx, user, e.Task, model.Patch{Status: &ready}); err != nil {
+		return Failed{Err: effectErr{effect: Rearm{Task: e.Task}, err: err}}
+	}
+	return Tick{}
 }
 
 func (x *executor) refresh(ctx context.Context, done bool) tea.Msg {
@@ -342,13 +365,19 @@ func (x *executor) refresh(ctx context.Context, done bool) tea.Msg {
 	return Loaded{Data: d}
 }
 
+// unreadableNote stands in for a last note whose data this client cannot read.
+const unreadableNote = "<the last note is unreadable>"
+
+// lastNote is the text of the newest note in the history. When that note cannot be read it says so, and never
+// shows an older note as the newest.
 func lastNote(history []model.Event) (string, bool) {
 	for i := len(history) - 1; i >= 0; i-- {
 		if history[i].Kind == model.KindNote {
 			var n model.NoteData
-			if json.Unmarshal(history[i].Data, &n) == nil {
-				return n.Text, true
+			if json.Unmarshal(history[i].Data, &n) != nil {
+				return unreadableNote, true
 			}
+			return n.Text, true
 		}
 	}
 	return "", false
@@ -362,19 +391,35 @@ func (x *executor) open(ctx context.Context, e OpenRef) error {
 	if err != nil {
 		return err
 	}
-	if !x.hasViewer(ctx) {
+	has, err := x.hasViewer(ctx)
+	if err != nil {
+		return err
+	}
+	if !has {
 		return fmt.Errorf("%s is a file, and no file viewer is installed: herdr with the %s plugin opens it", e.Ref, viewerPlugin)
 	}
 	return x.do(ctx, viewerArgv(x.herdr, path))
 }
 
-func (x *executor) hasViewer(ctx context.Context) bool {
+// hasViewer asks herdr whether the file viewer is installed. Only a clean answer is kept for the program's life;
+// a failed or unreadable one is returned as an error and asked again on the next ref.
+func (x *executor) hasViewer(ctx context.Context) (bool, error) {
 	if x.herdr == "" {
-		return false
+		return false, nil
 	}
-	x.viewerOnce.Do(func() {
-		out, err := x.exec(ctx, viewerListArgv(x.herdr))
-		x.viewer = err == nil && hasViewer(out)
-	})
-	return x.viewer
+	x.viewerMu.Lock()
+	defer x.viewerMu.Unlock()
+	if x.viewerKnown {
+		return x.viewer, nil
+	}
+	argv := viewerListArgv(x.herdr)
+	out, err := x.exec(ctx, argv)
+	if err != nil {
+		return false, failure(argv, err, out)
+	}
+	if x.viewer, err = listsPlugin(out); err != nil {
+		return false, fmt.Errorf("%s: %v", strings.Join(argv[:3], " "), err)
+	}
+	x.viewerKnown = true
+	return x.viewer, nil
 }

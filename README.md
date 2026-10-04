@@ -154,7 +154,7 @@ daemon answers, so a script can ask whether one runs.
 | `desk note --merged --branch <b> [--pr <n>] [--sha <sha>] [<text>]` | records that a branch merged |
 | `desk decide <text> [--tag <k:v>]… [--replaces e<id>] [--task <task>]` | appends a decision |
 | `desk session [<id>] [--md] [--all] [--continues <old-id>]` | prints the session's journal view; `--json` prints it with the keys `session`, `work`, `todo`, `decisions`; `--all` shows hidden lines; `--continues` first links the session to an older one |
-| `desk capture` | on a terminal (stdin and stdout both terminals, no `--json`), the capture popup: one line (words starting `#` set the thread, `@` the project, the rest is the title); Enter adds the task and prints `T<n>`; a refused line shows its error under the line and stays there; an empty line, `esc`, or `ctrl+c` exits 0 with no task. Anywhere else it reads one line on stdin and exits with the code of its refusal, as every command does |
+| `desk capture` | on a terminal (stdin and stdout both terminals, no `--json`), the capture popup: one line (words starting `#` set the thread, `@` the project, the rest is the title); Enter adds the task and prints `T<n>`; a refused line shows its error under the line and stays there; an empty line, `esc`, or `ctrl+c` exits 0 with no task. While the home has not answered an `enter`, keys wait, and `esc` ends the popup once it answers. Anywhere else it reads lines on stdin: with stdin a terminal it prompts `capture: ` on stderr, and after a refusal prints the error and asks again; with stdin not a terminal it reads one line and exits with the code of its refusal, as every command does. An empty line ends it with exit 0 |
 | `desk daemon [run]` · `stop` · `restart` · `status` | runs or controls the daemon. A second `run` prints `already running` and exits 0; on a client it prints that there is nothing to run and exits 0. `status` never starts a daemon and exits 1 when none answers; its JSON carries `backup_ts`, the last successful backup (`null` when none), `backup_error`, the error of a failed attempt since, so a failing nightly backup shows there, and `config_changed`, true when the config file now holds a different config from the one the daemon started with |
 | `desk token [show]` · `rotate` | prints or rotates the token |
 | `desk client add <host:port> [--token-file <path>]` | joins a home; the token comes from the file or stdin, never an argument |
@@ -197,8 +197,8 @@ Board page keys:
 |---|---|
 | `↓` `j` · `↑` · `g` · `G` | next row · previous row · first · last (`k` is kill, not up) |
 | `enter` | open the task's page |
-| `+` | add a task: one line, `#thread` and `@project` as in `desk capture`; a refused line stays in the box with its error |
-| `n` | set `ready`; on a blocked task it asks `answer:`, appends your answer as a note, then sets `ready` (an empty answer sets `ready` alone) |
+| `+` | add a task: one line, `#thread` and `@project` as in `desk capture`; a refused line stays in the box with its error. Until the home answers an `enter`, the line takes no keys, and `esc` closes the box once it answers |
+| `n` | set `ready`; on a blocked task it asks `answer:`, appends your answer as a note, then sets `ready` (an empty answer sets `ready` alone); when the note cannot be written the prompt opens again with your answer |
 | `s` · `b` · `r` | set `started` · `blocked` · `review` |
 | `x` | set `done`; asks `y/n` unless the task is in `review` |
 | `a` | toggle the thread `agent` |
@@ -222,7 +222,7 @@ Task page keys (the board's `n s b r x a f k P ? q ctrl+c` work here too, for th
 |---|---|
 | `↓` `j` · `↑` | scroll |
 | `esc` | back to the board |
-| `e` | edit the notes in an editor; `ctrl+s` saves, `esc` discards |
+| `e` | edit the notes in an editor; `ctrl+s` saves, `esc` discards. A save that fails opens the editor again with your text; when the notes changed while you edited, the first `ctrl+s` says so and a second replaces them |
 | `t` | steps mode: `↓` `j` `↑` move, `space` or `enter` toggles, `a` adds, `r` renames, `x` removes, `esc` leaves |
 | `R` · `M` | edit the root · the model (an empty line clears it) |
 | `I` | next isolation: none, `self`, `worktree`, `in-place` |

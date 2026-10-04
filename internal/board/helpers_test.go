@@ -45,7 +45,11 @@ type fakeHome struct {
 
 	only       map[string]bool
 	unscripted []string
-	addReplies []addReply // answered in order before add is
+	addReplies []addReply           // answered in order before add is
+	addGate    chan struct{}        // AddTask waits for it to close before it answers
+	listHook   func(call int) error // runs outside the lock before ListTasks call number call answers
+
+	liveLists, maxLiveLists int // ListTasks calls for the live tasks in flight now, and the most at once
 
 	tasks      []model.Task
 	runs       []model.Run
@@ -54,7 +58,6 @@ type fakeHome struct {
 	offline    bool
 	snapshotTS *time.Time
 	list       error
-	listErrors []error
 	get        error
 	add        error
 	set        error
@@ -93,6 +96,12 @@ func (h *fakeHome) script(method string) error {
 	return fmt.Errorf("unscripted call: %s", method)
 }
 
+func (h *fakeHome) mostLiveLists() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.maxLiveLists
+}
+
 func (h *fakeHome) unscriptedCalls() []string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -101,21 +110,32 @@ func (h *fakeHome) unscriptedCalls() []string {
 
 func (h *fakeHome) ListTasks(_ context.Context, f store.Filter) (api.TaskList, error) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	if err := h.script("ListTasks"); err != nil {
+		h.mu.Unlock()
 		return api.TaskList{}, err
 	}
 	h.listCalls++
 	h.listFilters = append(h.listFilters, f)
+	call, hook, live := h.listCalls, h.listHook, len(f.Statuses) == 0
+	if live {
+		h.liveLists++
+		h.maxLiveLists = max(h.maxLiveLists, h.liveLists)
+	}
+	h.mu.Unlock()
+	var hookErr error
+	if hook != nil {
+		hookErr = hook(call)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if live {
+		h.liveLists--
+	}
+	if hookErr != nil {
+		return api.TaskList{}, hookErr
+	}
 	if h.list != nil {
 		return api.TaskList{}, h.list
-	}
-	if len(h.listErrors) > 0 {
-		err := h.listErrors[0]
-		h.listErrors = h.listErrors[1:]
-		if err != nil {
-			return api.TaskList{}, err
-		}
 	}
 	return api.TaskList{Tasks: append([]model.Task(nil), h.tasks...), Offline: h.offline, SnapshotTS: h.snapshotTS}, nil
 }
@@ -135,12 +155,19 @@ func (h *fakeHome) GetTask(_ context.Context, _ int) (store.TaskDetail, error) {
 
 func (h *fakeHome) AddTask(_ context.Context, a store.Actor, in store.AddTaskInput) (model.Task, error) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	if err := h.script("AddTask"); err != nil {
+		h.mu.Unlock()
 		return model.Task{}, err
 	}
 	h.addActors = append(h.addActors, a)
 	h.addInputs = append(h.addInputs, in)
+	gate := h.addGate
+	h.mu.Unlock()
+	if gate != nil {
+		<-gate
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	if len(h.addReplies) > 0 {
 		r := h.addReplies[0]
 		h.addReplies = h.addReplies[1:]

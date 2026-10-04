@@ -92,6 +92,40 @@ func TestCapturePopupCancelsWithoutCreatingATask(t *testing.T) {
 	}
 }
 
+func TestCapturePopupSendsOneAddTaskAndWaitsForItsAnswer(t *testing.T) {
+	capture := board.NewCapture("capture: ")
+	capture, _ = capture.Update(press('a'))
+	capture, effects := capture.Update(named(tea.KeyEnter))
+	wantEffects(t, effects, []board.Effect{board.AddTask{Data: model.TaskData{Title: "a"}}})
+	for _, msg := range []tea.Msg{named(tea.KeyEnter), press('b'), tea.PasteMsg{Content: "c"}, named(tea.KeyEsc), ctrl('c')} {
+		capture, effects = capture.Update(msg)
+		wantEffects(t, effects, nil)
+	}
+	if got := capture.Text(); !strings.HasPrefix(got, "capture: a\n") {
+		t.Fatalf("the line changed while its add was out: %q", got)
+	}
+	_, effects = capture.Update(board.Added{Task: model.Task{Number: 3}})
+	wantEffects(t, effects, []board.Effect{board.Quit{}})
+
+	// A cancel that waited ends the popup when the add fails too; with no cancel the line is kept for a retry.
+	for _, cancel := range []bool{true, false} {
+		capture := board.NewCapture("capture: ")
+		capture, _ = capture.Update(press('a'))
+		capture, _ = capture.Update(named(tea.KeyEnter))
+		if cancel {
+			capture, _ = capture.Update(named(tea.KeyEsc))
+		}
+		capture, effects = capture.Update(board.Failed{Err: errors.New("refused")})
+		if cancel {
+			wantEffects(t, effects, []board.Effect{board.Quit{}})
+			continue
+		}
+		wantEffects(t, effects, nil)
+		_, effects = capture.Update(named(tea.KeyEnter))
+		wantEffects(t, effects, []board.Effect{board.AddTask{Data: model.TaskData{Title: "a"}}})
+	}
+}
+
 func TestCaptureFlowKeepsRefusedLineAndReturnsTheLandedTask(t *testing.T) {
 	refusal := errors.New("unknown-project: no such project")
 	landed := model.Task{Number: 42, Title: "ship popup", Thread: "ops", Project: "alpha"}

@@ -97,6 +97,8 @@ func TestKeysCaptureRefusalAndBlockedAnswerKeepTheirInputUntilResolved(t *testin
 		s, effects = s.Update(key)
 		wantEffects(t, effects, nil)
 	}
+	s, effects = s.Update(named(tea.KeyEnter))
+	wantEffects(t, effects, []board.Effect{board.AddTask{Data: model.TaskData{Title: "fix"}}})
 	s, effects = s.Update(board.Failed{Err: errors.New("refused")})
 	wantEffects(t, effects, nil)
 	if !strings.Contains(s.Text(), "add: fix") || !strings.Contains(s.Text(), "refused") {
@@ -466,6 +468,8 @@ func TestKeysAddCancellationSuppressesCaptureQuitAndShowsFailuresExactly(t *test
 
 	s := w2State(w2Task(1, model.StatusOpen))
 	s, _ = s.Update(press('+'))
+	s, _ = s.Update(press('w'))
+	s, _ = s.Update(named(tea.KeyEnter))
 	s, effects := s.Update(board.Failed{Err: &model.Refusal{Code: model.CodeNotAllowed, Msg: "runner is paused"}})
 	wantEffects(t, effects, nil)
 	if !strings.Contains(s.Text(), "not-allowed: runner is paused") {
@@ -538,4 +542,115 @@ func TestKeysSearchFindsTaskNumbersAndTitlesWithoutCaseSensitivity(t *testing.T)
 	if !strings.HasSuffix(offline.Text(), "offline: the done drawer needs the home") {
 		t.Fatalf("offline done drawer = %q, want refusal", offline.Text())
 	}
+}
+
+func TestKeysAddBoxShowsOnlyItsOwnAddTasksFailure(t *testing.T) {
+	s := w2State(w2Task(1, model.StatusOpen))
+	s, _ = s.Update(press('+'))
+	for _, r := range "fix" {
+		s, _ = s.Update(press(r))
+	}
+	s, effects := s.Update(board.Failed{Err: errors.New("dial home: connection refused")})
+	wantEffects(t, effects, nil)
+	lines := strings.Split(s.Text(), "\n")
+	if box := strings.Join(lines[len(lines)-4:len(lines)-1], "\n"); strings.Contains(box, "connection refused") || !strings.Contains(box, "add: fix") {
+		t.Fatalf("an unsubmitted line shows a failure under it:\n%s", s.Text())
+	}
+	if lines[len(lines)-1] != "dial home: connection refused" {
+		t.Fatalf("status line = %q, want the failure", lines[len(lines)-1])
+	}
+
+	s, effects = s.Update(named(tea.KeyEnter))
+	wantEffects(t, effects, []board.Effect{board.AddTask{Data: model.TaskData{Title: "fix"}}})
+	s, _ = s.Update(board.Failed{Err: errors.New("unknown-project: no such project")})
+	lines = strings.Split(s.Text(), "\n")
+	if got := lines[len(lines)-2]; got != "unknown-project: no such project" || lines[len(lines)-1] != "" {
+		t.Fatalf("the add's refusal is not under its line:\n%s", s.Text())
+	}
+}
+
+func TestKeysAddBoxSendsOneAddTaskUntilItAnswers(t *testing.T) {
+	s := w2State(w2Task(1, model.StatusOpen))
+	s, _ = s.Update(press('+'))
+	s, _ = s.Update(tea.PasteMsg{Content: "fix"})
+	s, effects := s.Update(named(tea.KeyEnter))
+	wantEffects(t, effects, []board.Effect{board.AddTask{Data: model.TaskData{Title: "fix"}}})
+	for _, msg := range []tea.Msg{named(tea.KeyEnter), press('x'), tea.PasteMsg{Content: "y"}} {
+		s, effects = s.Update(msg)
+		wantEffects(t, effects, nil)
+	}
+	if !strings.Contains(s.Text(), "add: fix\n") {
+		t.Fatalf("the line changed while its add was out: %q", s.Text())
+	}
+	s, _ = s.Update(board.Failed{Err: errors.New("refused")})
+	_, effects = s.Update(named(tea.KeyEnter))
+	wantEffects(t, effects, []board.Effect{board.AddTask{Data: model.TaskData{Title: "fix"}}})
+
+	for _, test := range []struct {
+		name   string
+		answer tea.Msg
+		want   []board.Effect
+		status string
+	}{
+		{"esc then the task lands", board.Added{Task: w2Task(2, model.StatusOpen)}, []board.Effect{board.Refresh{}}, ""},
+		{"esc then the add fails", board.Failed{Err: errors.New("refused")}, nil, "refused"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			s := w2State(w2Task(1, model.StatusOpen))
+			s, _ = s.Update(press('+'))
+			s, _ = s.Update(press('z'))
+			s, _ = s.Update(named(tea.KeyEnter))
+			s, effects := s.Update(named(tea.KeyEsc))
+			wantEffects(t, effects, nil)
+			if !strings.Contains(s.Text(), "add: z") {
+				t.Fatalf("esc closed the box before its add answered: %q", s.Text())
+			}
+			s, effects = s.Update(test.answer)
+			wantEffects(t, effects, test.want)
+			lines := strings.Split(s.Text(), "\n")
+			if strings.Contains(s.Text(), "add: ") || lines[len(lines)-1] != test.status {
+				t.Fatalf("after the answer the box is open or the status is not %q:\n%s", test.status, s.Text())
+			}
+		})
+	}
+}
+
+func TestKeysDoneDrawerWaitsForTheOutstandingRefresh(t *testing.T) {
+	s := w2State(w2Task(1, model.StatusOpen))
+	s, effects := s.Update(board.Tick{})
+	wantEffects(t, effects, []board.Effect{board.Refresh{}})
+	s, effects = s.Update(press('d'))
+	wantEffects(t, effects, nil)
+	_, effects = s.Update(board.Loaded{Data: board.Data{Tasks: []model.Task{w2Task(1, model.StatusOpen)}}})
+	wantEffects(t, effects, []board.Effect{board.Refresh{Done: true}})
+}
+
+func TestKeysPasteIntoAConfirmPromptChangesNothing(t *testing.T) {
+	s := w2State(w2Task(1, model.StatusOpen))
+	s, _ = s.Update(press('x'))
+	before := s.Text()
+	s, effects := s.Update(tea.PasteMsg{Content: "y"})
+	wantEffects(t, effects, nil)
+	if s.Text() != before {
+		t.Fatalf("paste into a y/n prompt changed the screen from %q to %q", before, s.Text())
+	}
+	_, effects = s.Update(press('y'))
+	wantEffects(t, effects, []board.Effect{board.SetTask{Task: 1, Patch: model.Patch{Status: w2Status(model.StatusDone)}}})
+}
+
+func TestKeysAFailedAnswerOpensItsPromptAgainWithTheText(t *testing.T) {
+	s := w2State(w2Task(9, model.StatusBlocked))
+	s, _ = s.Update(press('n'))
+	s, _ = s.Update(tea.PasteMsg{Content: "keep it"})
+	s, effects := s.Update(named(tea.KeyEnter))
+	wantEffects(t, effects, []board.Effect{board.Rearm{Task: 9, Answer: "keep it"}})
+	if strings.Contains(s.Text(), "answer: ") {
+		t.Fatalf("enter left the answer prompt open: %q", s.Text())
+	}
+	s, _ = s.Update(board.Failed{Err: errors.New("dial home: connection refused")})
+	if !strings.Contains(s.Text(), "answer: keep it") || !strings.HasSuffix(s.Text(), "dial home: connection refused") {
+		t.Fatalf("a failed answer = %q, want its prompt back with the text and the error", s.Text())
+	}
+	_, effects = s.Update(named(tea.KeyEnter))
+	wantEffects(t, effects, []board.Effect{board.Rearm{Task: 9, Answer: "keep it"}})
 }

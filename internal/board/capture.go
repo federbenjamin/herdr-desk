@@ -18,6 +18,8 @@ type CaptureState struct {
 	in      textinput.Model
 	refusal string
 	width   int
+	busy    bool // an AddTask is unanswered: the line is not edited or sent again until Added or Failed
+	quit    bool // esc or ctrl+c came while busy: the answer ends the box
 }
 
 // NewCapture returns an empty add box whose line starts with prompt ("capture: " in the popup, "add: " on the board).
@@ -25,11 +27,18 @@ func NewCapture(prompt string) CaptureState {
 	return CaptureState{prompt: prompt, in: newInput(""), width: 80}
 }
 
-// Update takes tea.KeyPressMsg, tea.WindowSizeMsg, Added, and Failed. Its effects are AddTask and Quit.
+// Update takes tea.KeyPressMsg, tea.PasteMsg, tea.WindowSizeMsg, Added, and Failed. Its effects are AddTask and
+// Quit.
 func (c CaptureState) Update(msg tea.Msg) (CaptureState, []Effect) {
 	switch m := msg.(type) {
 	case tea.KeyPressMsg:
-		switch m.String() {
+		k := m.String()
+		if c.busy {
+			// The task may still land, so a cancel waits for the home's answer.
+			c.quit = c.quit || k == "esc" || k == "ctrl+c"
+			return c, nil
+		}
+		switch k {
 		case "ctrl+d":
 		case "esc", "ctrl+c":
 			return c, []Effect{Quit{}}
@@ -38,16 +47,26 @@ func (c CaptureState) Update(msg tea.Msg) (CaptureState, []Effect) {
 			if line == "" {
 				return c, []Effect{Quit{}}
 			}
+			c.busy = true
 			return c, []Effect{AddTask{Data: model.ParseCapture(line)}}
 		default:
+			c.in = typeInto(c.in, m)
+		}
+	case tea.PasteMsg:
+		if !c.busy {
 			c.in = typeInto(c.in, m)
 		}
 	case tea.WindowSizeMsg:
 		c.width = max(m.Width, 1)
 	case Added:
+		c.busy = false
 		return c, []Effect{Quit{}}
 	case Failed:
+		c.busy = false
 		c.refusal = errText(m.Err)
+		if c.quit {
+			return c, []Effect{Quit{}}
+		}
 	}
 	return c, nil
 }

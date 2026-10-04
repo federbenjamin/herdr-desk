@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 
+	"github.com/charmbracelet/x/term"
+
 	"github.com/federbenjamin/desk/internal/cli"
 	"github.com/federbenjamin/desk/internal/daemon"
 )
@@ -25,10 +27,9 @@ func main() {
 	}))
 }
 
-func isTerminal(f *os.File) bool {
-	fi, err := f.Stat()
-	return err == nil && fi.Mode()&os.ModeCharDevice != 0
-}
+// isTerminal reports whether f is a terminal: one the terminal's own ioctl answers for, so /dev/null and other
+// character devices are not.
+func isTerminal(f *os.File) bool { return term.IsTerminal(f.Fd()) }
 
 // workingDir is the process's working directory. When it cannot be read, a task added here gets no project, so
 // the user is told why.

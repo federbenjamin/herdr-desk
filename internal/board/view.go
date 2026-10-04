@@ -7,10 +7,12 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/federbenjamin/desk/internal/api"
 	"github.com/federbenjamin/desk/internal/model"
 )
 
@@ -132,7 +134,23 @@ func spread(left, right string, w int) string {
 
 func rule(w int) string { return strings.Repeat("─", max(w, 0)) }
 
-func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
+// oneLine is text an agent, the user, or the home wrote, made one line and safe to draw: runs of white space
+// become one space, and clean drops the rest of its control characters.
+func oneLine(s string) string { return clean(strings.Join(strings.Fields(s), " ")) }
+
+// clean drops every control character but the tab, which becomes a space, so text from the home reaches the
+// terminal as text: no escape sequence, bell, or carriage return in it can act.
+func clean(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r == '\t':
+			return ' '
+		case unicode.IsControl(r):
+			return -1
+		}
+		return r
+	}, s)
+}
 
 func wrapGroups(s string, w int) []string {
 	var lines []string
@@ -155,7 +173,7 @@ func base(project string) string {
 	if project == "" {
 		return ""
 	}
-	return filepath.Base(project)
+	return oneLine(filepath.Base(project))
 }
 
 func join(sep string, parts ...string) string {
@@ -209,7 +227,7 @@ func (s State) view(p palette) string {
 	}
 	lines := append(top, rule(w))
 	lines = append(lines, bottom...)
-	lines = append(lines, s.status)
+	lines = append(lines, oneLine(s.status))
 	for i := range lines {
 		lines[i] = cut(lines[i], w)
 	}
@@ -236,8 +254,8 @@ func (s State) bottom(p palette, w int) []string {
 		return []string{s.prompt.line(p)}
 	case s.picking:
 		lines := []string{"open which ref?"}
-		for i, r := range s.pickRefs() {
-			lines = append(lines, mark(i == s.pickSel)+r)
+		for i, r := range s.refs() {
+			lines = append(lines, mark(i == s.pickSel)+oneLine(r))
 		}
 		return append(lines, pickFooter)
 	case s.page == pageTask && s.steps:
@@ -281,7 +299,7 @@ func (s State) threadLabel() string {
 	if s.thread == "" {
 		return "all"
 	}
-	return s.thread
+	return oneLine(s.thread)
 }
 
 func (s State) runnerLabel() string {
@@ -297,20 +315,15 @@ func (s State) runnerLabel() string {
 	if !s.cfg.IsHome {
 		where = "client"
 	}
-	word := d.Status.RunnerState
-	if word == "" {
-		word = "off"
-		if d.Status.RunnerOn {
-			word = "on"
-		}
-	}
+	word := s.runnerWord()
 	glyph := "○"
 	switch word {
-	case "on":
+	case api.RunnerStateOn:
 		glyph = "●"
-	case "paused":
+	case api.RunnerStatePaused:
 		glyph = "◐"
 	default:
+		word = oneLine(word)
 		return "runner " + glyph + " " + word + " · " + where
 	}
 	count := strconv.Itoa(s.liveRuns())
@@ -458,7 +471,7 @@ func (s State) rowDetail(t model.Task) (tag, rest string) {
 	case t.Status == model.StatusReady && t.Thread == "agent":
 		tag = "#agent · queued"
 	case t.Thread != "":
-		tag = "#" + t.Thread
+		tag = "#" + oneLine(t.Thread)
 	}
 	if t.Status == model.StatusStarted {
 		if r, ok := s.liveRun(t.Number); ok {
@@ -466,7 +479,7 @@ func (s State) rowDetail(t model.Task) (tag, rest string) {
 			if !r.StartedTS.IsZero() {
 				age = Age(s.now().Sub(r.StartedTS))
 			}
-			return tag, join(" · ", base(r.Root), r.Isolation, r.Model, age)
+			return tag, join(" · ", base(r.Root), oneLine(r.Isolation), oneLine(r.Model), age)
 		}
 	}
 	return tag, join(" · ", base(t.Project), Age(s.now().Sub(t.UpdatedTS))+" ago")

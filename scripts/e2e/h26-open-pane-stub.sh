@@ -15,11 +15,28 @@ mkdir -p "$PLUG/scripts" "$E2E/stub"
 cp "$REPO/scripts/open-pane.sh" "$PLUG/scripts/open-pane.sh"
 ROOT=$(cd "$PLUG" && pwd -P)
 
+# The stub focuses by id only the panes in STUB_OWNED, as herdr focuses only a pane a plugin owns, and fails
+# `pane list` when STUB_LIST is fail.
 cat >"$STUB" <<'SH'
 #!/bin/sh
 printf '%s\n' "$*" >>"$STUB_LOG"
 case "$*" in
-  "pane list"*) cat "$STUB_PANES" ;;
+  "pane list"*)
+    if [ "$STUB_LIST" = fail ]; then
+      echo 'error: workspace not found' >&2
+      exit 4
+    fi
+    cat "$STUB_PANES"
+    ;;
+  "plugin pane focus "*)
+    case " $STUB_OWNED " in
+      *" $4 "*) ;;
+      *)
+        echo "error: pane $4 is not a plugin pane" >&2
+        exit 1
+        ;;
+    esac
+    ;;
   *"--entrypoint capture"*)
     if [ "$STUB_POPUP" = busy ]; then
       echo 'error: a popup pane is already open (ui_busy)' >&2
@@ -56,18 +73,24 @@ pane_list() {
 # No board pane: a pane labelled desk that is not this plugin's, and another plugin's pane.
 pane_list "$(agent_pane w1:p1 desk /example/project)" "$(plugin_pane w1:p2 Files /example/plugins/viewer)" \
   >"$E2E/none.json"
-# The board pane after a title plugin renamed it, behind an agent pane.
-pane_list "$(agent_pane w1:p1 "example › task" /example/project)" "$(plugin_pane w1:p3 "plugin › desk" "$ROOT")" \
+# The board pane after a title plugin renamed it, behind an agent pane that also sits in the plugin's folder.
+pane_list "$(agent_pane w1:p1 "example › task" "$ROOT")" "$(plugin_pane w1:p3 "plugin › desk" "$ROOT")" \
   >"$E2E/renamed.json"
+# No board pane, and an agent's pane in the plugin's folder (a checkout linked as the plugin).
+pane_list "$(agent_pane w1:p1 "desk › work" "$ROOT")" "$(plugin_pane w1:p2 Files /example/plugins/viewer)" \
+  >"$E2E/agent.json"
+# No board pane, and a shell in the plugin's folder: it carries no agent keys, and no plugin owns it.
+pane_list "$(plugin_pane w1:p4 zsh "$ROOT")" >"$E2E/shell.json"
 
 # open_pane <want-exit> <panes-fixture> <popup> <args...>: run the plugin copy of open-pane.sh against the stub,
-# outside any herdr workspace, with a fresh log.
+# outside any herdr workspace, with a fresh log. w1:p2 and w1:p3 are plugin panes; STUB_LIST=fail fails the list.
 open_pane() {
   local want=$1 panes=$2 popup=$3
   shift 3
   : >"$LOG"
   run "$want" env -u HERDR_WORKSPACE_ID -u HERDR_PLUGIN_ID HERDR_BIN_PATH="$STUB" STUB_LOG="$LOG" \
-    STUB_PANES="$panes" STUB_POPUP="$popup" sh "$PLUG/scripts/open-pane.sh" "$@"
+    STUB_PANES="$panes" STUB_POPUP="$popup" STUB_OWNED="w1:p2 w1:p3" STUB_LIST="${STUB_LIST:-}" \
+    sh "$PLUG/scripts/open-pane.sh" "$@"
   CALLS=$(cat "$LOG")
   say "herdr calls: ${CALLS:-none}"
 }
@@ -84,8 +107,24 @@ ok "with no board pane, board opens one"
 open_pane 0 "$E2E/renamed.json" free board
 called "pane list"
 called "plugin pane focus w1:p3"
+not_called "plugin pane focus w1:p1"
 not_called "plugin pane open"
 ok "with a board pane whose label was renamed, board focuses it and opens none"
+
+open_pane 0 "$E2E/agent.json" free board
+called "plugin pane open --plugin desk --entrypoint board --focus"
+not_called "plugin pane focus"
+ok "an agent's pane in the plugin's folder is not taken for the board, and board opens one"
+
+open_pane 0 "$E2E/shell.json" free board
+called "plugin pane focus w1:p4"
+called "plugin pane open --plugin desk --entrypoint board --focus"
+ok "a shell in the plugin's folder refuses the focus, and board opens one"
+
+STUB_LIST=fail open_pane 4 "$E2E/none.json" free board
+grep -qF "workspace not found" <<<"$ERR" || fail "stderr does not carry the failed list's error"
+not_called "plugin pane open"
+ok "a failed pane list exits with its status and error, and opens no pane"
 
 open_pane 0 "$E2E/none.json" free capture
 called "plugin pane open --plugin desk --entrypoint capture --focus"
