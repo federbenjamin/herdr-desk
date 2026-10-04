@@ -144,7 +144,9 @@ func listFilter(ready, open, done, archived, all bool) store.Filter {
 }
 
 // listProject resolves a -p value the way add does (model.ResolveProject). The known projects are every task's
-// on the home, or, offline, those of the snapshot's tasks the list returned.
+// on the home. Offline they are those of the whole snapshot, tl, which holds live tasks only: a name none of
+// them carries may still be a project the home knows from a done task, so it is kept as it is, and since a
+// stored project is never a bare name, the list is empty rather than refused.
 func (a *app) listProject(c *api.Client, project string, tl api.TaskList, all bool) (string, error) {
 	project, err := a.projectArg(project)
 	if err != nil || project == "" || filepath.IsAbs(project) {
@@ -162,7 +164,11 @@ func (a *app) listProject(c *api.Client, project string, tl api.TaskList, all bo
 	for _, t := range tasks {
 		known = append(known, t.Project)
 	}
-	return model.ResolveProject(project, known)
+	resolved, err := model.ResolveProject(project, known)
+	if tl.Offline && !slices.ContainsFunc(known, func(p string) bool { return p != "" && filepath.Base(p) == project }) {
+		return project, nil
+	}
+	return resolved, err
 }
 
 // filterProject narrows tasks to one project with store.Filter.Match.
@@ -191,7 +197,13 @@ func (a *app) listCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		tl, err := c.ListTasks(a.ctx, f)
+		// A bare -p name is resolved over the whole board, so a live filter asks for the zero Filter (the
+		// same call ListTasks makes for it, and what the snapshot holds) and is applied below.
+		query := f
+		if f.Live() && project != "" && !filepath.IsAbs(project) {
+			query = store.Filter{}
+		}
+		tl, err := c.ListTasks(a.ctx, query)
 		if err != nil {
 			return err
 		}

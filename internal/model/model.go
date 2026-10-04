@@ -116,3 +116,25 @@ var sessionIDRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
 func ValidSessionID(s string) bool {
 	return s != "." && s != ".." && sessionIDRe.MatchString(s)
 }
+
+// ValidIsolation reports whether s is "", self, worktree, or in-place. config.Validate, AddRoot, and the store
+// all check an isolation with it; internal/store does not import internal/config.
+func ValidIsolation(s string) bool {
+	switch s {
+	case "", "self", "worktree", "in-place":
+		return true
+	}
+	return false
+}
+
+// OnMergedStatus maps a runner.on_merged value to its status: "" and "review" give StatusReview, "done"
+// gives StatusDone, and any other value gives false. config.Validate and store.Open both parse with it.
+func OnMergedStatus(s string) (Status, bool) {
+	switch s {
+	case "", string(StatusReview):
+		return StatusReview, true
+	case string(StatusDone):
+		return StatusDone, true
+	}
+	return "", false
+}

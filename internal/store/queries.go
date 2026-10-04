@@ -130,7 +130,13 @@ func readSteps(ctx context.Context, q querier, where string, args ...any) (map[i
 
 // ListTasks returns the tasks f matches, ordered by number.
 func (s *Store) ListTasks(ctx context.Context, f Filter) ([]model.Task, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+taskCols+` FROM tasks ORDER BY number`)
+	return s.readTasks(ctx, ``, nil, f.Match)
+}
+
+// readTasks returns the tasks the where clause picks and keep accepts, by number, with their steps: one query
+// for the tasks and one for the steps of those kept.
+func (s *Store) readTasks(ctx context.Context, where string, args []any, keep func(model.Task) bool) ([]model.Task, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+taskCols+` FROM tasks `+where+` ORDER BY number`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -141,18 +147,14 @@ func (s *Store) ListTasks(ctx context.Context, f Filter) ([]model.Task, error) {
 		if err != nil {
 			return nil, err
 		}
-		if f.Match(t) {
+		if keep(t) {
 			out = append(out, t)
 		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	numbers := make([]int, len(out))
-	for i, t := range out {
-		numbers[i] = t.Number
-	}
-	steps, err := readSteps(ctx, s.db, `WHERE task IN (SELECT value FROM json_each(?))`, string(model.MustData(numbers)))
+	steps, err := readSteps(ctx, s.db, `WHERE task IN (SELECT value FROM json_each(?))`, numbersOf(out))
 	if err != nil {
 		return nil, err
 	}
@@ -160,6 +162,15 @@ func (s *Store) ListTasks(ctx context.Context, f Filter) ([]model.Task, error) {
 		out[i].Steps = append(out[i].Steps, steps[out[i].Number]...)
 	}
 	return out, nil
+}
+
+// numbersOf is the tasks' numbers as a JSON array, the one bound parameter a json_each list takes.
+func numbersOf(tasks []model.Task) string {
+	numbers := make([]int, len(tasks))
+	for i, t := range tasks {
+		numbers[i] = t.Number
+	}
+	return string(model.MustData(numbers))
 }
 
 // GetTask returns a task and every event of it, oldest first.
@@ -242,28 +253,53 @@ func (s *Store) SessionEvents(ctx context.Context, session string) (model.Sessio
 		return model.SessionData{}, err
 	}
 	out := model.SessionData{Session: session, Chain: chain, Events: evs, Tasks: []model.SessionTask{}}
-	created, err := s.events(ctx, `WHERE kind = 'task' AND session IN `+in, args...)
+	created := map[int]model.Event{}
+	err = s.eachEvent(ctx, `WHERE kind = 'task' AND session IN `+in, args, func(ev model.Event) error {
+		created[ev.Task] = ev
+		return nil
+	})
 	if err != nil {
 		return model.SessionData{}, err
 	}
-	for _, ev := range created {
-		t, err := readTask(ctx, s.db, ev.Task)
-		if err != nil {
-			return model.SessionData{}, err
-		}
+	tasks, err := s.readTasks(ctx, `WHERE number IN (SELECT task FROM events WHERE kind = 'task' AND session IN `+in+`)`, args,
+		func(model.Task) bool { return true })
+	if err != nil {
+		return model.SessionData{}, err
+	}
+	doneAt, err := s.doneAt(ctx, tasks)
+	if err != nil {
+		return model.SessionData{}, err
+	}
+	for _, t := range tasks {
+		ev := created[t.Number]
 		st := model.SessionTask{Task: t, Created: ev.ID, Tags: ev.Tags}
 		if t.Status == model.StatusDone {
-			err := s.db.QueryRowContext(ctx,
-				`SELECT COALESCE(MAX(id), 0) FROM events WHERE task = ? AND kind IN ('task', 'set') AND json_extract(data, '$.status') = 'done'`,
-				t.Number).Scan(&st.DoneAt)
-			if err != nil {
-				return model.SessionData{}, err
-			}
+			st.DoneAt = doneAt[t.Number]
 		}
 		out.Tasks = append(out.Tasks, st)
 	}
-	slices.SortFunc(out.Tasks, func(a, b model.SessionTask) int { return a.Number - b.Number })
 	return out, nil
+}
+
+// doneAt returns, for each of the tasks ever set done, the id of the last event that set it done: one query.
+func (s *Store) doneAt(ctx context.Context, tasks []model.Task) (map[int]int64, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT task, MAX(id) FROM events
+		WHERE task IN (SELECT value FROM json_each(?)) AND kind IN ('task', 'set') AND json_extract(data, '$.status') = 'done'
+		GROUP BY task`, numbersOf(tasks))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int]int64{}
+	for rows.Next() {
+		var task int
+		var id int64
+		if err := rows.Scan(&task, &id); err != nil {
+			return nil, err
+		}
+		out[task] = id
+	}
+	return out, rows.Err()
 }
 
 // ListRuns returns every run, by id.

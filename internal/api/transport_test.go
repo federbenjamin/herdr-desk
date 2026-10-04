@@ -17,6 +17,7 @@ import (
 	"github.com/federbenjamin/desk/internal/api"
 	"github.com/federbenjamin/desk/internal/backup"
 	"github.com/federbenjamin/desk/internal/config"
+	"github.com/federbenjamin/desk/internal/store"
 	"github.com/federbenjamin/desk/internal/testutil"
 )
 
@@ -109,17 +110,32 @@ func captureLog(t *testing.T) *bytes.Buffer {
 func TestServerLogsInternalErrorsAndTokenReadFailuresAndHidesTheDetail(t *testing.T) {
 	logged := captureLog(t)
 	m := testutil.NewMachine(t)
-	srv := api.NewServer(api.ServerOptions{Paths: m.Paths, Backup: func(context.Context) (backup.Result, error) {
-		return backup.Result{}, errors.New("git push: exit status 128: internal detail")
+	st, err := store.Open(m.Paths.DB(), store.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+	srv := api.NewServer(api.ServerOptions{Store: st, Paths: m.Paths, Backup: func(context.Context) (backup.Result, error) {
+		return backup.Result{}, errors.New("git push: exit status 128: fatal: <remote> does not appear to be a git repository")
 	}})
 
 	rec := httptest.NewRecorder()
-	srv.Handler(true).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/"+api.MethodBackupRun, strings.NewReader("{}")))
-	if rec.Code != http.StatusInternalServerError || strings.Contains(rec.Body.String(), "internal detail") {
+	srv.Handler(true).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/"+api.MethodTasksList, strings.NewReader("{}")))
+	if rec.Code != http.StatusInternalServerError || strings.Contains(rec.Body.String(), "closed") || !strings.Contains(rec.Body.String(), "daemon log") {
 		t.Fatalf("500 answer = %d %q, want a generic message", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(logged.String(), api.MethodBackupRun) || !strings.Contains(logged.String(), "internal detail") {
+	if !strings.Contains(logged.String(), api.MethodTasksList) || !strings.Contains(logged.String(), "closed") {
 		t.Fatalf("daemon log = %q, want the method and the error", logged.String())
+	}
+
+	logged.Reset()
+	rec = httptest.NewRecorder()
+	srv.Handler(true).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/"+api.MethodBackupRun, strings.NewReader("{}")))
+	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "git push: exit status 128") {
+		t.Fatalf("failed backup answer = %d %q, want the git step that failed", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(logged.String(), api.MethodBackupRun) || !strings.Contains(logged.String(), "git push") {
+		t.Fatalf("daemon log = %q, want the failed backup", logged.String())
 	}
 
 	logged.Reset()

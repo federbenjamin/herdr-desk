@@ -136,7 +136,7 @@ Refusal codes: `unknown-task`, `unknown-step`, `unknown-project`, `unknown-event
 |---|---|
 | `desk` | a static board: `NEEDS YOU` (blocked, review), `IN MOTION` (started), `ON DECK` (ready, then open); first line `desk · home · runner on\|off`, or `desk · offline (snapshot <age>)` |
 | `desk add -t <title> [-n <notes>] [-p <project>\|--desk] [--thread <name>] [--status <s>] [--tag <t>]… [--branch <b>]` | creates a task and prints `T<n>`. With no `-p` or `--desk` the project is the main checkout of the git repo you are in. `-p` takes an absolute directory or the bare name of a known project. When git cannot run (not on your PATH, a timeout), the add stops with exit 3 rather than store a task without its project |
-| `desk list [--ready\|--open\|--done\|--archived\|--all] [-p <project>\|--desk]` | lists tasks; default is the five live statuses. `-p` and `--desk` narrow every filter, `--all` too; a bare name no task's project carries is `unknown-project`, as for `add` |
+| `desk list [--ready\|--open\|--done\|--archived\|--all] [-p <project>\|--desk]` | lists tasks; default is the five live statuses. `-p` and `--desk` narrow every filter, `--all` too; a bare name no task's project carries is `unknown-project`, as for `add`. Offline the name is looked up in the whole snapshot, which holds live tasks only, so a name none of them carries lists nothing |
 | `desk show <task>` | one task with its steps and history |
 | `desk set <task> [<status>] [--thread <t>] [--root <r>] [--isolation <i>] [--model <m>] [--archive\|--unarchive] [--ref <ref>] [--merged]` | patches fields; `review --merged` writes the status that `runner.on_merged` names |
 | `desk edit <task> [--title <t>] [--notes <n>]` | replaces the title or the notes |
@@ -144,7 +144,7 @@ Refusal codes: `unknown-task`, `unknown-step`, `unknown-project`, `unknown-event
 | `desk note <text> [--task <task>] [--ref <ref>] [--branch <b>] [--tag <t>]…` | appends a note and prints `e<id>`, or `queued` when the home is unreachable |
 | `desk note --merged --branch <b> [--pr <n>] [--sha <sha>] [<text>]` | records that a branch merged |
 | `desk decide <text> [--tag <k:v>]… [--replaces e<id>] [--task <task>]` | appends a decision |
-| `desk session [<id>] [--md] [--all] [--continues <old-id>]` | prints the session's journal view; `--all` shows hidden lines; `--continues` first links the session to an older one |
+| `desk session [<id>] [--md] [--all] [--continues <old-id>]` | prints the session's journal view; `--json` prints it with the keys `session`, `work`, `todo`, `decisions`; `--all` shows hidden lines; `--continues` first links the session to an older one |
 | `desk capture` | reads one line on stdin: words starting `#` set the thread, `@` the project, the rest is the title |
 | `desk daemon [run]` · `stop` · `restart` · `status` | runs or controls the daemon. A second `run` prints `already running` and exits 0; on a client it prints that there is nothing to run and exits 0. `status` never starts a daemon |
 | `desk token [show]` · `rotate` | prints or rotates the token |
@@ -152,7 +152,7 @@ Refusal codes: `unknown-task`, `unknown-step`, `unknown-project`, `unknown-event
 | `desk roots [list]` · `add <path> [--about <a>] [--isolation <i>]` · `remove <path>` | edits `[[roots]]` |
 | `desk setup [--profile claude-code] [--listen <host:port>] [--runner on\|off] [--skill-dir <dir>] [--force] [--no-herdr]` | first-time setup; never prompts |
 | `desk hook start --format claude-code` | the session hook: reads the hook's JSON on stdin and prints the path of the session's journal view |
-| `desk backup` | runs the backup now |
+| `desk backup` | runs the backup now; a failed run exits 3 naming the git step that failed, with the remote shown as `<remote>` |
 | `desk version` | prints the version |
 
 The session is the first of `--session <id>`, `$DESK_SESSION`, and the variable named by
@@ -258,7 +258,7 @@ it in CI. Locally: `go run github.com/goreleaser/goreleaser/v2@latest release --
 ## Develop
 
 ```sh
-go vet ./... && sh scripts/coverage.sh && test -z "$(gofmt -l .)" && shellcheck scripts/*.sh scripts/e2e/*.sh
+sh scripts/checks.sh               # vet, the coverage gate, gofmt, shellcheck; --no-coverage runs go test instead
 bash scripts/e2e/h01-add-list.sh   # the hand-test claims, one script each
 ```
 

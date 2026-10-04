@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -46,7 +47,7 @@ func holdLock(t *testing.T, p config.Paths) {
 	}
 }
 
-func TestDaemonRunAlreadyRunningWaitsForTheInfoFileAndNeverPrintsPidZero(t *testing.T) {
+func TestDaemonRunAlreadyRunningPrintsOnlyThePidOfTheDaemonOnTheSocket(t *testing.T) {
 	t.Cleanup(cli.SetInfoWait(100 * time.Millisecond))
 	machine := testutil.NewMachine(t)
 	holdLock(t, machine.Paths)
@@ -58,14 +59,35 @@ func TestDaemonRunAlreadyRunningWaitsForTheInfoFileAndNeverPrintsPidZero(t *test
 	if !strings.Contains(result.stderr, "info file") {
 		t.Fatalf("daemon run stderr = %q, want it to name the unreadable info file", result.stderr)
 	}
+	if err := os.WriteFile(machine.Paths.DaemonInfo(), []byte(`{"pid":4242}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result = runDeskWithEnv(t, machine, t.TempDir(), []string{"daemon", "run"}, "", nil, nil)
+	if result.exit != 3 || strings.Contains(result.stdout, "4242") {
+		t.Fatalf("daemon run with an info file and no daemon on the socket = (%d, %q, %q), want exit 3", result.exit, result.stdout, result.stderr)
+	}
+
+	home := testutil.StartHome(t, testutil.HomeOptions{})
+	current, err := os.ReadFile(home.Paths.DaemonInfo())
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := []byte(`{"pid":4242,"started_ts":"2000-01-01T00:00:00Z"}`)
+	if err := os.WriteFile(home.Paths.DaemonInfo(), stale, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result = runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"daemon", "run"}, "", nil, nil)
+	if result.exit != 3 || strings.Contains(result.stdout, "4242") || !strings.Contains(result.stderr, "info file") {
+		t.Fatalf("daemon run with a stale info file = (%d, %q, %q), want exit 3 and never the stale pid", result.exit, result.stdout, result.stderr)
+	}
 
 	t.Cleanup(cli.SetInfoWait(5 * time.Second))
 	late := time.AfterFunc(50*time.Millisecond, func() {
-		_ = os.WriteFile(machine.Paths.DaemonInfo(), []byte(`{"pid":4242}`), 0o600)
+		_ = os.WriteFile(home.Paths.DaemonInfo(), current, 0o600)
 	})
 	defer late.Stop()
-	result = runDeskWithEnv(t, machine, t.TempDir(), []string{"daemon", "run"}, "", nil, nil)
-	if result.exit != 0 || strings.TrimSpace(result.stdout) != "desk daemon: already running (pid 4242)" {
-		t.Fatalf("daemon run once the info file appears = (%d, %q, %q), want pid 4242", result.exit, result.stdout, result.stderr)
+	result = runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"daemon", "run"}, "", nil, nil)
+	if want := fmt.Sprintf("desk daemon: already running (pid %d)", os.Getpid()); result.exit != 0 || strings.TrimSpace(result.stdout) != want {
+		t.Fatalf("daemon run once the running daemon's info file is back = (%d, %q, %q), want %q", result.exit, result.stdout, result.stderr, want)
 	}
 }

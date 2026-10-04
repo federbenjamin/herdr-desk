@@ -44,13 +44,11 @@ type Store struct {
 // Open opens the store at path. It creates the parent dir 0700 and the file 0600, uses WAL, and applies
 // migrations.
 func Open(path string, o Options) (*Store, error) {
-	switch o.OnMerged {
-	case "":
-		o.OnMerged = model.StatusReview
-	case model.StatusReview, model.StatusDone:
-	default:
+	onMerged, ok := model.OnMergedStatus(string(o.OnMerged))
+	if !ok {
 		return nil, fmt.Errorf("on_merged must be review or done, not %q", o.OnMerged)
 	}
+	o.OnMerged = onMerged
 	if o.Scanner == nil {
 		o.Scanner = secretscan.Builtin()
 	}

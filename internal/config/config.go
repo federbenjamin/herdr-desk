@@ -12,6 +12,8 @@ import (
 	"strconv"
 
 	"github.com/pelletier/go-toml/v2"
+
+	"github.com/federbenjamin/desk/internal/model"
 )
 
 // Config is the file $XDG_CONFIG_HOME/desk/config.toml.
@@ -150,21 +152,14 @@ func WriteFileAtomic(path string, b []byte) error {
 	return os.Rename(tmp, path)
 }
 
-var isolations = []string{"", "self", "worktree", "in-place"}
-
-// ValidIsolation reports whether s is an isolation value: "", self, worktree, or in-place.
-func ValidIsolation(s string) bool { return slices.Contains(isolations, s) }
-
 // Validate checks on_merged, each root's isolation, and that listen and client.home are host:port, with
 // listen never on a wildcard host. An empty on_merged reads as "review".
 func (c Config) Validate() error {
-	switch c.Runner.OnMerged {
-	case "", "review", "done":
-	default:
+	if _, ok := model.OnMergedStatus(c.Runner.OnMerged); !ok {
 		return fmt.Errorf("runner.on_merged must be \"review\" or \"done\", not %q", c.Runner.OnMerged)
 	}
 	for _, r := range c.Roots {
-		if !ValidIsolation(r.Isolation) {
+		if !model.ValidIsolation(r.Isolation) {
 			return fmt.Errorf("roots %s: isolation must be self, worktree, or in-place, not %q", r.Path, r.Isolation)
 		}
 	}
@@ -211,7 +206,7 @@ func (c *Config) AddRoot(r Root) error {
 	if !filepath.IsAbs(r.Path) {
 		return fmt.Errorf("root path %q is not absolute", r.Path)
 	}
-	if !ValidIsolation(r.Isolation) {
+	if !model.ValidIsolation(r.Isolation) {
 		return fmt.Errorf("isolation must be self, worktree, or in-place, not %q", r.Isolation)
 	}
 	r.Path = filepath.Clean(r.Path)

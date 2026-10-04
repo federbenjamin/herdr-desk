@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/federbenjamin/desk/internal/config"
 	"github.com/federbenjamin/desk/internal/model"
 )
 
@@ -127,7 +126,7 @@ func (s *Store) SetTask(ctx context.Context, a Actor, number int, p model.Patch)
 		}
 		p.Status = &st
 	}
-	if p.Isolation != nil && !config.ValidIsolation(*p.Isolation) {
+	if p.Isolation != nil && !model.ValidIsolation(*p.Isolation) {
 		return model.Task{}, refuse(model.CodeBadInput, "isolation must be self, worktree, or in-place, not %q", *p.Isolation)
 	}
 	var out model.Task

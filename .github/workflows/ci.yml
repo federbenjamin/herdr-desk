@@ -21,4 +21,4 @@ jobs:
       - name: Checks
         env:
           CGO_ENABLED: "0"
-        run: go vet ./... && sh scripts/coverage.sh && test -z "$(gofmt -l .)" && shellcheck scripts/*.sh scripts/e2e/*.sh
+        run: sh scripts/checks.sh

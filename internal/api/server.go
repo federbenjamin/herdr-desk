@@ -42,6 +42,13 @@ type badRequest struct{ err error }
 
 func (b badRequest) Error() string { return b.err.Error() }
 
+// shown is a failure whose text the caller reads in the 500's body: a backup's, which names the git step,
+// served on the unix socket only, and stripped of the remote by backup.Run.
+type shown struct{ err error }
+
+func (s shown) Error() string { return s.err.Error() }
+func (s shown) Unwrap() error { return s.err }
+
 // bind is the one decode-and-call adapter every method goes through.
 func bind[Req any](fn func(ctx context.Context, r Req) (any, error)) method {
 	return func(ctx context.Context, body []byte) (any, error) {
@@ -103,7 +110,11 @@ func NewServer(o ServerOptions) *Server {
 				return nil, &model.Refusal{Code: model.CodeBackupOff, Msg: "no [backup] git_remote is configured"}
 			}
 			// A push the caller stops waiting for still finishes, so the remote never holds half a run.
-			return o.Backup(context.WithoutCancel(ctx))
+			res, err := o.Backup(context.WithoutCancel(ctx))
+			if err != nil {
+				return nil, shown{err}
+			}
+			return res, nil
 		}),
 	}
 	return s
@@ -158,6 +169,7 @@ func (s *Server) Handler(trusted bool) http.Handler {
 		res, err := m(r.Context(), body)
 		if err != nil {
 			var bad badRequest
+			var sh shown
 			switch ref, isRef := model.AsRefusal(err); {
 			case isRef:
 				writeError(w, http.StatusConflict, ref.Code, ref.Msg)
@@ -165,7 +177,11 @@ func (s *Server) Handler(trusted bool) http.Handler {
 				writeError(w, http.StatusBadRequest, "", bad.Error())
 			default:
 				log.Printf("desk daemon: %s: %v", name, err)
-				writeError(w, http.StatusInternalServerError, "", "an internal error; the daemon log has it")
+				msg := "an internal error; the daemon log has it"
+				if errors.As(err, &sh) {
+					msg = sh.Error()
+				}
+				writeError(w, http.StatusInternalServerError, "", msg)
 			}
 			return
 		}

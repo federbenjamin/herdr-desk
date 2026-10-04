@@ -34,7 +34,7 @@ func (a *app) daemonCmd() *cobra.Command {
 		if errors.Is(err, daemon.ErrAlreadyRunning) {
 			info, err := a.runningInfo()
 			if err != nil {
-				return fmt.Errorf("another daemon holds %s, but its info file cannot be read: %w", a.paths.LockFile(), err)
+				return fmt.Errorf("another daemon holds %s, but no info file names the daemon on its socket: %w", a.paths.LockFile(), err)
 			}
 			a.say("desk daemon: already running (pid %d)", info.PID)
 			return nil
@@ -102,13 +102,31 @@ func (a *app) daemonCmd() *cobra.Command {
 var infoWait = 5 * time.Second
 
 // runningInfo reads the info file of the daemon that holds the lock. A daemon that took the lock a moment ago
-// writes the file once it serves, so a file that is missing or half written is read again until infoWait.
+// writes the file once it serves, and one that died without cleaning up leaves its own file behind, so a file
+// counts only when its start time is the one the daemon on the socket reports. Until then it is read again,
+// up to infoWait.
 func (a *app) runningInfo() (daemon.Info, error) {
+	c, err := a.client()
+	if err != nil {
+		return daemon.Info{}, err
+	}
 	deadline := time.Now().Add(infoWait)
 	for {
 		info, err := daemon.ReadInfo(a.paths)
-		if err == nil || time.Now().After(deadline) {
-			return info, err
+		if err == nil {
+			st, serr := c.Status(a.ctx)
+			switch {
+			case serr != nil:
+				err = serr
+			case !st.StartedTS.Equal(info.StartedTS):
+				err = fmt.Errorf("%s names a daemon started %s; the one on the socket started %s",
+					a.paths.DaemonInfo(), info.StartedTS.Format(time.RFC3339Nano), st.StartedTS.Format(time.RFC3339Nano))
+			default:
+				return info, nil
+			}
+		}
+		if time.Now().After(deadline) {
+			return daemon.Info{}, err
 		}
 		time.Sleep(20 * time.Millisecond)
 	}

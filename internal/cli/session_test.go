@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -63,6 +64,44 @@ func TestSessionContinuesRecordsTheLinkInTheNewSessionThenRendersTheChain(t *tes
 	if none.exit != 2 || none.stdout != "" {
 		t.Fatalf("session with no id = (%d, %q, %q), want exit 2", none.exit, none.stdout, none.stderr)
 	}
+}
+
+func TestSessionJSONPrintsSnakeCaseKeys(t *testing.T) {
+	home := testutil.StartHome(t, testutil.HomeOptions{})
+	env := map[string]string{"DESK_SESSION": "keys"}
+	for _, args := range [][]string{{"note", "a fact"}, {"decide", "a choice"}, {"add", "-t", "a task", "--desk"}} {
+		if r := runDeskWithEnv(t, home.Machine, t.TempDir(), args, "", env, nil); r.exit != 0 {
+			t.Fatalf("%v = (%d, %q, %q)", args, r.exit, r.stdout, r.stderr)
+		}
+	}
+
+	result := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"session", "keys", "--json"}, "", nil, nil)
+	var view map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(result.stdout), &view); err != nil || result.exit != 0 {
+		t.Fatalf("session --json = (%d, %q): %v", result.exit, result.stdout, err)
+	}
+	if got := sortedKeys(view); got != "decisions session todo work" {
+		t.Fatalf("view keys = %q, want decisions session todo work", got)
+	}
+	wantLine := "event_id hidden ref replaces scope status tags task text ts who"
+	for _, section := range []string{"work", "todo", "decisions"} {
+		var lines []map[string]json.RawMessage
+		if err := json.Unmarshal(view[section], &lines); err != nil || len(lines) != 1 {
+			t.Fatalf("%s = %s (%v), want one line", section, view[section], err)
+		}
+		if got := sortedKeys(lines[0]); got != wantLine {
+			t.Errorf("%s line keys = %q, want %q", section, got, wantLine)
+		}
+	}
+}
+
+func sortedKeys(m map[string]json.RawMessage) string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	return strings.Join(keys, " ")
 }
 
 func TestQueuedWritesAndTheHookNameWhyTheDaemonDidNotStart(t *testing.T) {

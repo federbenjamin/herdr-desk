@@ -70,6 +70,24 @@ func TestAdminCommandStartsAnUnavailableHomeThroughEnvSpawn(t *testing.T) {
 	}
 }
 
+func TestBackupThatFailsToPushTellsTheCallerWhichGitStepFailed(t *testing.T) {
+	cfg := config.Default()
+	remote := filepath.Join(t.TempDir(), "missing.git")
+	cfg.Backup.GitRemote = remote
+	home := testutil.StartHome(t, testutil.HomeOptions{Config: cfg})
+
+	result := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"backup"}, "", nil, nil)
+	if result.exit != 3 || result.stdout != "" {
+		t.Fatalf("backup to a missing remote = (%d, %q, %q), want exit 3", result.exit, result.stdout, result.stderr)
+	}
+	if !strings.Contains(result.stderr, "git push") || strings.Contains(result.stderr, "internal error") {
+		t.Fatalf("backup stderr = %q, want the git step that failed", result.stderr)
+	}
+	if strings.Contains(result.stderr, remote) {
+		t.Fatalf("backup stderr = %q names the remote", result.stderr)
+	}
+}
+
 func TestTokenShowAndRotateExposeTheCurrentToken(t *testing.T) {
 	home := testutil.StartHome(t, testutil.HomeOptions{})
 	rotate := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"token", "rotate"}, "", nil, nil)

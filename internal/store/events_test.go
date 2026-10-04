@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -381,6 +382,68 @@ func TestSessionEventsIncludesChainMergedEventsAndTaskJournalFields(t *testing.T
 	}
 	if want := []string{"task-tag"}; !reflect.DeepEqual(journalTask.Tags, want) {
 		t.Fatalf("session task tags = %q, want %q", journalTask.Tags, want)
+	}
+}
+
+func TestSessionEventsReadsEachChainTaskWithItsOwnStepsAndLastDoneEvent(t *testing.T) {
+	ctx := context.Background()
+	st := openStore(t, store.Options{})
+	me := store.Actor{Session: "many-tasks"}
+	add := func(a store.Actor, title string) model.Task {
+		t.Helper()
+		task, err := st.AddTask(ctx, a, store.AddTaskInput{TaskData: model.TaskData{Title: title}, Tags: []string{"tag-" + title}})
+		if err != nil {
+			t.Fatalf("add %s: %v", title, err)
+		}
+		return task
+	}
+	set := func(number int, status model.Status) int64 {
+		t.Helper()
+		if _, err := st.SetTask(ctx, store.Actor{}, number, model.Patch{Status: statusPtr(status)}); err != nil {
+			t.Fatalf("set T%d %s: %v", number, status, err)
+		}
+		detail, err := st.GetTask(ctx, number)
+		if err != nil {
+			t.Fatalf("get T%d: %v", number, err)
+		}
+		return detail.History[len(detail.History)-1].ID
+	}
+	twice := add(me, "twice")
+	reopened := add(me, "reopened")
+	add(store.Actor{Session: "elsewhere"}, "elsewhere")
+	stepped := add(me, "stepped")
+	for _, text := range []string{"first", "second"} {
+		if _, err := st.Step(ctx, me, stepped.Number, model.StepOp{Op: "add", Text: text}); err != nil {
+			t.Fatalf("add step %s: %v", text, err)
+		}
+	}
+	set(twice.Number, model.StatusDone)
+	set(reopened.Number, model.StatusDone)
+	set(twice.Number, model.StatusOpen)
+	steppedDone := set(stepped.Number, model.StatusDone)
+	lastDone := set(twice.Number, model.StatusDone)
+	set(reopened.Number, model.StatusOpen)
+
+	data, err := st.SessionEvents(ctx, me.Session)
+	if err != nil {
+		t.Fatalf("read session events: %v", err)
+	}
+	var got []string
+	for _, task := range data.Tasks {
+		got = append(got, fmt.Sprintf("T%d %s done_at=%d steps=%d tags=%v", task.Number, task.Status, task.DoneAt, len(task.Steps), task.Tags))
+	}
+	want := []string{
+		fmt.Sprintf("T%d done done_at=%d steps=0 tags=[tag-twice]", twice.Number, lastDone),
+		fmt.Sprintf("T%d open done_at=0 steps=0 tags=[tag-reopened]", reopened.Number),
+		fmt.Sprintf("T%d done done_at=%d steps=2 tags=[tag-stepped]", stepped.Number, steppedDone),
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("session tasks =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	for _, task := range data.Tasks {
+		if task.Created == 0 || task.Created >= lastDone {
+			t.Errorf("T%d Created = %d, want its task event", task.Number, task.Created)
+		}
 	}
 }
 

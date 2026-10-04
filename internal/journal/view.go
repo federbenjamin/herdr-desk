@@ -12,27 +12,28 @@ import (
 	"github.com/federbenjamin/desk/internal/model"
 )
 
-// Line is one line of the view.
+// Line is one line of the view. The json tags are the keys `desk session --json` prints, in model's
+// snake_case style.
 type Line struct {
-	EventID  int64 // 0 for a task line
-	Task     int   // 0 when the line is about no task
-	TS       time.Time
-	Scope    string // a branch name, or "session"
-	Text     string
-	Ref      string
-	Status   model.Status // task lines
-	Who      model.Who    // decision lines
-	Tags     []string     // tags other than branch:<b>
-	Replaces int64        // decision lines
-	Hidden   bool         // true only in a view built with all=true, on a line the default view leaves out
+	EventID  int64        `json:"event_id"` // 0 for a task line
+	Task     int          `json:"task"`     // 0 when the line is about no task
+	TS       time.Time    `json:"ts"`
+	Scope    string       `json:"scope"` // a branch name, or "session"
+	Text     string       `json:"text"`
+	Ref      string       `json:"ref"`
+	Status   model.Status `json:"status"`   // task lines
+	Who      model.Who    `json:"who"`      // decision lines
+	Tags     []string     `json:"tags"`     // tags other than branch:<b>
+	Replaces int64        `json:"replaces"` // decision lines
+	Hidden   bool         `json:"hidden"`   // true only in a view built with all=true, on a line the default view leaves out
 }
 
 // View is a session's rendered sections.
 type View struct {
-	Session   string
-	Work      []Line
-	Todo      []Line
-	Decisions []Line
+	Session   string `json:"session"`
+	Work      []Line `json:"work"`
+	Todo      []Line `json:"todo"`
+	Decisions []Line `json:"decisions"`
 }
 
 const (

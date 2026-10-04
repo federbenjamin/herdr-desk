@@ -78,21 +78,6 @@ func TestDefaultStartsRunnerWithPublishedLimits(t *testing.T) {
 	}
 }
 
-func TestValidIsolationAcceptsOnlyPublishedValues(t *testing.T) {
-	t.Parallel()
-
-	for _, value := range []string{"", "self", "worktree", "in-place"} {
-		if !config.ValidIsolation(value) {
-			t.Errorf("ValidIsolation(%q) = false; want true", value)
-		}
-	}
-	for _, value := range []string{"Self", "container", " worktree", "in place"} {
-		if config.ValidIsolation(value) {
-			t.Errorf("ValidIsolation(%q) = true; want false", value)
-		}
-	}
-}
-
 func TestLoadMissingFileReturnsDefaultAndRejectsUnknownOrInvalidConfig(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "missing.toml")
 	got, err := config.Load(missing)

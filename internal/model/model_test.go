@@ -34,6 +34,36 @@ func TestParseStatusAcceptsOnlyPublishedStatuses(t *testing.T) {
 	}
 }
 
+func TestValidIsolationAcceptsOnlyPublishedValues(t *testing.T) {
+	t.Parallel()
+
+	for _, value := range []string{"", "self", "worktree", "in-place"} {
+		if !model.ValidIsolation(value) {
+			t.Errorf("ValidIsolation(%q) = false; want true", value)
+		}
+	}
+	for _, value := range []string{"Self", "container", " worktree", "in place"} {
+		if model.ValidIsolation(value) {
+			t.Errorf("ValidIsolation(%q) = true; want false", value)
+		}
+	}
+}
+
+func TestOnMergedStatusMapsReviewAndDoneOnly(t *testing.T) {
+	t.Parallel()
+
+	for input, want := range map[string]model.Status{"": model.StatusReview, "review": model.StatusReview, "done": model.StatusDone} {
+		if got, ok := model.OnMergedStatus(input); !ok || got != want {
+			t.Errorf("OnMergedStatus(%q) = %q, %t; want %q, true", input, got, ok, want)
+		}
+	}
+	for _, input := range []string{"open", "started", "Done", " review"} {
+		if got, ok := model.OnMergedStatus(input); ok || got != "" {
+			t.Errorf("OnMergedStatus(%q) = %q, %t; want empty, false", input, got, ok)
+		}
+	}
+}
+
 func TestAsRefusalFindsWrappedRefusalAndRejectsOtherErrors(t *testing.T) {
 	t.Parallel()
 

@@ -97,3 +97,37 @@ func TestListProjectNarrowsEveryFilterAndResolvesNamesLikeAdd(t *testing.T) {
 		t.Errorf("list -p gamma = %q, want no live task of a project only done tasks name", result.stdout)
 	}
 }
+
+func TestOfflineListProjectResolvesNamesOverTheWholeSnapshotAndNeverRefusesWhatItCannotSee(t *testing.T) {
+	home := testutil.StartHome(t, testutil.HomeOptions{Listen: true})
+	getenv := testutil.NewClientMachine(t, home).Getenv(nil)
+	cwd := t.TempDir()
+	for _, args := range [][]string{
+		{"add", "-t", "alpha ready", "-p", "/projects/alpha", "--status", "ready"},
+		{"add", "-t", "beta open", "-p", "/projects/beta"},
+		{"add", "-t", "gamma done", "-p", "/projects/gamma", "--status", "done"},
+		{"add", "-t", "delta open", "-p", "/projects/delta"},
+		{"add", "-t", "delta ready", "-p", "/other/delta", "--status", "ready"},
+		{"list"},
+	} {
+		requireSuccess(t, runDesk(t, getenv, cwd, "", args...))
+	}
+	home.Stop()
+
+	requireRefusal(t, runDesk(t, getenv, cwd, "", "list", "--ready", "-p", "delta"), "list", model.CodeUnknownProject, 1)
+
+	for _, test := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"list", "--ready", "-p", "alpha"}, "T1  ready  alpha ready  alpha\n"},
+		{[]string{"list", "--ready", "-p", "beta"}, ""},
+		{[]string{"list", "--open", "-p", "beta"}, "T2  open  beta open  beta\n"},
+		{[]string{"list", "-p", "gamma"}, ""},
+	} {
+		result := runDesk(t, getenv, cwd, "", test.args...)
+		if result.exit != 0 || result.stdout != test.want || !strings.Contains(result.stderr, "showing the snapshot") {
+			t.Errorf("offline %v = (%d, %q, %q), want exit 0, %q, and the snapshot notice", test.args, result.exit, result.stdout, result.stderr, test.want)
+		}
+	}
+}
