@@ -41,7 +41,7 @@ say "taken keys left ok"
 ls "$E2E"/s/config/herdr/config.toml.desk-bak-* >/dev/null 2>&1 || fail "no backup of herdr's config"
 say "backup file ok"
 
-grep -q 'session_env = "CLAUDE_CODE_SESSION_ID"' "$CFG" || fail "no session_env from the profile"
+grep -Eq "session_env = [\"']CLAUDE_CODE_SESSION_ID[\"']" "$CFG" || fail "no session_env from the profile"
 grep -q -- '--safe-mode' "$CFG" || fail "the router template lacks --safe-mode"
 grep -q -- '--permission-mode' "$CFG" || fail "the worker template lacks --permission-mode"
 say "profile templates ok"

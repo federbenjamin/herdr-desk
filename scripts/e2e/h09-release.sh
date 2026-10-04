@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# H9: the release config builds the four binaries, their checksums, and the brew formula.
+# H9: the release config builds the four binaries, their checksums, and the brew cask.
 # Needs the network once: goreleaser itself is fetched through `go run`.
 # shellcheck source=scripts/e2e/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -19,10 +19,10 @@ for target in darwin_arm64 darwin_amd64 linux_arm64 linux_amd64; do
 done
 say "checksums.txt: $(wc -l <"$DIST/checksums.txt" | tr -d ' ') lines"
 
-formula=$(find "$DIST" -name 'desk.rb' | head -n 1)
-[ -n "$formula" ] || fail "no rendered formula"
-grep -q 'class Desk < Formula' "$formula" || fail "the formula is not a Desk formula"
-say "formula: ${formula#"$DIST"/}"
+cask=$(find "$DIST" -name 'desk.rb' | head -n 1)
+[ -n "$cask" ] || fail "no rendered cask"
+grep -q 'cask "desk" do' "$cask" || fail "the rendered file is not a desk cask"
+say "cask: ${cask#"$DIST"/}"
 
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 case "$(uname -m)" in
