@@ -33,19 +33,19 @@ func (a *app) boardFlags(root *cobra.Command) {
 		if err != nil {
 			return err
 		}
-		head := ""
 		if tl.Offline {
 			a.warnOffline(cmd, tl)
-			head = "desk · offline (snapshot " + snapshotAge(tl.SnapshotTS) + ")"
-		} else {
+		}
+		if asJSON {
+			return a.printJSON(tl)
+		}
+		head := "desk · offline (snapshot " + snapshotAge(tl.SnapshotTS) + ")"
+		if !tl.Offline {
 			st, err := c.Status(a.ctx)
 			if err != nil {
 				return err
 			}
 			head = "desk · home · runner " + onOff(st.RunnerOn)
-		}
-		if asJSON {
-			return a.printJSON(tl)
 		}
 		a.say("%s", head)
 		for _, s := range boardSections {
@@ -69,7 +69,8 @@ func onOff(on bool) string {
 	return "off"
 }
 
-// snapshotAge is how old the snapshot is, in its largest whole unit: 40s old, 5m old, 3h old, 2d old.
+// snapshotAge is how old the snapshot is: seconds under a minute, minutes under an hour, hours under 48 hours,
+// then days: 40s old, 5m old, 30h old, 2d old.
 func snapshotAge(ts *time.Time) string {
 	if ts == nil {
 		return "of unknown age"

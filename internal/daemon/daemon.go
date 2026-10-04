@@ -58,6 +58,7 @@ type Instance struct {
 	wg      sync.WaitGroup
 	once    sync.Once
 	err     error
+	failed  chan error // a listener that stopped serving on its own
 }
 
 // Start takes the lock, opens the store, serves the socket (and the TCP listener when configured), writes the
@@ -80,7 +81,7 @@ func Start(ctx context.Context, p config.Paths, c config.Config) (*Instance, err
 		}
 		return nil, err
 	}
-	i := &Instance{p: p, lock: lock}
+	i := &Instance{p: p, lock: lock, failed: make(chan error, 2)}
 	ok := false
 	defer func() {
 		if !ok {
@@ -149,12 +150,18 @@ func Start(ctx context.Context, p config.Paths, c config.Config) (*Instance, err
 	return i, nil
 }
 
+// serve answers ln until Close. A listener that fails on its own is reported to wait, which closes the whole
+// daemon, so the lock is released and the next command starts a daemon that serves.
 func (i *Instance) serve(ln net.Listener, h http.Handler) {
 	s := &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second}
 	i.servers = append(i.servers, s)
 	i.wg.Go(func() {
 		if err := s.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Printf("desk daemon: serve %s: %v", ln.Addr(), err)
+			log.Printf("desk daemon: serve %s: %v; stopping", ln.Addr(), err)
+			select {
+			case i.failed <- fmt.Errorf("serve %s: %w", ln.Addr(), err):
+			default:
+			}
 		}
 	})
 }
@@ -220,8 +227,17 @@ func Run(ctx context.Context, p config.Paths, c config.Config) error {
 	if err != nil {
 		return err
 	}
-	<-ctx.Done()
-	return i.Close()
+	return i.wait(ctx)
+}
+
+// wait closes the daemon when ctx ends or a listener fails, and returns the failure.
+func (i *Instance) wait(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return i.Close()
+	case err := <-i.failed:
+		return errors.Join(err, i.Close())
+	}
 }
 
 func writeInfo(p config.Paths, info Info) error {

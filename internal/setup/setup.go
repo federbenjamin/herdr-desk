@@ -10,13 +10,14 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"time"
 
 	"github.com/federbenjamin/desk"
 	"github.com/federbenjamin/desk/internal/api"
 	"github.com/federbenjamin/desk/internal/config"
+	"github.com/federbenjamin/desk/internal/gitcmd"
+	"github.com/federbenjamin/desk/internal/model"
 )
 
 // Options configures Run.
@@ -65,8 +66,10 @@ func Run(ctx context.Context, o Options) error {
 	herdrFile := ""
 	if !o.NoHerdr {
 		herdrFile = herdrConfigPath(getenv)
-		if _, err := os.Stat(herdrFile); err != nil {
+		if _, err := os.Stat(herdrFile); errors.Is(err, fs.ErrNotExist) {
 			herdrFile = ""
+		} else if err != nil {
+			return fmt.Errorf("herdr's config: %w", err)
 		}
 	}
 	notifyLine := ""
@@ -75,7 +78,7 @@ func Run(ctx context.Context, o Options) error {
 		notifyLine = "notify: set the command to herdr's notification"
 	}
 	if err := cfg.Validate(); err != nil {
-		return err
+		return badInput(err)
 	}
 
 	before, _ := os.ReadFile(p.ConfigFile())
@@ -115,6 +118,11 @@ func Run(ctx context.Context, o Options) error {
 	return writeHerdr(herdrFile, o.Force, out)
 }
 
+// badInput is a value the caller gave that setup refuses; the command line maps bad-input to a usage error.
+func badInput(err error) error {
+	return &model.Refusal{Code: model.CodeBadInput, Msg: err.Error()}
+}
+
 func changed(c bool) string {
 	if c {
 		return "written"
@@ -139,7 +147,7 @@ func applyProfile(cfg *config.Config, profile string) ([]string, error) {
 		return nil, nil
 	case "claude-code":
 	default:
-		return nil, fmt.Errorf("unknown profile %q (known: claude-code)", profile)
+		return nil, badInput(fmt.Errorf("unknown profile %q (known: claude-code)", profile))
 	}
 	var lines []string
 	fill := func(name string, set bool, apply func()) {
@@ -184,15 +192,15 @@ func ensureScratch(ctx context.Context, p config.Paths, out io.Writer) error {
 		fmt.Fprintf(out, "scratch root: %s kept\n", dir)
 		return nil
 	}
+	// The data dir holds the store, so it is 0700 whoever creates it first; only the scratch root is looser.
+	if err := os.MkdirAll(p.DataDir, 0o700); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(ctx, gitTimeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "init", "--quiet", dir)
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-	if b, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("git init %s: %w: %s", dir, err, bytes.TrimSpace(b))
+	if _, err := gitcmd.Run(ctx, dir, gitTimeout, "init", "--quiet"); err != nil {
+		return err
 	}
 	fmt.Fprintf(out, "scratch root: %s written\n", dir)
 	return nil
@@ -254,7 +262,7 @@ func ClientAdd(ctx context.Context, p config.Paths, home, token string) error {
 	}
 	cfg.Client.Home = home
 	if err := cfg.Validate(); err != nil {
-		return err
+		return badInput(err)
 	}
 	// The client reads its token from a token file, so the check runs on a scratch machine that holds
 	// only this token.

@@ -15,8 +15,8 @@ import (
 const spawnWait = 5 * time.Second
 
 // Spawn starts `<this executable> daemon run` detached, output to the daemon log, and waits up to 5s for the socket.
-// A socket that already answers starts nothing: a second child would wait on the lock and take over once the
-// running daemon stops.
+// A socket that already answers starts nothing. A child that exits because another daemon holds the lock (two
+// commands spawning at once) is not a failure: Spawn waits for that daemon's socket instead.
 func Spawn(p config.Paths) error {
 	if socketAnswers(p) {
 		return nil
@@ -49,10 +49,9 @@ func Spawn(p config.Paths) error {
 		}
 		select {
 		case err := <-exited:
-			if !socketAnswers(p) {
+			if held, _ := lockHeld(p); !held && !socketAnswers(p) {
 				return fmt.Errorf("the daemon exited before its socket answered (%v); see %s", err, p.DaemonLog())
 			}
-			return nil
 		case <-time.After(50 * time.Millisecond):
 		}
 		if time.Now().After(deadline) {

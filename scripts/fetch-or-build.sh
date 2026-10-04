@@ -25,19 +25,21 @@ have() { command -v "$1" >/dev/null 2>&1; }
 
 trap 'if [ -n "$tmpdir" ]; then rm -rf "$tmpdir"; fi' EXIT
 
-# install_from_path makes the binary at $out available as `desk` when none is on PATH.
+# install_from_path makes the binary at $out available as `desk` when none is on PATH, or exits 1
+# naming the place it could not write.
 install_from_path() {
   if have desk; then
     return 0
   fi
-  mkdir -p "$install_dir" || return 0
-  if cp -f "$out" "$install_dir/desk"; then
-    echo "desk: no desk on your PATH, so I installed it to $install_dir/desk."
-    case ":$PATH:" in
-      *":$install_dir:"*) ;;
-      *) echo "desk: add $install_dir to your PATH to run it." ;;
-    esac
+  if ! mkdir -p "$install_dir" || ! cp -f "$out" "$install_dir/desk"; then
+    echo "desk: no desk on your PATH, and it could not be installed to $install_dir/desk; copy $out onto your PATH" >&2
+    exit 1
   fi
+  echo "desk: no desk on your PATH, so I installed it to $install_dir/desk."
+  case ":$PATH:" in
+    *":$install_dir:"*) ;;
+    *) echo "desk: add $install_dir to your PATH to run it." ;;
+  esac
 }
 
 build_from_source() {

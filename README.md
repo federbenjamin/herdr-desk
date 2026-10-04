@@ -111,7 +111,10 @@ With the home unreachable, a client:
   snapshot of its last read, marked offline;
 - refuses every other read and every task write with `home-unreachable` (exit 3);
 - accepts `note`, `decide`, and the hook's records into a local outbox and forwards them on the next
-  successful call (`queued` on stdout). Delivery is at least once.
+  successful call (`queued` on stdout, and stderr says why the home did not answer). Delivery is at
+  least once. A queued entry the home refuses is dropped and named on stderr; one it cannot take yet
+  (`scan-failed`, a server error) stays queued, and the command that tried to forward it fails
+  naming the outbox file.
 
 ## Commands
 
@@ -132,8 +135,8 @@ Refusal codes: `unknown-task`, `unknown-step`, `unknown-project`, `unknown-event
 | command | does |
 |---|---|
 | `desk` | a static board: `NEEDS YOU` (blocked, review), `IN MOTION` (started), `ON DECK` (ready, then open); first line `desk · home · runner on\|off`, or `desk · offline (snapshot <age>)` |
-| `desk add -t <title> [-n <notes>] [-p <project>\|--desk] [--thread <name>] [--status <s>] [--tag <t>]… [--branch <b>]` | creates a task and prints `T<n>`. With no `-p` or `--desk` the project is the main checkout of the git repo you are in. `-p` takes an absolute directory or the bare name of a known project |
-| `desk list [--ready\|--open\|--done\|--archived\|--all] [-p <project>\|--desk]` | lists tasks; default is the five live statuses |
+| `desk add -t <title> [-n <notes>] [-p <project>\|--desk] [--thread <name>] [--status <s>] [--tag <t>]… [--branch <b>]` | creates a task and prints `T<n>`. With no `-p` or `--desk` the project is the main checkout of the git repo you are in. `-p` takes an absolute directory or the bare name of a known project. When git cannot run (not on your PATH, a timeout), the add stops with exit 3 rather than store a task without its project |
+| `desk list [--ready\|--open\|--done\|--archived\|--all] [-p <project>\|--desk]` | lists tasks; default is the five live statuses. `-p` and `--desk` narrow every filter, `--all` too; a bare name no task's project carries is `unknown-project`, as for `add` |
 | `desk show <task>` | one task with its steps and history |
 | `desk set <task> [<status>] [--thread <t>] [--root <r>] [--isolation <i>] [--model <m>] [--archive\|--unarchive] [--ref <ref>] [--merged]` | patches fields; `review --merged` writes the status that `runner.on_merged` names |
 | `desk edit <task> [--title <t>] [--notes <n>]` | replaces the title or the notes |
@@ -249,7 +252,7 @@ systemctl --user enable --now desk.service
 ## Releases
 
 `goreleaser` builds darwin and linux for arm64 and amd64 and publishes the archives
-`desk_<version>_<os>_<arch>.tar.gz` with `checksums.txt` and the Homebrew formula. A `v*` tag runs
+`desk_<version>_<os>_<arch>.tar.gz` with `checksums.txt` and the Homebrew cask. A `v*` tag runs
 it in CI. Locally: `go run github.com/goreleaser/goreleaser/v2@latest release --snapshot --clean --skip=publish`.
 
 ## Develop

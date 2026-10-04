@@ -5,14 +5,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/federbenjamin/desk/internal/config"
+	"github.com/federbenjamin/desk/internal/gitcmd"
 	"github.com/federbenjamin/desk/internal/store"
 )
 
@@ -36,6 +37,15 @@ const (
 // Run exports every event to <BackupDir>/events.jsonl, commits when the file changed, pushes to the remote's
 // main branch, and records the time of the run in the backup state file.
 func Run(ctx context.Context, st *store.Store, p config.Paths, remote string) (Result, error) {
+	res, err := run(ctx, st, p, remote)
+	if err != nil && remote != "" {
+		// The remote may carry a credential, and the error reaches the daemon log and the API.
+		err = errors.New(strings.ReplaceAll(err.Error(), remote, "<remote>"))
+	}
+	return res, err
+}
+
+func run(ctx context.Context, st *store.Store, p config.Paths, remote string) (Result, error) {
 	var res Result
 	dir := p.BackupDir()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -108,19 +118,9 @@ func writeState(p config.Paths, s state) error {
 	return os.WriteFile(path, b, 0o600)
 }
 
-// git runs one git command in dir with no prompt and a timeout, and returns its trimmed stdout. A daemon has no
-// terminal, so a signing prompt would hang it, and the machine may have no git identity. The error names the
-// subcommand only: the remote's URL may carry a credential.
+// git runs one git command in dir and returns its trimmed stdout. A daemon has no terminal, so a signing prompt
+// would hang it, and the machine may have no git identity.
 func git(ctx context.Context, dir string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, gitTimeout)
-	defer cancel()
-	global := []string{"-C", dir, "-c", "commit.gpgsign=false", "-c", "user.name=desk", "-c", "user.email=desk@localhost"}
-	cmd := exec.CommandContext(ctx, "git", append(global, args...)...)
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-	var out, errOut bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errOut
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("git %s: %w: %s", args[0], err, strings.TrimSpace(errOut.String()))
-	}
-	return strings.TrimSpace(out.String()), nil
+	identity := []string{"-c", "commit.gpgsign=false", "-c", "user.name=desk", "-c", "user.email=desk@localhost"}
+	return gitcmd.Run(ctx, dir, gitTimeout, append(identity, args...)...)
 }

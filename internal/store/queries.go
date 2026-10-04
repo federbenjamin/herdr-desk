@@ -31,15 +31,16 @@ type Filter struct {
 }
 
 // Match reports whether t passes the filter. ListTasks and the API client both decide with it.
-// With Archived and no Statuses, an archived task of any status matches.
+// With Archived and no Statuses, an archived task of any status matches. All lifts the status and archive
+// rules, not the project.
 func (f Filter) Match(t model.Task) bool {
+	if f.Project != nil && t.Project != *f.Project {
+		return false
+	}
 	if f.All {
 		return true
 	}
 	if t.Archived != f.Archived {
-		return false
-	}
-	if f.Project != nil && t.Project != *f.Project {
 		return false
 	}
 	switch {
@@ -147,7 +148,11 @@ func (s *Store) ListTasks(ctx context.Context, f Filter) ([]model.Task, error) {
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	steps, err := readSteps(ctx, s.db, ``)
+	numbers := make([]int, len(out))
+	for i, t := range out {
+		numbers[i] = t.Number
+	}
+	steps, err := readSteps(ctx, s.db, `WHERE task IN (SELECT value FROM json_each(?))`, string(model.MustData(numbers)))
 	if err != nil {
 		return nil, err
 	}

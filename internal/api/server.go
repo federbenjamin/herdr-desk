@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -101,7 +102,8 @@ func NewServer(o ServerOptions) *Server {
 			if o.Backup == nil {
 				return nil, &model.Refusal{Code: model.CodeBackupOff, Msg: "no [backup] git_remote is configured"}
 			}
-			return o.Backup(ctx)
+			// A push the caller stops waiting for still finishes, so the remote never holds half a run.
+			return o.Backup(context.WithoutCancel(ctx))
 		}),
 	}
 	return s
@@ -162,7 +164,8 @@ func (s *Server) Handler(trusted bool) http.Handler {
 			case errors.As(err, &bad):
 				writeError(w, http.StatusBadRequest, "", bad.Error())
 			default:
-				writeError(w, http.StatusInternalServerError, "", err.Error())
+				log.Printf("desk daemon: %s: %v", name, err)
+				writeError(w, http.StatusInternalServerError, "", "an internal error; the daemon log has it")
 			}
 			return
 		}
@@ -178,6 +181,7 @@ func (s *Server) tokenOK(r *http.Request) bool {
 	}
 	want, err := config.ReadToken(s.o.Paths)
 	if err != nil {
+		log.Printf("desk daemon: the token cannot be read, so every TCP request gets 401: %v", err)
 		return false
 	}
 	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1

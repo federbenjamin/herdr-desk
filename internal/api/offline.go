@@ -1,13 +1,12 @@
 package api
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"io/fs"
+	"net/http"
 	"os"
 	"path/filepath"
 	"time"
@@ -41,16 +40,14 @@ func (c *Client) readSnapshot() (snapshot, error) {
 	return s, json.Unmarshal(b, &s)
 }
 
-// openOutbox opens the outbox and takes its lock. The file is locked in place and never renamed, so an
-// enqueue and a flush in two processes never lose each other's lines.
-func (c *Client) openOutbox(flag int) (*os.File, error) {
-	path := c.o.Paths.Outbox()
-	if flag&os.O_CREATE != 0 {
-		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-			return nil, err
-		}
+// lockOutbox takes the outbox's lock, a file beside it. The outbox itself is replaced by a rename on every
+// flush, so a lock on the outbox's own inode would let an enqueue append to the file a flush just replaced.
+func (c *Client) lockOutbox() (unlock func(), err error) {
+	path := c.o.Paths.Outbox() + ".lock"
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, err
 	}
-	f, err := os.OpenFile(path, flag, 0o600)
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
 	if err != nil {
 		return nil, err
 	}
@@ -58,7 +55,7 @@ func (c *Client) openOutbox(flag int) (*os.File, error) {
 		f.Close()
 		return nil, err
 	}
-	return f, nil
+	return func() { f.Close() }, nil
 }
 
 // enqueue appends r to the outbox, stamped with the time it was written so a replay keeps it.
@@ -71,7 +68,12 @@ func (c *Client) enqueue(r AppendRequest) error {
 	if err != nil {
 		return err
 	}
-	f, err := c.openOutbox(os.O_WRONLY | os.O_APPEND | os.O_CREATE)
+	unlock, err := c.lockOutbox()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	f, err := os.OpenFile(c.o.Paths.Outbox(), os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
 	if err != nil {
 		return err
 	}
@@ -81,32 +83,29 @@ func (c *Client) enqueue(r AppendRequest) error {
 }
 
 // Flush forwards the outbox in order and returns how many entries it sent. It stops when the home cannot be
-// reached, keeping what was not sent. An entry the home refuses (a 409) will never be accepted: it is removed,
-// reported through ClientOptions.Refused, and Flush goes on. A line that does not parse is removed the same way,
-// reported with the code bad-input.
+// reached, or answers in a way a retry may change (scan-failed, a 500), keeping what was not sent. An entry the
+// home refuses for a cause in the entry itself (any other refusal, a 400, a 413) will never be accepted: it is
+// removed, reported through ClientOptions.Refused, and Flush goes on. A line that does not parse is removed the
+// same way, reported with the code bad-input. The entries kept replace the outbox through a rename, so a
+// failure leaves the old outbox whole.
 func (c *Client) Flush(ctx context.Context) (int, error) {
-	f, err := c.openOutbox(os.O_RDWR)
-	if errors.Is(err, fs.ErrNotExist) {
-		return 0, nil
-	}
+	unlock, err := c.lockOutbox()
 	if err != nil {
 		return 0, err
 	}
-	defer f.Close()
-	data, err := io.ReadAll(f)
+	defer unlock()
+	data, err := os.ReadFile(c.o.Paths.Outbox())
+	if errors.Is(err, fs.ErrNotExist) {
+		return 0, nil
+	}
 	if err != nil || len(data) == 0 {
 		return 0, err
 	}
 	var lines [][]byte
-	sc := bufio.NewScanner(bytes.NewReader(data))
-	sc.Buffer(make([]byte, 0, 64*1024), maxBody)
-	for sc.Scan() {
-		if len(bytes.TrimSpace(sc.Bytes())) > 0 {
-			lines = append(lines, bytes.Clone(sc.Bytes()))
+	for _, line := range bytes.Split(data, []byte{'\n'}) {
+		if len(bytes.TrimSpace(line)) > 0 {
+			lines = append(lines, line)
 		}
-	}
-	if err := sc.Err(); err != nil {
-		return 0, err
 	}
 	refused := func(kind model.Kind, r *model.Refusal) {
 		if c.o.Refused != nil {
@@ -122,12 +121,13 @@ func (c *Client) Flush(ctx context.Context) (int, error) {
 			done++
 			continue
 		}
-		if err := c.send(ctx, MethodEventsAppend, r, nil, true); err != nil {
-			if ref, ok := model.AsRefusal(err); ok && !isUnreachable(err) {
-				refused(r.Kind, ref)
-				done++
-				continue
-			}
+		err := c.send(ctx, MethodEventsAppend, r, nil, true)
+		if ref := refusedForGood(err); ref != nil {
+			refused(r.Kind, ref)
+			done++
+			continue
+		}
+		if err != nil {
 			sendErr = err
 			break
 		}
@@ -141,11 +141,21 @@ func (c *Client) Flush(ctx context.Context) (int, error) {
 	if len(rest) > 0 {
 		rest = append(rest, '\n')
 	}
-	if err := f.Truncate(0); err != nil {
-		return sent, errors.Join(sendErr, err)
+	return sent, errors.Join(sendErr, config.WriteFileAtomic(c.o.Paths.Outbox(), rest))
+}
+
+// refusedForGood returns the refusal of an entry the home will never accept, nil for an answer a retry may
+// change.
+func refusedForGood(err error) *model.Refusal {
+	if ref, ok := model.AsRefusal(err); ok {
+		if ref.Code == model.CodeHomeUnreachable || ref.Code == model.CodeScanFailed {
+			return nil
+		}
+		return ref
 	}
-	if _, err := f.WriteAt(rest, 0); err != nil {
-		return sent, errors.Join(sendErr, err)
+	var he *httpError
+	if errors.As(err, &he) && (he.status == http.StatusBadRequest || he.status == http.StatusRequestEntityTooLarge) {
+		return &model.Refusal{Code: model.CodeBadInput, Msg: he.msg}
 	}
-	return sent, sendErr
+	return nil
 }

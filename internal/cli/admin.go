@@ -32,7 +32,10 @@ func (a *app) daemonCmd() *cobra.Command {
 		}
 		err = daemon.Run(a.ctx, a.paths, c)
 		if errors.Is(err, daemon.ErrAlreadyRunning) {
-			info, _ := daemon.ReadInfo(a.paths)
+			info, err := a.runningInfo()
+			if err != nil {
+				return fmt.Errorf("another daemon holds %s, but its info file cannot be read: %w", a.paths.LockFile(), err)
+			}
 			a.say("desk daemon: already running (pid %d)", info.PID)
 			return nil
 		}
@@ -95,6 +98,22 @@ func (a *app) daemonCmd() *cobra.Command {
 	return cmd
 }
 
+// infoWait is how long `desk daemon run` waits for the running daemon's info file.
+var infoWait = 5 * time.Second
+
+// runningInfo reads the info file of the daemon that holds the lock. A daemon that took the lock a moment ago
+// writes the file once it serves, so a file that is missing or half written is read again until infoWait.
+func (a *app) runningInfo() (daemon.Info, error) {
+	deadline := time.Now().Add(infoWait)
+	for {
+		info, err := daemon.ReadInfo(a.paths)
+		if err == nil || time.Now().After(deadline) {
+			return info, err
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 func (a *app) sayClient(c config.Config) {
 	a.say("desk daemon: this machine is a client of %s; nothing to run", c.Client.Home)
 }
@@ -148,11 +167,6 @@ func (a *app) clientCmd() *cobra.Command {
 	}
 	add.RunE = a.do(func(_ *cobra.Command, args []string) error {
 		home := args[0]
-		probe := config.Default()
-		probe.Client.Home = home
-		if err := probe.Validate(); err != nil {
-			return usage("%v", err)
-		}
 		var src io.Reader = a.env.Stdin
 		if tokenFile != "" {
 			f, err := os.Open(tokenFile)
@@ -271,18 +285,6 @@ func (a *app) setupCmd() *cobra.Command {
 		o := setup.Options{
 			Paths: a.paths, Getenv: a.env.Getenv, Profile: profile, Listen: listen,
 			SkillDir: skillDir, Force: force, NoHerdr: noHerdr, Out: a.env.Stdout,
-		}
-		switch profile {
-		case "", "claude-code":
-		default:
-			return usage("unknown profile %q (known: claude-code)", profile)
-		}
-		if listen != "" {
-			probe := config.Default()
-			probe.Home.Listen = listen
-			if err := probe.Validate(); err != nil {
-				return usage("--listen: %v", err)
-			}
 		}
 		if cmd.Flags().Changed("runner") {
 			var on bool

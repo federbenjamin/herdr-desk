@@ -25,6 +25,7 @@ archives:
     files:
       - LICENSE
       - README.md
+      - THIRD_PARTY_NOTICES.md
 
 checksum:
   name_template: checksums.txt
@@ -33,7 +34,7 @@ checksum:
 changelog:
   use: github-native
 
-brews:
+homebrew_casks:
   - name: desk
     repository:
       owner: federbenjamin
@@ -42,5 +43,9 @@ brews:
     homepage: https://github.com/federbenjamin/desk
     description: A task board and session journal for people who work with coding agents.
     license: MIT
-    test: |
-      system "#{bin}/desk", "version"
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/desk"]
+          end

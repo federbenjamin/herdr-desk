@@ -6,7 +6,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -63,6 +65,9 @@ func Open(path string, o Options) (*Store, error) {
 		return nil, err
 	}
 	f.Close()
+	if err := private(path); err != nil {
+		return nil, err
+	}
 	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)")
 	if err != nil {
 		return nil, err
@@ -72,6 +77,17 @@ func Open(path string, o Options) (*Store, error) {
 		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
 	return &Store{db: db, scan: o.Scanner, now: o.Now, agentsMayArm: o.AgentsMayArm, onMerged: o.OnMerged}, nil
+}
+
+// private sets the store's folder to 0700 and its files to 0600, whoever created them first and with what mode.
+func private(path string) error {
+	modes := map[string]os.FileMode{filepath.Dir(path): 0o700, path: 0o600, path + "-wal": 0o600, path + "-shm": 0o600}
+	for f, mode := range modes {
+		if err := os.Chmod(f, mode); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
 }
 
 // Close closes the database.

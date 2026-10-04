@@ -59,8 +59,8 @@ func Build(data model.SessionData, all bool) View {
 		case model.KindCompacted:
 			compacted = append(compacted, e.ID)
 		case model.KindMerged:
-			if b := mergedData(e).Branch; b != "" {
-				merged[b] = append(merged[b], e.ID)
+			if d, _ := mergedData(e); d.Branch != "" {
+				merged[d.Branch] = append(merged[d.Branch], e.ID)
 			}
 		case model.KindNote:
 			if b := model.BranchOf(e.Tags); b != "" {
@@ -88,10 +88,13 @@ func Build(data model.SessionData, all bool) View {
 		switch e.Kind {
 		case model.KindNote:
 			var d model.NoteData
-			_ = json.Unmarshal(e.Data, &d)
+			readable := json.Unmarshal(e.Data, &d) == nil
+			if !readable {
+				d = model.NoteData{Text: unreadable(e)}
+			}
 			branch := model.BranchOf(e.Tags)
 			hidden := false
-			if !slices.Contains(e.Tags, questionTag) {
+			if readable && !slices.Contains(e.Tags, questionTag) {
 				if branch != "" {
 					hidden = anyAfter(merged[branch], e.ID)
 				} else {
@@ -104,7 +107,11 @@ func Build(data model.SessionData, all bool) View {
 			add(&v.Work, Line{EventID: e.ID, TS: e.TS, Scope: sessionScope, Text: "compacted"},
 				countAfter(compacted, e.ID) >= 2)
 		case model.KindMerged:
-			d := mergedData(e)
+			d, readable := mergedData(e)
+			if !readable {
+				add(&v.Work, Line{EventID: e.ID, TS: e.TS, Scope: sessionScope, Text: unreadable(e)}, false)
+				continue
+			}
 			if !chain[e.Session] && !branchesWithWork[d.Branch] {
 				continue
 			}
@@ -142,17 +149,20 @@ func Build(data model.SessionData, all bool) View {
 				lastTunable[t] = e.ID
 			}
 		}
-		if d := decisionData(e); d.Replaces != 0 && d.Replaces < e.ID {
+		if d, _ := decisionData(e); d.Replaces != 0 && d.Replaces < e.ID {
 			if r, ok := replacedBy[d.Replaces]; !ok || e.ID < r {
 				replacedBy[d.Replaces] = e.ID
 			}
 		}
 	}
 	for _, e := range decisions {
-		d := decisionData(e)
+		d, readable := decisionData(e)
+		if !readable {
+			d.Text = unreadable(e)
+		}
 		branch := model.BranchOf(e.Tags)
 		hidden := false
-		if r, ok := replacedBy[e.ID]; ok && !isLastTunable(e, lastTunable) {
+		if r, ok := replacedBy[e.ID]; ok && readable && !isLastTunable(e, lastTunable) {
 			hidden = anyAfter(shownMerged, r) || anyAfter(compacted, r)
 		}
 		add(&v.Decisions, Line{EventID: e.ID, Task: e.Task, TS: e.TS, Scope: scopeOf(branch), Text: d.Text, Who: e.Who,
@@ -170,16 +180,20 @@ func isLastTunable(e model.Event, last map[string]int64) bool {
 	return false
 }
 
-func mergedData(e model.Event) model.MergedData {
+// mergedData and decisionData read an event's payload and report whether it parsed.
+func mergedData(e model.Event) (model.MergedData, bool) {
 	var d model.MergedData
-	_ = json.Unmarshal(e.Data, &d)
-	return d
+	return d, json.Unmarshal(e.Data, &d) == nil
 }
 
-func decisionData(e model.Event) model.DecisionData {
+func decisionData(e model.Event) (model.DecisionData, bool) {
 	var d model.DecisionData
-	_ = json.Unmarshal(e.Data, &d)
-	return d
+	return d, json.Unmarshal(e.Data, &d) == nil
+}
+
+// unreadable is the text of a line whose event data does not parse, so the gap shows instead of an empty line.
+func unreadable(e model.Event) string {
+	return fmt.Sprintf("e%d: unreadable event data", e.ID)
 }
 
 func mergedText(d model.MergedData) string {

@@ -198,3 +198,24 @@ func TestFetchOrBuildFallsBackToSource(t *testing.T) {
 		t.Errorf("output does not say it fell back to source:\n%s", out)
 	}
 }
+
+func TestFetchOrBuildFailsWhenItCannotInstall(t *testing.T) {
+	r := newRig(t)
+	r.release(t)
+	blocker := filepath.Join(r.dir, "blocker")
+	if err := os.WriteFile(blocker, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	install := filepath.Join(blocker, "bin")
+	r.env = append(r.env, "DESK_INSTALL_DIR="+install)
+
+	cmd := exec.Command("sh", "fetch-or-build.sh")
+	cmd.Env = r.env
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("fetch-or-build.sh exited 0 although %s cannot be created:\n%s", install, out)
+	}
+	if !strings.Contains(string(out), install+"/desk") {
+		t.Errorf("the failure does not name the install destination:\n%s", out)
+	}
+}

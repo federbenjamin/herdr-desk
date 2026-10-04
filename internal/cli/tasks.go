@@ -2,11 +2,11 @@ package cli
 
 import (
 	"bufio"
-	"context"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -15,44 +15,44 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/federbenjamin/desk/internal/api"
+	"github.com/federbenjamin/desk/internal/gitcmd"
 	"github.com/federbenjamin/desk/internal/model"
 	"github.com/federbenjamin/desk/internal/store"
 )
 
 const gitTimeout = 10 * time.Second
 
-// mainCheckout returns the main checkout of the git repo dir is in, "" when dir is in none. A worktree
-// resolves to its main checkout.
-func (a *app) mainCheckout(dir string) string {
-	if dir == "" {
-		return ""
+// mainCheckout returns the main checkout of the git repo dir is in, "" when git says dir is in none. A worktree
+// resolves to its main checkout. Any other git failure is an error, so a task never loses its project to it.
+func (a *app) mainCheckout(dir string) (string, error) {
+	if _, err := os.Stat(dir); dir == "" || errors.Is(err, fs.ErrNotExist) {
+		return "", nil
 	}
-	ctx, cancel := context.WithTimeout(a.ctx, gitTimeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-	out, err := cmd.Output()
+	common, err := gitcmd.Run(a.ctx, dir, gitTimeout, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if gitcmd.IsNotRepo(err) {
+		return "", nil
+	}
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("find the project of %s (pass --desk for no project): %w", dir, err)
 	}
-	common := strings.TrimSpace(string(out))
 	if common == "" {
-		return ""
+		return "", nil
 	}
-	return filepath.Dir(common)
+	return filepath.Dir(common), nil
 }
 
 // projectArg turns a -p value into what the store takes: an absolute directory becomes its main checkout
-// when it is in a git repo; a bare name is passed on for the store to resolve.
-func (a *app) projectArg(p string) string {
+// when it is in a git repo; a bare name is passed on as it is.
+func (a *app) projectArg(p string) (string, error) {
 	if !filepath.IsAbs(p) {
-		return p
+		return p, nil
 	}
 	p = filepath.Clean(p)
-	if top := a.mainCheckout(p); top != "" {
-		return top
+	top, err := a.mainCheckout(p)
+	if top == "" || err != nil {
+		return p, err
 	}
-	return p
+	return top, nil
 }
 
 // taskLine is a task's one-line form: T<n>  <status>  <title>  #<thread>  <project base name>.
@@ -88,9 +88,12 @@ func (a *app) addCmd() *cobra.Command {
 		switch {
 		case noProject:
 		case cmd.Flags().Changed("project"):
-			in.Project = a.projectArg(project)
+			in.Project, err = a.projectArg(project)
 		default:
-			in.Project = a.mainCheckout(a.env.Cwd)
+			in.Project, err = a.mainCheckout(a.env.Cwd)
+		}
+		if err != nil {
+			return err
 		}
 		if branch != "" {
 			in.Tags = append(in.Tags, model.BranchTag(branch))
@@ -140,24 +143,30 @@ func listFilter(ready, open, done, archived, all bool) store.Filter {
 	return store.Filter{}
 }
 
-// filterProject narrows tasks to one project with store.Filter.Match. A bare name is the one project among
-// these tasks with that base name; several is unknown-project.
-func filterProject(f store.Filter, project string, tasks []model.Task) ([]model.Task, error) {
-	if !filepath.IsAbs(project) && project != "" {
-		var found []string
-		for _, t := range tasks {
-			if t.Project != "" && filepath.Base(t.Project) == project && !slices.Contains(found, t.Project) {
-				found = append(found, t.Project)
-			}
-		}
-		if len(found) > 1 {
-			return nil, &model.Refusal{Code: model.CodeUnknownProject,
-				Msg: fmt.Sprintf("%d projects are named %q; give the path", len(found), project)}
-		}
-		if len(found) == 1 {
-			project = found[0]
-		}
+// listProject resolves a -p value the way add does (model.ResolveProject). The known projects are every task's
+// on the home, or, offline, those of the snapshot's tasks the list returned.
+func (a *app) listProject(c *api.Client, project string, tl api.TaskList, all bool) (string, error) {
+	project, err := a.projectArg(project)
+	if err != nil || project == "" || filepath.IsAbs(project) {
+		return project, err
 	}
+	tasks := tl.Tasks
+	if !tl.Offline && !all {
+		every, err := c.ListTasks(a.ctx, store.Filter{All: true})
+		if err != nil {
+			return "", err
+		}
+		tasks = every.Tasks
+	}
+	known := make([]string, 0, len(tasks))
+	for _, t := range tasks {
+		known = append(known, t.Project)
+	}
+	return model.ResolveProject(project, known)
+}
+
+// filterProject narrows tasks to one project with store.Filter.Match.
+func filterProject(f store.Filter, project string, tasks []model.Task) []model.Task {
 	f.Project = &project
 	out := []model.Task{}
 	for _, t := range tasks {
@@ -165,7 +174,7 @@ func filterProject(f store.Filter, project string, tasks []model.Task) ([]model.
 			out = append(out, t)
 		}
 	}
-	return out, nil
+	return out
 }
 
 func (a *app) listCmd() *cobra.Command {
@@ -189,11 +198,11 @@ func (a *app) listCmd() *cobra.Command {
 		if noProject || cmd.Flags().Changed("project") {
 			p := ""
 			if !noProject {
-				p = a.projectArg(project)
+				if p, err = a.listProject(c, project, tl, all); err != nil {
+					return err
+				}
 			}
-			if tl.Tasks, err = filterProject(f, p, tl.Tasks); err != nil {
-				return err
-			}
+			tl.Tasks = filterProject(f, p, tl.Tasks)
 		}
 		if tl.Offline {
 			a.warnOffline(cmd, tl)

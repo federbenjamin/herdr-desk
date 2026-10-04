@@ -84,41 +84,28 @@ func (s *Store) AddTask(ctx context.Context, a Actor, in AddTaskInput) (model.Ta
 	return out, err
 }
 
-// resolveProject keeps an absolute path as given and turns a bare name into the one known project with
-// that base name.
+// resolveProject resolves a bare project name against every project a task carries (model.ResolveProject).
 func resolveProject(ctx context.Context, q querier, project string) (string, error) {
 	if project == "" || filepath.IsAbs(project) {
 		return project, nil
-	}
-	if strings.ContainsRune(project, filepath.Separator) {
-		return "", refuse(model.CodeUnknownProject, "project %q is neither an absolute path nor a bare name", project)
 	}
 	rows, err := q.QueryContext(ctx, `SELECT DISTINCT project FROM tasks WHERE project != ''`)
 	if err != nil {
 		return "", err
 	}
 	defer rows.Close()
-	var found []string
+	var known []string
 	for rows.Next() {
 		var p string
 		if err := rows.Scan(&p); err != nil {
 			return "", err
 		}
-		if filepath.Base(p) == project {
-			found = append(found, p)
-		}
+		known = append(known, p)
 	}
 	if err := rows.Err(); err != nil {
 		return "", err
 	}
-	switch len(found) {
-	case 1:
-		return found[0], nil
-	case 0:
-		return "", refuse(model.CodeUnknownProject, "no known project is named %q", project)
-	default:
-		return "", refuse(model.CodeUnknownProject, "%d known projects are named %q; give the path", len(found), project)
-	}
+	return model.ResolveProject(project, known)
 }
 
 // SetTask patches a task. A patch that changes no field and carries no ref writes no event and returns the

@@ -1,0 +1,86 @@
+package cli_test
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"strings"
+	"testing"
+
+	"github.com/federbenjamin/desk/internal/config"
+	"github.com/federbenjamin/desk/internal/model"
+	"github.com/federbenjamin/desk/internal/testutil"
+)
+
+func TestSessionContinuesRecordsTheLinkInTheNewSessionThenRendersTheChain(t *testing.T) {
+	home := testutil.StartHome(t, testutil.HomeOptions{})
+	note := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"note", "written by the old session"}, "", map[string]string{"DESK_SESSION": "old-id"}, nil)
+	if note.exit != 0 {
+		t.Fatalf("note = (%d, %q, %q)", note.exit, note.stdout, note.stderr)
+	}
+
+	result := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"session", "new-id", "--continues", "old-id"}, "", nil, nil)
+	if result.exit != 0 || !strings.Contains(result.stdout, "written by the old session") {
+		t.Fatalf("session new-id --continues old-id = (%d, %q, %q), want the old session's note", result.exit, result.stdout, result.stderr)
+	}
+	data, err := home.Client().SessionView(context.Background(), "new-id")
+	if err != nil {
+		t.Fatalf("session view: %v", err)
+	}
+	links := 0
+	for _, ev := range data.Events {
+		if ev.Kind == model.KindContinues {
+			var d model.ContinuesData
+			if err := json.Unmarshal(ev.Data, &d); err != nil || ev.Session != "new-id" || d.From != "old-id" {
+				t.Fatalf("continues event = %+v (%s), want new-id continuing old-id", ev, ev.Data)
+			}
+			links++
+		}
+	}
+	if links != 1 {
+		t.Fatalf("continues events = %d, want 1", links)
+	}
+
+	asJSON := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"session", "new-id", "--json"}, "", nil, nil)
+	var view struct{ Work []struct{ Text string } }
+	if err := json.Unmarshal([]byte(asJSON.stdout), &view); err != nil || asJSON.exit != 0 {
+		t.Fatalf("session --json = (%d, %q): %v", asJSON.exit, asJSON.stdout, err)
+	}
+	if len(view.Work) == 0 || view.Work[0].Text != "written by the old session" {
+		t.Fatalf("session --json work = %+v, want the old session's note", view.Work)
+	}
+
+	bad := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"session", "new-id", "--continues", "../escape"}, "", nil, nil)
+	if bad.exit != 2 {
+		t.Fatalf("session --continues ../escape exit = %d, want 2; stderr = %q", bad.exit, bad.stderr)
+	}
+	after, err := home.Client().SessionView(context.Background(), "new-id")
+	if err != nil || len(after.Events) != len(data.Events) {
+		t.Fatalf("events after a refused --continues = %d (%v), want %d", len(after.Events), err, len(data.Events))
+	}
+
+	none := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"session"}, "", nil, nil)
+	if none.exit != 2 || none.stdout != "" {
+		t.Fatalf("session with no id = (%d, %q, %q), want exit 2", none.exit, none.stdout, none.stderr)
+	}
+}
+
+func TestQueuedWritesAndTheHookNameWhyTheDaemonDidNotStart(t *testing.T) {
+	home := testutil.StartHome(t, testutil.HomeOptions{})
+	home.Stop()
+	cause := errors.New("the daemon exited before its socket answered (exit status 3); see /state/desk/daemon.log")
+	spawn := func(config.Paths) error { return cause }
+
+	note := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"note", "kept for later"}, "", map[string]string{"DESK_SESSION": "cause"}, spawn)
+	if note.exit != 0 || strings.TrimSpace(note.stdout) != "queued" {
+		t.Fatalf("note with a failing daemon = (%d, %q, %q), want queued", note.exit, note.stdout, note.stderr)
+	}
+	if !strings.Contains(note.stderr, cause.Error()) {
+		t.Fatalf("note stderr = %q, want the reason the daemon did not start", note.stderr)
+	}
+
+	hook := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"hook", "start", "--format", "claude-code"}, `{"source":"startup","session_id":"cause"}`, nil, spawn)
+	if hook.exit != 0 || !strings.Contains(hook.stdout, cause.Error()) {
+		t.Fatalf("hook with a failing daemon = (%d, %q, %q), want one line with the reason", hook.exit, hook.stdout, hook.stderr)
+	}
+}

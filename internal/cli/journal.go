@@ -23,7 +23,7 @@ func (a *app) appendEvent(cmd *cobra.Command, r api.AppendRequest) error {
 		return err
 	}
 	if queued {
-		a.warn(cmd, "the home did not answer; queued, and forwarded on the next call that reaches it")
+		a.warn(cmd, "%s; queued, and forwarded on the next call that reaches it", a.unanswered())
 		a.say("queued")
 		return nil
 	}

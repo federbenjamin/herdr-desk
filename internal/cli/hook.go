@@ -56,7 +56,7 @@ func (a *app) hookCmd() *cobra.Command {
 		}
 		data, err := c.SessionView(a.ctx, in.SessionID)
 		if r, ok := model.AsRefusal(err); ok && r.Code == model.CodeHomeUnreachable {
-			a.say("desk: the home did not answer, so this session's journal is not loaded")
+			a.say("desk: this session's journal is not loaded: %s", r.Msg)
 			return nil
 		}
 		if err != nil {

@@ -512,6 +512,8 @@ func TestFilterMatchRespectsStatusProjectArchiveAndAll(t *testing.T) {
 		{"empty project selects no-project tasks", store.Filter{Project: &emptyProject}, model.Task{Status: model.StatusOpen}, true},
 		{"archived selects archived live tasks", store.Filter{Archived: true}, model.Task{Status: model.StatusBlocked, Archived: true}, true},
 		{"all includes done archived tasks", store.Filter{All: true}, model.Task{Status: model.StatusDone, Archived: true, Project: "/work/beta"}, true},
+		{"all keeps the project", store.Filter{All: true, Project: &project}, model.Task{Status: model.StatusDone, Archived: true, Project: "/work/beta"}, false},
+		{"all with a project takes its done archived tasks", store.Filter{All: true, Project: &project}, model.Task{Status: model.StatusDone, Archived: true, Project: project}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -80,7 +80,7 @@ func (s *Store) Merged(ctx context.Context, a Actor, in model.MergedData) (model
 	if strings.TrimSpace(in.Branch) == "" {
 		return model.Event{}, refuse(model.CodeBadInput, "a merged event names its branch")
 	}
-	return s.journal(ctx, a, model.KindMerged, 0, nil, []string{in.SHA, in.Text}, in, nil, nil)
+	return s.journal(ctx, a, model.KindMerged, 0, nil, []string{in.Branch, in.SHA, in.Text}, in, nil, nil)
 }
 
 // Compacted appends a compaction marker for the actor's session.

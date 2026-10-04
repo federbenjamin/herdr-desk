@@ -501,6 +501,14 @@ func TestEachTextualWriteIsScannedOnceAsOneJoinedInput(t *testing.T) {
 				return err
 			},
 		},
+		{
+			name:      "write merged branch sha and text",
+			fragments: []string{"branch marker", "sha marker", "text marker"},
+			write: func(st *store.Store, _ int) error {
+				_, err := st.Merged(ctx, store.Actor{}, model.MergedData{Branch: "branch marker", SHA: "sha marker", Text: "text marker"})
+				return err
+			},
+		},
 	}
 
 	for _, tc := range cases {

@@ -32,6 +32,7 @@ type ClientOptions struct {
 type Client struct {
 	o    ClientOptions
 	http *http.Client
+	long *http.Client // the same transport with no timeout, for a backup, which runs git against a remote
 	base string
 }
 
@@ -41,19 +42,20 @@ func NewClient(o ClientOptions) *Client {
 		o.Timeout = 5 * time.Second
 	}
 	c := &Client{o: o}
+	// The token goes to the home only: never through a proxy the environment names.
+	tr := &http.Transport{Proxy: nil}
 	if o.Config.IsClient() {
 		c.base = "http://" + o.Config.Client.Home
-		c.http = &http.Client{Timeout: o.Timeout}
-		return c
-	}
-	sock := o.Paths.Socket()
-	c.base = "http://desk"
-	c.http = &http.Client{Timeout: o.Timeout, Transport: &http.Transport{
-		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+	} else {
+		sock := o.Paths.Socket()
+		c.base = "http://desk"
+		tr.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
 			var d net.Dialer
 			return d.DialContext(ctx, "unix", sock)
-		},
-	}}
+		}
+	}
+	c.http = &http.Client{Timeout: o.Timeout, Transport: tr}
+	c.long = &http.Client{Transport: tr}
 	return c
 }
 
@@ -74,10 +76,13 @@ func isUnreachable(err error) bool {
 	return ok && r.Code == model.CodeHomeUnreachable
 }
 
-// call forwards the outbox, then sends one request. When the outbox finds the home unreachable, so is the call.
+// call forwards the outbox, then sends one request. When the outbox finds the home unreachable, so is the call;
+// an outbox that cannot be forwarded for another reason ends the call with that reason.
 func (c *Client) call(ctx context.Context, method string, req, res any) error {
 	if _, err := c.Flush(ctx); isUnreachable(err) {
 		return err
+	} else if err != nil {
+		return fmt.Errorf("the queued entries in %s could not be forwarded: %w", c.o.Paths.Outbox(), err)
 	}
 	return c.send(ctx, method, req, res, true)
 }
@@ -123,7 +128,11 @@ func (c *Client) post(ctx context.Context, method string, body []byte, res any) 
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	resp, err := c.http.Do(req)
+	hc := c.http
+	if method == MethodBackupRun {
+		hc = c.long
+	}
+	resp, err := hc.Do(req)
 	if err != nil {
 		return transportError{err}
 	}
@@ -144,11 +153,19 @@ func (c *Client) post(ctx context.Context, method string, body []byte, res any) 
 	case resp.StatusCode == http.StatusConflict && eb.Code != "":
 		return &model.Refusal{Code: eb.Code, Msg: eb.Message}
 	case resp.StatusCode == http.StatusUnauthorized:
-		return fmt.Errorf("%s refused the token (HTTP 401)", c.where())
+		return &httpError{resp.StatusCode, fmt.Sprintf("%s refused the token (HTTP 401)", c.where())}
 	default:
-		return fmt.Errorf("%s answered HTTP %d: %s", c.where(), resp.StatusCode, eb.Message)
+		return &httpError{resp.StatusCode, fmt.Sprintf("%s answered HTTP %d: %s", c.where(), resp.StatusCode, eb.Message)}
 	}
 }
+
+// httpError is an answer that is neither 200 nor a refusal.
+type httpError struct {
+	status int
+	msg    string
+}
+
+func (e *httpError) Error() string { return e.msg }
 
 // ListTasks keeps the snapshot whole: for a filter with f.Live() it asks the home for the zero Filter, writes
 // the snapshot, and returns the tasks f matches. With the home unreachable it answers such a filter from the
