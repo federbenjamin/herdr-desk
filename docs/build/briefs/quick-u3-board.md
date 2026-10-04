@@ -227,6 +227,13 @@ func (c *Client) PauseRunner(ctx context.Context, a store.Actor, paused bool) (S
 func ParseCapture(line string) TaskData
 ```
 
+`internal/model/model.go` (added in fix round 1; `ValidIsolation` reads the same list):
+
+```go
+// Isolations returns every isolation in order: "", self, worktree, in-place. The board's I key cycles through it.
+func Isolations() []string
+```
+
 `internal/board` (package `board`):
 
 ```go
@@ -410,7 +417,7 @@ The footer is `+ add  n ready  s start  b blocked  r review  x done  a #agent  f
 |---|---|
 | `↓` `j` · `↑` · `g` · `G` | next row · previous row · first · last |
 | `enter` | opens the selected task's page; emits `LoadTask{n}` |
-| `+` | opens a `CaptureState` with the prompt `add: `, drawn in place of the footer. Its `AddTask` is emitted as it is; its `Quit` (an empty line, `esc`) closes the box and does not end the program. While it is open, `Failed` goes to it: the refusal shows under the line and the line is kept. `Added` closes it and emits the refresh |
+| `+` | opens a `CaptureState` with the prompt `add: `, drawn in place of the footer. Its `AddTask` is emitted as it is; its `Quit` (an empty line, `esc`) closes the box and does not end the program. While it is open, the `Failed` of its own `AddTask` goes to it (and any `Failed` that carries no effect): the refusal shows under the line and the line is kept. A failure of another effect, such as the timer's refresh, goes to the status line as always. `Added` closes it and emits the refresh |
 | `n` | `SetTask{status ready}`; on a `blocked` task opens the `answer: ` prompt: Enter emits `Rearm{Task, Answer: <the trimmed line>}`, `esc` closes it |
 | `s` · `b` · `r` | `SetTask` with status `started` · `blocked` · `review` |
 | `x` | on a `review` task `SetTask{status done}` at once; on any other status the prompt `mark T<n> done? y/n`: `y` emits it, any other key closes the prompt |
@@ -452,7 +459,7 @@ Keys: `↓` `j` and `↑` scroll. `n s b r x a f k P ? q ctrl+c` do what they do
 
 **Layouts.** Under 78 columns: one surface at a time, and board rows carry no right-hand detail. From 78 to 109: one surface, full rows. From 110: the board on the left and the selected task's page on the right, always; a move of the selection emits `LoadTask` for the new task (and nothing else); `enter` gives the keys to the task side and `esc` gives them back.
 
-**Data.** `Tick` emits `Refresh{Done}` with `Done` as the drawer stands, plus `LoadTask` for the task a page shows (the open page, or at 110 columns the selection) unless the data is offline. While a `Refresh` is unanswered (no `Loaded` or `Failed` since), a `Tick` emits nothing and is remembered; the `Loaded` or `Failed` that answers then emits, once, what a `Tick` emits (the `Refresh`, and the shown task's `LoadTask`). A `tea.PasteMsg` goes to the open text input (a prompt, the add box, the notes editor) and changes nothing when none is open. `Loaded` replaces the data. `TaskLoaded` replaces the shown task's detail, and is dropped when its task is not the one shown. `Added` acts as a `Tick`. `Failed` sets the status line to `Err.Error()`; the next key press clears it.
+**Data.** `Tick` emits `Refresh{Done}` with `Done` as the drawer stands, plus `LoadTask` for the task a page shows (the open page, or at 110 columns the selection) unless the data is offline. While a `Refresh` is unanswered (no `Loaded`, and no `Failed` of that refresh, since; `Run` tags each `Failed` with the effect that raised it, and a `Failed` with no tag counts as the refresh's), a `Tick` emits nothing and is remembered; the `Loaded` or `Failed` that answers then emits, once, what a `Tick` emits (the `Refresh`, and the shown task's `LoadTask`). A `tea.PasteMsg` goes to the open text input (a prompt, the add box, the notes editor) and changes nothing when none is open. `Loaded` replaces the data. `TaskLoaded` replaces the shown task's detail, and is dropped when its task is not the one shown. `Added` acts as a `Tick`. `Failed` sets the status line to `Err.Error()`; the next key press clears it.
 
 **Colours.** `blocked` red, `review` yellow, `started` green, `ready` cyan, `open` and details bright black, section titles bold yellow, ids blue, `#thread` magenta. `Render()` holds no `38;2;`, `48;2;`, `38;5;`, or `48;5;` sequence.
 
