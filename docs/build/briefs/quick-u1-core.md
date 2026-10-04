@@ -620,6 +620,9 @@ func Run(ctx context.Context, st *store.Store, p config.Paths, remote string) (R
 // Due reports whether no successful run is recorded or the last one is over 24 hours before now, so a
 // failed run is tried again on the next tick.
 func Due(p config.Paths, now time.Time) bool
+// Last returns the last successful run, nil when none is recorded, and the error of an attempt that failed
+// after it, "" when none did. A state file that cannot be read is no record. The daemon fills api.Status with it.
+func Last(p config.Paths) (*time.Time, string)
 ```
 
 ### `internal/api`
