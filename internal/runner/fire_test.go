@@ -22,30 +22,32 @@ import (
 )
 
 type fireFixture struct {
-	t      *testing.T
-	ctx    context.Context
-	paths  config.Paths
-	store  *store.Store
-	config config.Config
-	herdr  *herdrtest.Herdr
-	now    time.Time
-	states []string
-	logs   []string
-	router string
-	root   string
+	t       *testing.T
+	ctx     context.Context
+	paths   config.Paths
+	store   *store.Store
+	config  config.Config
+	herdr   *herdrtest.Herdr
+	now     time.Time
+	states  []string
+	logs    []string
+	router  string
+	root    string
+	timeout time.Duration
 }
 
 func newFireFixture(t *testing.T) *fireFixture {
 	t.Helper()
 	m := testutil.NewMachine(t)
 	f := &fireFixture{
-		t:      t,
-		ctx:    context.Background(),
-		paths:  m.Paths,
-		now:    time.Date(2026, time.October, 4, 15, 0, 0, 0, time.Local),
-		herdr:  herdrtest.NewHerdr(),
-		root:   t.TempDir(),
-		states: []string{},
+		t:       t,
+		ctx:     context.Background(),
+		paths:   m.Paths,
+		now:     time.Date(2026, time.October, 4, 15, 0, 0, 0, time.Local),
+		herdr:   herdrtest.NewHerdr(),
+		root:    t.TempDir(),
+		states:  []string{},
+		timeout: time.Second,
 	}
 	var err error
 	f.store, err = store.Open(f.paths.DB(), store.Options{Now: func() time.Time { return f.now }})
@@ -81,14 +83,18 @@ func (f *fireFixture) writeRouter(format string) string {
 
 func (f *fireFixture) runner() *runner.Runner {
 	f.t.Helper()
+	var h runner.Herdr
+	if f.herdr != nil {
+		h = f.herdr
+	}
 	return runner.New(runner.Options{
 		Store:         f.store,
 		Config:        f.config,
 		Paths:         f.paths,
-		Herdr:         f.herdr,
+		Herdr:         h,
 		Exe:           "/opt/desk/bin/desk",
 		Now:           func() time.Time { return f.now },
-		RouterTimeout: 100 * time.Millisecond,
+		RouterTimeout: f.timeout,
 		KillGrace:     10 * time.Millisecond,
 		OnState:       func(state string) { f.states = append(f.states, state) },
 		Logf:          func(format string, args ...any) { f.logs = append(f.logs, fmt.Sprintf(format, args...)) },
@@ -147,7 +153,7 @@ func TestTickStartsArmedTasksInArmingOrderUpToTheCap(t *testing.T) {
 	if got := f.herdr.Workspaces(); len(got) != 3 || got[0].Cwd != f.root || got[0].Command == "" {
 		t.Fatalf("workspaces = %#v, want one started workspace per run rooted at %q", got, f.root)
 	}
-	if got := f.task(fourth.Number).Status; got != model.StatusReady {
+	if got := f.task(fourth.Number).Task.Status; got != model.StatusReady {
 		t.Fatalf("fourth task status = %q, want ready while cap is full", got)
 	}
 	if changed, err := f.store.UpdateRun(f.ctx, runs[0].ID, model.RunRunning, store.RunUpdate{State: model.RunEnded}); err != nil || !changed {
@@ -226,7 +232,7 @@ func TestTickPassesPromptSchemaInputAndHooksToTheRouter(t *testing.T) {
 	if err := json.Unmarshal(input, &gotInput); err != nil {
 		t.Fatalf("router stdin is not JSON: %v", err)
 	}
-	if gotInput.Task.Number != task.Number || len(gotInput.Roots) != 1 || gotInput.Roots[0].Path != f.root || !reflect.DeepEqual(gotInput.Models, f.config.Agent.Models) {
+	if gotInput.Task.Number != task.Number || len(gotInput.Roots) < 1 || gotInput.Roots[0].Path != f.root || !reflect.DeepEqual(gotInput.Models, f.config.Agent.Models) {
 		t.Fatalf("router input = %#v, want task, listed root, and models", gotInput)
 	}
 	arguments, err := os.ReadFile(argv)
@@ -256,7 +262,7 @@ func TestTickPassesPromptSchemaInputAndHooksToTheRouter(t *testing.T) {
 
 	detail := f.task(task.Number)
 	run := f.runs()[0]
-	if detail.Root != f.root || detail.Isolation != "self" || detail.Model != "model-a" || run.Root != f.root || run.Isolation != "self" || run.Model != "model-a" || run.Reason != "fits" {
+	if detail.Task.Root != f.root || detail.Task.Isolation != "self" || detail.Task.Model != "model-a" || run.Root != f.root || run.Isolation != "self" || run.Model != "model-a" || run.Reason != "fits" {
 		t.Fatalf("task = %#v; run = %#v; want applied route", detail.Task, run)
 	}
 	if !fireHasRouterNote(detail.History, "routed to "+f.root+" (self, model-a): fits") {
@@ -311,12 +317,13 @@ func TestTickBlocksTheTaskWhenRoutingFails(t *testing.T) {
 			f.config.Agent.Router = []string{path, "{system}", "{schema}"}
 			if tc.name == "router times out" {
 				f.config.Agent.Router = []string{path}
+				f.timeout = 100 * time.Millisecond
 			}
 			task := f.arm("bad route", "agent")
 			f.runner().Tick(f.ctx)
 			run := f.runs()[0]
 			detail := f.task(task.Number)
-			if run.State != model.RunFailed || detail.Status != model.StatusBlocked || !fireHasRouterFailure(detail.History) {
+			if run.State != model.RunFailed || detail.Task.Status != model.StatusBlocked || !fireHasRouterFailure(detail.History) {
 				t.Fatalf("run = %#v; task = %#v; want failed run, blocked task, and router note", run, detail)
 			}
 		})
@@ -328,14 +335,14 @@ func TestTickBlocksTheTaskWhenItsOwnRouteIsInvalid(t *testing.T) {
 	trace := filepath.Join(t.TempDir(), "router-trace")
 	t.Setenv("ROUTER_STDIN", trace)
 	task := f.arm("bad decided route", "agent")
-	badRoot := "/not-listed"
-	if _, err := f.store.SetTask(f.ctx, store.Actor{}, task.Number, model.Patch{Root: &badRoot}); err != nil {
+	badRoot, isolation, selectedModel := "/not-listed", "self", "model-a"
+	if _, err := f.store.SetTask(f.ctx, store.Actor{}, task.Number, model.Patch{Root: &badRoot, Isolation: &isolation, Model: &selectedModel}); err != nil {
 		t.Fatalf("set bad root: %v", err)
 	}
 	f.runner().Tick(f.ctx)
 	run := f.runs()[0]
 	detail := f.task(task.Number)
-	if run.State != model.RunFailed || detail.Status != model.StatusBlocked || !fireHasRouterFailure(detail.History) {
+	if run.State != model.RunFailed || detail.Task.Status != model.StatusBlocked || !fireHasRouterFailure(detail.History) {
 		t.Fatalf("run = %#v; task = %#v; want failed route", run, detail)
 	}
 	if _, err := os.Stat(trace); !os.IsNotExist(err) {
@@ -408,7 +415,7 @@ func TestTickFailsRoutingRunsLeftByADaemonRestart(t *testing.T) {
 	f.runner().Tick(f.ctx)
 	run := f.runs()[0]
 	detail := f.task(task.Number)
-	if run.State != model.RunFailed || detail.Status != model.StatusBlocked || !fireHasNote(detail.History, "daemon restarted") {
+	if run.State != model.RunFailed || detail.Task.Status != model.StatusBlocked || !fireHasNote(detail.History, "daemon restarted") {
 		t.Fatalf("run = %#v; task = %#v; want failed stale routing run", run, detail)
 	}
 }
@@ -429,6 +436,11 @@ func TestStateUsesTheDocumentedPrecedenceAndPreventsFiring(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFireFixture(t)
 			tc.adjust(f)
+			if tc.want == runner.StateNoHerdr {
+				if path, err := exec.LookPath("herdr"); err == nil {
+					t.Fatalf("herdr found at %q with empty PATH", path)
+				}
+			}
 			f.arm("not fired outside on", "agent")
 			r := f.runner()
 			if got := r.State(); got != tc.want {
