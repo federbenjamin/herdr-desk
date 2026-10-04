@@ -53,12 +53,12 @@ func TestKeysMovementEnterAndQuitUseTheSelectedTask(t *testing.T) {
 
 	s, effects := s.Update(w2Key(tea.KeyDown, ""))
 	w2Effects(t, effects, nil)
-	if !strings.Contains(s.Text(), "▸ T2") {
-		t.Fatalf("after down, screen = %q, want T2 selected", s.Text())
+	if !strings.Contains(s.Text(), "▸ T1") {
+		t.Fatalf("after down, screen = %q, want T1 selected", s.Text())
 	}
 
 	_, effects = s.Update(w2Key(tea.KeyEnter, ""))
-	w2Effects(t, effects, []board.Effect{board.LoadTask{Task: 2}})
+	w2Effects(t, effects, []board.Effect{board.LoadTask{Task: 1}})
 
 	for _, key := range []tea.KeyPressMsg{w2Key('q', "q"), w2Ctrl('c')} {
 		_, effects = s.Update(key)
@@ -158,10 +158,19 @@ func TestKeysRunnerActionsRequireTheRightRunnerState(t *testing.T) {
 	if !strings.Contains(s.Text(), "kill T4's run? y/n") {
 		t.Fatalf("k = %q, want kill confirmation", s.Text())
 	}
-	_, effects = s.Update(w2Key('y', "y"))
+	s, effects = s.Update(w2Key('y', "y"))
 	w2Effects(t, effects, []board.Effect{board.KillRun{Task: 4}})
 
 	_, effects = s.Update(w2Key('P', "P"))
+	w2Effects(t, effects, []board.Effect{board.PauseRunner{Paused: true}})
+
+	fallback := board.NewState(board.Config{})
+	fallback, _ = fallback.Update(tea.WindowSizeMsg{Width: 90, Height: 24})
+	fallback, _ = fallback.Update(board.Loaded{Data: board.Data{
+		Tasks:  []model.Task{w2Task(4, model.StatusStarted)},
+		Status: api.Status{RunnerOn: true},
+	}})
+	_, effects = fallback.Update(w2Key('P', "P"))
 	w2Effects(t, effects, []board.Effect{board.PauseRunner{Paused: true}})
 }
 
@@ -185,7 +194,7 @@ func TestKeysOfflineWritesAndCtrlDDoNotAskTheHome(t *testing.T) {
 			s := board.NewState(board.Config{})
 			s, _ = s.Update(tea.WindowSizeMsg{Width: 90, Height: 24})
 			s, _ = s.Update(board.Loaded{Data: board.Data{Offline: true, Tasks: []model.Task{w2Task(1, model.StatusOpen)}}})
-			_, effects := s.Update(key.msg)
+			s, effects := s.Update(key.msg)
 			w2Effects(t, effects, nil)
 			if !strings.Contains(s.Text(), "offline: "+key.statusKey+" needs the home") {
 				t.Fatalf("%s offline = %q, want offline refusal", key.name, s.Text())
@@ -231,5 +240,176 @@ func TestKeysTickWaitsForItsRefreshAndFailureClearsOnTheNextKey(t *testing.T) {
 	w2Effects(t, effects, nil)
 	if strings.Contains(s.Text(), "home down") {
 		t.Fatalf("key after failure = %q, want error cleared", s.Text())
+	}
+}
+
+func TestKeysBoardNavigationFiltersDrawerAndOverlayKeepBoardStateCoherent(t *testing.T) {
+	tasks := []model.Task{
+		{Number: 1, Title: "blocked", Status: model.StatusBlocked, Project: "/work/alpha", Thread: "red", UpdatedTS: time.Unix(100, 0)},
+		{Number: 2, Title: "review", Status: model.StatusReview, Project: "/work/beta", Thread: "blue", UpdatedTS: time.Unix(100, 0)},
+		{Number: 3, Title: "started", Status: model.StatusStarted, UpdatedTS: time.Unix(100, 0)},
+		{Number: 4, Title: "ready", Status: model.StatusReady, Project: "/work/alpha", Thread: "red", UpdatedTS: time.Unix(100, 0)},
+		{Number: 5, Title: "open", Status: model.StatusOpen, UpdatedTS: time.Unix(100, 0)},
+	}
+	s := w2State(tasks...)
+	s, effects := s.Update(w2Key('G', "G"))
+	w2Effects(t, effects, nil)
+	if !strings.Contains(s.Text(), "▸ T5") {
+		t.Fatalf("G screen = %q, want T5 selected", s.Text())
+	}
+	s, _ = s.Update(w2Key('g', "g"))
+	if !strings.Contains(s.Text(), "▸ T1") {
+		t.Fatalf("g screen = %q, want T1 selected", s.Text())
+	}
+	s, _ = s.Update(w2Key(tea.KeyUp, ""))
+	if !strings.Contains(s.Text(), "▸ T1") {
+		t.Fatalf("up at first row = %q, want T1 selected", s.Text())
+	}
+
+	s, _ = s.Update(w2Key('p', "p"))
+	if !strings.Contains(s.Text(), "desk  alpha ▾") || strings.Contains(s.Text(), "T2") {
+		t.Fatalf("first project filter = %q, want only alpha tasks", s.Text())
+	}
+	s, _ = s.Update(w2Key('t', "t"))
+	if !strings.Contains(s.Text(), "thread: red ▾") || strings.Contains(s.Text(), "T2") {
+		t.Fatalf("first thread filter = %q, want only red alpha tasks", s.Text())
+	}
+
+	s, _ = s.Update(w2Key('/', "/"))
+	s, _ = s.Update(w2Key('b', "b"))
+	if !strings.Contains(s.Text(), "search: b") || !strings.Contains(s.Text(), "T1") {
+		t.Fatalf("search = %q, want matching task and query", s.Text())
+	}
+	s, _ = s.Update(w2Key(tea.KeyEsc, ""))
+	if strings.Contains(s.Text(), "search: ") || strings.Contains(s.Text(), "T2") {
+		t.Fatalf("search escape = %q, want search cleared while filters remain", s.Text())
+	}
+
+	s = w2State(tasks...)
+	s, effects = s.Update(w2Key('d', "d"))
+	w2Effects(t, effects, []board.Effect{board.Refresh{Done: true}})
+	s, _ = s.Update(board.Loaded{Data: board.Data{Tasks: tasks, Done: []model.Task{w2Task(6, model.StatusDone)}}})
+	if !strings.Contains(s.Text(), "DONE") || !strings.Contains(s.Text(), "T6") {
+		t.Fatalf("done drawer = %q, want DONE section", s.Text())
+	}
+	s, _ = s.Update(w2Key(tea.KeyEsc, ""))
+	if strings.Contains(s.Text(), "DONE") {
+		t.Fatalf("drawer escape = %q, want drawer closed", s.Text())
+	}
+
+	s, _ = s.Update(w2Key('?', "?"))
+	if !strings.Contains(s.Text(), "KEYS") || !strings.Contains(s.Text(), "pause or resume the runner") {
+		t.Fatalf("keys overlay = %q, want board key list", s.Text())
+	}
+	s, _ = s.Update(w2Key(tea.KeyEsc, ""))
+	if strings.Contains(s.Text(), "KEYS") {
+		t.Fatalf("keys escape = %q, want overlay closed", s.Text())
+	}
+}
+
+func TestKeysAgentFocusKillAndRunnerStatusMessagesExplainUnavailableActions(t *testing.T) {
+	s := w2State(w2Task(1, model.StatusOpen))
+	_, effects := s.Update(w2Key('a', "a"))
+	thread := "agent"
+	w2Effects(t, effects, []board.Effect{board.SetTask{Task: 1, Patch: model.Patch{Thread: &thread}}})
+
+	s, effects = s.Update(w2Key('f', "f"))
+	w2Effects(t, effects, nil)
+	if !strings.HasSuffix(s.Text(), "f works only on the home, with herdr") {
+		t.Fatalf("f without focus support = %q", s.Text())
+	}
+
+	canFocus := board.NewState(board.Config{CanFocus: true})
+	canFocus, _ = canFocus.Update(tea.WindowSizeMsg{Width: 90, Height: 24})
+	canFocus, _ = canFocus.Update(board.Loaded{Data: board.Data{Tasks: []model.Task{w2Task(1, model.StatusStarted)}}})
+	canFocus, effects = canFocus.Update(w2Key('f', "f"))
+	w2Effects(t, effects, nil)
+	if !strings.HasSuffix(canFocus.Text(), "T1 has no live run") {
+		t.Fatalf("f without run = %q", canFocus.Text())
+	}
+	_, effects = canFocus.Update(w2Key('k', "k"))
+	w2Effects(t, effects, nil)
+	if !strings.HasSuffix(canFocus.Text(), "T1 has no live run") {
+		t.Fatalf("k without run = %q", canFocus.Text())
+	}
+
+	paneLess := board.NewState(board.Config{CanFocus: true})
+	paneLess, _ = paneLess.Update(tea.WindowSizeMsg{Width: 90, Height: 24})
+	paneLess, _ = paneLess.Update(board.Loaded{Data: board.Data{Tasks: []model.Task{w2Task(1, model.StatusStarted)}, Runs: []model.Run{{Task: 1}}}})
+	paneLess, effects = paneLess.Update(w2Key('f', "f"))
+	w2Effects(t, effects, nil)
+	if !strings.HasSuffix(paneLess.Text(), "T1's run has no pane yet") {
+		t.Fatalf("f without pane = %q", paneLess.Text())
+	}
+
+	for _, test := range []struct {
+		state string
+		want  string
+		eff   board.Effect
+	}{
+		{api.RunnerStatePaused, "", board.PauseRunner{Paused: false}},
+		{api.RunnerStateNoRouter, "the runner is no-router", nil},
+		{"", "the runner is off", nil},
+	} {
+		t.Run(test.state+test.want, func(t *testing.T) {
+			state := w2State(w2Task(1, model.StatusOpen))
+			state, _ = state.Update(board.Loaded{Data: board.Data{Tasks: []model.Task{w2Task(1, model.StatusOpen)}, Status: api.Status{RunnerState: test.state}}})
+			state, effects := state.Update(w2Key('P', "P"))
+			if test.eff == nil {
+				w2Effects(t, effects, nil)
+				if !strings.HasSuffix(state.Text(), test.want) {
+					t.Fatalf("P with %q = %q", test.state, state.Text())
+				}
+				return
+			}
+			w2Effects(t, effects, []board.Effect{test.eff})
+		})
+	}
+}
+
+func TestKeysPasteGoesOnlyToTheOpenTextInput(t *testing.T) {
+	s := w2State(w2Task(1, model.StatusOpen))
+	before := s.Text()
+	after, effects := s.Update(tea.PasteMsg{Content: "ignored"})
+	w2Effects(t, effects, nil)
+	if after.Text() != before {
+		t.Fatalf("paste without input changed screen from %q to %q", before, after.Text())
+	}
+
+	s, _ = s.Update(w2Key('+', "+"))
+	s, effects = s.Update(tea.PasteMsg{Content: "fix #agent"})
+	w2Effects(t, effects, nil)
+	if !strings.Contains(s.Text(), "add: fix #agent") {
+		t.Fatalf("paste into add box = %q, want pasted line", s.Text())
+	}
+}
+
+func TestKeysPasteUpdatesSearch(t *testing.T) {
+	s := w2State(w2Task(1, model.StatusOpen))
+	s, _ = s.Update(w2Key('/', "/"))
+	s, effects := s.Update(tea.PasteMsg{Content: "task a"})
+	w2Effects(t, effects, nil)
+	if !strings.Contains(s.Text(), "search: task a") {
+		t.Fatalf("paste into search = %q, want pasted query", s.Text())
+	}
+}
+
+func TestKeysLayoutWidthsKeepOneOrBothSurfacesAsSpecified(t *testing.T) {
+	for _, test := range []struct {
+		width    int
+		contains string
+	}{
+		{60, "? keys  q quit"},
+		{90, "+ add  n ready"},
+		{120, "│"},
+	} {
+		t.Run(string(rune(test.width)), func(t *testing.T) {
+			s := board.NewState(board.Config{})
+			s, _ = s.Update(tea.WindowSizeMsg{Width: test.width, Height: 24})
+			s, _ = s.Update(board.Loaded{Data: board.Data{Tasks: []model.Task{w2Task(1, model.StatusOpen)}}})
+			if !strings.Contains(s.Text(), test.contains) {
+				t.Fatalf("width %d screen = %q, want %q", test.width, s.Text(), test.contains)
+			}
+		})
 	}
 }

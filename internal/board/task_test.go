@@ -82,11 +82,11 @@ func TestTaskPageTextShowsTaskFieldsNotesStepsHistoryAndFiles(t *testing.T) {
 		"[x] draw the page",
 		"[ ] open refs",
 		"HISTORY  across 2 sessions",
-		"you  created · open",
-		"agent  ready · merged [https://example.test/pr/42]",
-		"agent  note \"reviewed\" [docs/task.md]",
-		"you  decision keep the plain text screen",
-		"you  merged feature/task-page",
+		"you     created · open",
+		"agent   ready · merged [https://example.test/pr/42]",
+		"agent   note \"reviewed\" [docs/task.md]",
+		"you     decision keep the plain text screen",
+		"you     merged feature/task-page",
 		"FILES",
 		"https://example.test/pr/42",
 		"docs/task.md",
@@ -118,7 +118,7 @@ func TestTaskPageEditorsAndIsolationEmitSetTask(t *testing.T) {
 			name: "saving notes preserves the editor contents",
 			keys: []tea.KeyPressMsg{
 				w4Key('e'),
-				{Code: 's', Text: "s", Mod: tea.ModCtrl},
+				w4Ctrl('s'),
 			},
 			want: board.SetTask{Task: 7, Patch: model.Patch{Notes: w4String("existing note")}},
 		},
@@ -153,6 +153,36 @@ func TestTaskPageEditorsAndIsolationEmitSetTask(t *testing.T) {
 			w4EffectsEqual(t, effects, []board.Effect{tc.want})
 		})
 	}
+}
+
+func TestTaskPageHistoryNamesFalseArchiveAsUnarchived(t *testing.T) {
+	archived := false
+	task := model.Task{Number: 43, Title: "Restore task", Status: model.StatusOpen}
+	history := []model.Event{{
+		TS:   w4Now,
+		Kind: model.KindSet,
+		Data: model.MustData(model.Patch{Archived: &archived}),
+	}}
+
+	text := w4TaskPage(t, 90, task, history).Text()
+	if !strings.Contains(text, "unarchived") {
+		t.Fatalf("false archive history = %q, want unarchived", text)
+	}
+}
+
+func TestTaskPagePasteAppendsToTheOpenNotesEditor(t *testing.T) {
+	task := model.Task{Number: 44, Title: "Paste a note", Notes: "existing", Status: model.StatusOpen}
+	s := w4TaskPage(t, 90, task, nil)
+
+	s, effects := s.Update(w4Key('e'))
+	w4EffectsEqual(t, effects, nil)
+	s, effects = s.Update(tea.PasteMsg{Content: " pasted"})
+	w4EffectsEqual(t, effects, nil)
+	_, effects = s.Update(w4Ctrl('s'))
+	w4EffectsEqual(t, effects, []board.Effect{board.SetTask{
+		Task:  44,
+		Patch: model.Patch{Notes: w4String("existing pasted")},
+	}})
 }
 
 func TestTaskPageStepKeysEmitTheirNamedOperations(t *testing.T) {
@@ -272,6 +302,10 @@ func w4EffectsEqual(t *testing.T, got, want []board.Effect) {
 
 func w4Key(code rune) tea.KeyPressMsg {
 	return tea.KeyPressMsg{Code: code, Text: string(code)}
+}
+
+func w4Ctrl(code rune) tea.KeyPressMsg {
+	return tea.KeyPressMsg{Code: code, Mod: tea.ModCtrl}
 }
 
 func w4String(s string) *string {

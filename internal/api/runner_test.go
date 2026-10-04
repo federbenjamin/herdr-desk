@@ -103,6 +103,37 @@ func TestW1PauseRunnerPostsActorAndPausedAndReturnsTheHomeStatus(t *testing.T) {
 	}
 }
 
+func TestW1PauseRunnerPostsFalseToResume(t *testing.T) {
+	actor := store.Actor{Session: "runner-session", Run: 23}
+	want := api.Status{RunnerOn: true, RunnerPaused: false, RunnerCap: 3, RunnerState: api.RunnerStateOn}
+	client := w1RunnerClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/"+api.MethodRunnerPause {
+			t.Fatalf("request path = %q, want %q", r.URL.Path, "/v1/"+api.MethodRunnerPause)
+		}
+		var body struct {
+			Actor  store.Actor `json:"actor"`
+			Paused bool        `json:"paused"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if !reflect.DeepEqual(body.Actor, actor) || body.Paused {
+			t.Fatalf("request = %#v, want actor %#v and paused false", body, actor)
+		}
+		if err := json.NewEncoder(w).Encode(want); err != nil {
+			t.Fatalf("encode status: %v", err)
+		}
+	}))
+
+	got, err := client.PauseRunner(context.Background(), actor, false)
+	if err != nil {
+		t.Fatalf("PauseRunner: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("PauseRunner result = %#v, want %#v", got, want)
+	}
+}
+
 func TestW1RunnerWritesReturnHomeRefusals(t *testing.T) {
 	for _, tc := range []struct {
 		name   string

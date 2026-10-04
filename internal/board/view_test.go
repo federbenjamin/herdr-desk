@@ -15,7 +15,7 @@ import (
 var w3Now = time.Date(2026, time.October, 4, 15, 4, 5, 0, time.UTC)
 
 func w3State(width int, data board.Data) board.State {
-	s := board.NewState(board.Config{Now: func() time.Time { return w3Now }})
+	s := board.NewState(board.Config{IsHome: true, Now: func() time.Time { return w3Now }})
 	s, _ = s.Update(tea.WindowSizeMsg{Width: width, Height: 24})
 	s, _ = s.Update(board.Loaded{Data: data})
 	return s
@@ -86,12 +86,12 @@ func TestViewWideBoardShowsEverySectionRowAndDetail(t *testing.T) {
 		"desk  all ▾  thread: all ▾",
 		"runner ● on · 1/4 · home",
 		"NEEDS YOU", "IN MOTION", "ON DECK",
-		"T1", "blocked", "ship release", "alpha · 40s ago", "↳ \"await deploy\"",
-		"T2", "review", "review patch", "#ops", "beta · 5m ago",
-		"T3", "started", "run checks", "alpha · worktree · gpt · 30h", "↳ last note: \"watching logs\"",
-		"T4", "ready", "queue agent", "#agent · queued", "inbox",
-		"T5", "open", "sort inbox", "30h ago",
-		"+ add  n ready  s start  b blocked  r review  x done  a #agent  f focus  k kill  P pause  / search  p project  t thread  d done  ? keys",
+		"T1", "blocked", "ship release", "↳ \"await deploy\"",
+		"T2", "review", "review patch", "#ops",
+		"T3", "started", "run checks", "↳ last note: \"watching logs\"",
+		"T4", "ready", "#agent · queued", "inbox",
+		"T5", "open", "sort inbox",
+		"root - · isolation - · model -", // The wide layout draws the task beside the board.
 	)
 	for _, line := range strings.Split(text, "\n") {
 		if len([]rune(line)) > 120 {
@@ -109,6 +109,17 @@ func TestViewWideBoardShowsEverySectionRowAndDetail(t *testing.T) {
 	}
 }
 
+func TestViewMediumBoardShowsTheUntruncatedRowDetails(t *testing.T) {
+	s := w3State(109, w3LiveData())
+	w3RequireContains(t, s.Text(),
+		"T1  blocked  ship release", "alpha · 40s ago", "↳ \"await deploy\"",
+		"T2  review   review patch", "#ops · beta · 5m ago",
+		"T3  started  run checks", "alpha · worktree · gpt · 30h", "↳ last note: \"watching logs\"",
+		"T4  ready    queue agent", "#agent · queued · alpha · 30m ago",
+		"inbox", "T5  open     sort inbox", "30h ago",
+	)
+}
+
 func TestViewNarrowBoardDropsDetailsAndUsesShortFooter(t *testing.T) {
 	s := w3State(60, w3LiveData())
 	text := s.Text()
@@ -121,6 +132,19 @@ func TestViewNarrowBoardDropsDetailsAndUsesShortFooter(t *testing.T) {
 	for _, line := range strings.Split(text, "\n") {
 		if len([]rune(line)) > 60 {
 			t.Fatalf("line is %d columns wide at width 60: %q", len([]rune(line)), line)
+		}
+	}
+}
+
+func TestViewFooterWrapsAtDoubleSpaceGroups(t *testing.T) {
+	text := w3State(90, w3LiveData()).Text()
+	w3RequireContains(t, text,
+		"+ add  n ready  s start  b blocked  r review  x done  a #agent  f focus  k kill  P pause",
+		"/ search  p project  t thread  d done  ? keys",
+	)
+	for _, line := range strings.Split(text, "\n") {
+		if len([]rune(line)) > 90 {
+			t.Fatalf("line is %d columns wide at width 90: %q", len([]rune(line)), line)
 		}
 	}
 }
@@ -146,11 +170,56 @@ func TestViewFiltersRowsBySearchProjectAndThread(t *testing.T) {
 		t.Fatalf("project filter retained a beta task:\n%s", project)
 	}
 	s, _ = s.Update(w3Key('t', "t"))
+	firstThread := s.Text()
+	w3RequireContains(t, firstThread, "thread: ops ▾")
+	if strings.Contains(firstThread, "review patch") || strings.Contains(firstThread, "queue agent") {
+		t.Fatalf("project and thread filters did not combine:\n%s", firstThread)
+	}
+	s, _ = s.Update(w3Key('t', "t"))
 	thread := s.Text()
 	w3RequireContains(t, thread, "thread: agent ▾", "queue agent")
 	if strings.Contains(thread, "ship release") {
 		t.Fatalf("thread filter retained a task without the selected thread:\n%s", thread)
 	}
+}
+
+func TestViewRunnerLabelsUseTheReportedRunnerState(t *testing.T) {
+	cases := []struct {
+		name string
+		data board.Data
+		want string
+	}{
+		{
+			name: "on without a cap counts live runs",
+			data: board.Data{Runs: []model.Run{{}, {}}, Status: api.Status{RunnerOn: true}},
+			want: "runner ● on · 2 · home",
+		},
+		{
+			name: "paused reports its configured capacity",
+			data: board.Data{Runs: []model.Run{{}}, Status: api.Status{RunnerState: api.RunnerStatePaused, RunnerCap: 3}},
+			want: "runner ◐ paused · 1/3 · home",
+		},
+		{
+			name: "off omits a run count",
+			data: board.Data{Status: api.Status{RunnerState: api.RunnerStateOff}},
+			want: "runner ○ off · home",
+		},
+		{
+			name: "unavailable state is displayed verbatim",
+			data: board.Data{Status: api.Status{RunnerState: api.RunnerStateNoRouter}},
+			want: "runner ○ no-router · home",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w3RequireContains(t, w3State(90, tc.data).Text(), tc.want)
+		})
+	}
+
+	s := board.NewState(board.Config{Now: func() time.Time { return w3Now }})
+	s, _ = s.Update(tea.WindowSizeMsg{Width: 90, Height: 24})
+	s, _ = s.Update(board.Loaded{Data: w3LiveData()})
+	w3RequireContains(t, s.Text(), "runner ● on · 1/4 · client")
 }
 
 func TestViewOfflineRefusesWritesButKeepsFiltersAvailable(t *testing.T) {

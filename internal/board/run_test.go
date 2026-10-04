@@ -5,7 +5,9 @@ import (
 	"context"
 	"io"
 	"os"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -29,6 +31,8 @@ type w5Home struct {
 
 	listCalls    int
 	getTaskCalls int
+	statusCalls  int
+	runsCalls    int
 	setActors    []store.Actor
 }
 
@@ -73,12 +77,14 @@ func (h *w5Home) Append(_ context.Context, _ api.AppendRequest) (model.Event, bo
 func (h *w5Home) ListRuns(context.Context) ([]model.Run, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.runsCalls++
 	return append([]model.Run(nil), h.runs...), nil
 }
 
 func (h *w5Home) Status(context.Context) (api.Status, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.statusCalls++
 	return h.status, nil
 }
 
@@ -100,6 +106,12 @@ func (h *w5Home) w5GetTaskCalls() int {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.getTaskCalls
+}
+
+func (h *w5Home) w5OnlineCalls() (status, runs int) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.statusCalls, h.runsCalls
 }
 
 func (h *w5Home) w5SetActors() []store.Actor {
@@ -216,6 +228,26 @@ func TestRunTicksAtTheConfiguredRefreshInterval(t *testing.T) {
 	in, errs := w5StartRunWithRefresh(t, home, nil, out, 5*time.Millisecond)
 
 	w5Eventually(t, "the timer refresh", func() bool { return home.w5ListCalls() >= 2 })
+	w5Quit(t, in, errs)
+}
+
+func TestRunRefreshesOnlineDataAndTheLastNotes(t *testing.T) {
+	now := time.Now()
+	blocked := model.Task{Number: 21, Title: "w5 blocked task", Status: model.StatusBlocked}
+	started := model.Task{Number: 22, Title: "w5 started task", Status: model.StatusStarted}
+	home := &w5Home{
+		tasks:  []model.Task{blocked, started},
+		runs:   []model.Run{{Task: started.Number, StartedTS: now}},
+		status: api.Status{RunnerOn: true},
+		detail: store.TaskDetail{History: []model.Event{{Kind: model.KindNote, Data: model.MustData(model.NoteData{Text: "w5 latest note"})}}},
+	}
+	out := &w5Output{}
+	in, errs := w5StartRun(t, home, nil, out)
+
+	w5Eventually(t, "the online refresh and task details", func() bool {
+		status, runs := home.w5OnlineCalls()
+		return status == 1 && runs == 1 && home.w5GetTaskCalls() == 2 && strings.Contains(out.String(), "w5 latest note")
+	})
 	w5Quit(t, in, errs)
 }
 
@@ -359,6 +391,87 @@ func TestRunRejectsInvalidTargetsAndAViewerThatIsNotInstalled(t *testing.T) {
 		want := [][]string{{"w5-herdr", "plugin", "list", "--plugin", "herdr-file-viewer", "--json"}}
 		if got := exec.w5Calls(); !reflect.DeepEqual(got, want) {
 			t.Errorf("missing-viewer argv = %#v, want only %#v", got, want)
+		}
+	})
+}
+
+func TestRunOpensURLAndExistingFileRefsWithArgv(t *testing.T) {
+	t.Run("URL goes straight to the operating system opener", func(t *testing.T) {
+		const ref = "https://example.test/w5"
+		task := model.Task{Number: 31, Title: "w5 URL ref", Status: model.StatusOpen}
+		home := &w5Home{
+			tasks:  []model.Task{task},
+			detail: store.TaskDetail{Task: task, History: []model.Event{{Kind: model.KindNote, Data: model.MustData(model.NoteData{Ref: ref})}}},
+		}
+		exec := &w5Executor{}
+		out := &w5Output{}
+		in, errs := w5StartRun(t, home, exec.w5Exec, out)
+
+		w5Eventually(t, "the URL task draw", func() bool { return strings.Contains(out.String(), task.Title) })
+		if _, err := io.WriteString(in, "\r"); err != nil {
+			t.Fatalf("write enter key: %v", err)
+		}
+		w5Eventually(t, "the URL task detail", func() bool { return home.w5GetTaskCalls() == 1 })
+		if _, err := io.WriteString(in, "o"); err != nil {
+			t.Fatalf("write open key: %v", err)
+		}
+		w5Eventually(t, "the URL opener argv", func() bool { return len(exec.w5Calls()) == 1 })
+		w5Quit(t, in, errs)
+
+		opener := "xdg-open"
+		if runtime.GOOS == "darwin" {
+			opener = "open"
+		}
+		if got, want := exec.w5Calls(), [][]string{{opener, ref}}; !reflect.DeepEqual(got, want) {
+			t.Errorf("URL argv = %#v, want %#v", got, want)
+		}
+	})
+
+	t.Run("existing files use the viewer and probe it once", func(t *testing.T) {
+		wd, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		refs := []string{"run_test.go", "open.go"}
+		for _, ref := range refs {
+			if _, err := os.Stat(filepath.Join(wd, ref)); err != nil {
+				t.Fatalf("%s is not available to validate: %v", ref, err)
+			}
+		}
+		task := model.Task{Number: 32, Title: "w5 file refs", Status: model.StatusOpen, Project: wd}
+		home := &w5Home{
+			tasks: []model.Task{task},
+			detail: store.TaskDetail{Task: task, History: []model.Event{
+				{Kind: model.KindNote, Data: model.MustData(model.NoteData{Ref: refs[0]})},
+				{Kind: model.KindNote, Data: model.MustData(model.NoteData{Ref: refs[1]})},
+			}},
+		}
+		exec := &w5Executor{answer: []byte(`{"result":{"plugins":[{}]}}`)}
+		out := &w5Output{}
+		in, errs := w5StartRun(t, home, exec.w5Exec, out)
+
+		w5Eventually(t, "the file task draw", func() bool { return strings.Contains(out.String(), task.Title) })
+		if _, err := io.WriteString(in, "\r"); err != nil {
+			t.Fatalf("write enter key: %v", err)
+		}
+		w5Eventually(t, "the file task detail", func() bool { return home.w5GetTaskCalls() == 1 })
+		if _, err := io.WriteString(in, "o\r"); err != nil {
+			t.Fatalf("open first ref: %v", err)
+		}
+		w5Eventually(t, "the first file argv", func() bool { return len(exec.w5Calls()) == 2 })
+		if _, err := io.WriteString(in, "oj\r"); err != nil {
+			t.Fatalf("open second ref: %v", err)
+		}
+		w5Eventually(t, "the second file argv without a second viewer probe", func() bool { return len(exec.w5Calls()) == 3 })
+		w5Quit(t, in, errs)
+
+		want := [][]string{
+			{"w5-herdr", "plugin", "list", "--plugin", "herdr-file-viewer", "--json"},
+			{"w5-herdr", "plugin", "pane", "open", "--plugin", "herdr-file-viewer", "--entrypoint", "file-viewer", "--env", "HERDR_FILE_VIEWER_OPEN=" + filepath.Join(wd, refs[0]), "--focus"},
+			{"w5-herdr", "plugin", "pane", "open", "--plugin", "herdr-file-viewer", "--entrypoint", "file-viewer", "--env", "HERDR_FILE_VIEWER_OPEN=" + filepath.Join(wd, refs[1]), "--focus"},
+		}
+		if got := exec.w5Calls(); !reflect.DeepEqual(got, want) {
+			t.Errorf("file argv = %#v, want %#v", got, want)
 		}
 	})
 }

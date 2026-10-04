@@ -51,6 +51,23 @@ func TestCapturePopupShowsPromptAndConvertsLineToAddTask(t *testing.T) {
 	}}})
 }
 
+func TestCapturePopupTurnsPastedLineIntoAnAddTask(t *testing.T) {
+	capture := board.NewCapture("capture: ")
+	capture, effects := capture.Update(tea.PasteMsg{Content: "ship popup #ops @alpha"})
+	w6Effects(t, effects, nil)
+
+	if got, want := capture.Text(), "capture: ship popup #ops @alpha\n#thread  @project  ·  enter adds  ·  esc cancels"; got != want {
+		t.Fatalf("Text() after paste = %q, want %q", got, want)
+	}
+
+	_, effects = capture.Update(w6Key(tea.KeyEnter, ""))
+	w6Effects(t, effects, []board.Effect{board.AddTask{Data: model.TaskData{
+		Title:   "ship popup",
+		Thread:  "ops",
+		Project: "alpha",
+	}}})
+}
+
 func TestCapturePopupRetainsRefusalUntilTaskLands(t *testing.T) {
 	capture := board.NewCapture("capture: ")
 	for _, r := range "bad line" {
