@@ -76,6 +76,9 @@ type Runner struct {
 
 	openMu sync.Mutex
 	open   map[string]openPane // pane id → a pane that did not close; the watch closes it again
+
+	handMu  sync.Mutex
+	handing map[int64]int // run id → hand-backs of it in flight, from before their claim until their writes end
 }
 
 // openPane is a pane the runner failed to close, and the task it was opened for.
@@ -98,7 +101,7 @@ func New(o Options) *Runner {
 	if o.KillGrace <= 0 {
 		o.KillGrace = defaultKillGrace
 	}
-	r := &Runner{o: o, idle: map[int64]int{}, open: map[string]openPane{}}
+	r := &Runner{o: o, idle: map[int64]int{}, open: map[string]openPane{}, handing: map[int64]int{}}
 	r.publish(context.Background())
 	return r
 }
@@ -175,15 +178,7 @@ func (r *Runner) Loop(ctx context.Context) {
 // compute returns the state, the herdr to use (nil when none is found), and why the state is paused or no-herdr
 // when something went wrong there: herdr.Find's error, or a pause file that cannot be read.
 func (r *Runner) compute() (string, Herdr, error) {
-	h := r.o.Herdr
-	var herdrErr error
-	if h == nil {
-		bin, err := herdr.Find()
-		if err == nil {
-			h = &herdr.Client{Bin: bin}
-		}
-		herdrErr = err
-	}
+	h, herdrErr := r.findHerdr()
 	paused, pauseErr := r.paused()
 	switch {
 	case !r.o.Config.Runner.Enabled:
@@ -196,6 +191,18 @@ func (r *Runner) compute() (string, Herdr, error) {
 		return StateNoRouter, h, nil
 	}
 	return StateOn, h, nil
+}
+
+// findHerdr returns the herdr to use, or nil and herdr.Find's error when none is found.
+func (r *Runner) findHerdr() (Herdr, error) {
+	if r.o.Herdr != nil {
+		return r.o.Herdr, nil
+	}
+	bin, err := herdr.Find()
+	if err != nil {
+		return nil, err
+	}
+	return &herdr.Client{Bin: bin}, nil
 }
 
 func routerFound(argv []string) bool {
@@ -256,7 +263,9 @@ func (r *Runner) repairStarted(ctx context.Context) {
 			r.logErr("T%d: read its run", t.Number, err)
 			continue
 		}
-		if !ok || model.RunLive(run.State) {
+		// A hand-back marks its run before it claims it, so a run seen ended and unmarked here has no writes still
+		// to come, and the task read after this check holds them.
+		if !ok || model.RunLive(run.State) || r.handingBack(run.ID) {
 			continue
 		}
 		d, err := r.o.Store.GetTask(ctx, t.Number)
@@ -373,6 +382,8 @@ type flip struct {
 // status as the runner, with the run's id. Once the run is claimed the writes go on even when ctx ends, so the
 // task is not left started with no live run. It returns the task and whether it claimed the run.
 func (r *Runner) handBack(ctx context.Context, run model.Run, f flip) (model.Task, bool, error) {
+	r.markHandBack(run.ID, 1)
+	defer r.markHandBack(run.ID, -1)
 	ok, err := r.o.Store.UpdateRun(ctx, run.ID, f.from, store.RunUpdate{State: f.to})
 	if err != nil {
 		r.logErr("T%d run %d: set %s", run.Task, run.ID, f.to, err)
@@ -393,6 +404,22 @@ func (r *Runner) handBack(ctx context.Context, run model.Run, f flip) (model.Tas
 		r.logErr("T%d: set %s", run.Task, f.status, err)
 	}
 	return t, true, err
+}
+
+// markHandBack adds n to the run's count of hand-backs in flight.
+func (r *Runner) markHandBack(run int64, n int) {
+	r.handMu.Lock()
+	defer r.handMu.Unlock()
+	if r.handing[run] += n; r.handing[run] <= 0 {
+		delete(r.handing, run)
+	}
+}
+
+// handingBack reports whether a hand-back of the run is in flight.
+func (r *Runner) handingBack(run int64) bool {
+	r.handMu.Lock()
+	defer r.handMu.Unlock()
+	return r.handing[run] > 0
 }
 
 func (r *Runner) note(ctx context.Context, a store.Actor, task int, tags []string, text string) {

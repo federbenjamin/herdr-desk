@@ -39,8 +39,8 @@ func (r *Runner) Kill(ctx context.Context, a store.Actor, task int) (model.Task,
 			note: fmt.Sprintf("run %d killed while %s", run.ID, run.State)}
 		var k paneKill
 		if run.State == model.RunRunning {
-			_, h, why := r.compute()
-			if h == nil {
+			h, why := r.findHerdr()
+			if why != nil {
 				return model.Task{}, fmt.Errorf("herdr cannot be reached, so the pane cannot be closed: %w", why)
 			}
 			panes, err := h.Panes(ctx)
@@ -80,7 +80,7 @@ func (r *Runner) stop(ctx context.Context, h Herdr, run model.Run, panes []herdr
 type paneKill struct {
 	done     string   // "pane P closed", "no pane was open", or "" when the pane did not close
 	problems []string // what could not be done, each a clause
-	alive    bool     // the pane is still open or one of its processes survived
+	alive    bool     // the pane is still open, one of its processes survived, or they could not be read to be signalled
 }
 
 func (k paneKill) String() string {
@@ -108,6 +108,7 @@ func (r *Runner) closePane(ctx context.Context, h Herdr, task int, pane herdr.Pa
 	if err != nil {
 		r.logErr("T%d: read the processes of pane %s", task, pane.ID, err)
 		k.problems = append(k.problems, "its processes could not be read")
+		k.alive = true
 	}
 	targets := signalTargets(procs)
 	signalAll(targets, syscall.SIGTERM)

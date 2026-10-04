@@ -521,7 +521,7 @@ func TestListRunsDecodesEveryColumnAndNullableCompletion(t *testing.T) {
 	}
 	want := []model.Run{
 		{ID: 4, Task: 11, State: "running", Root: "/work/project", Isolation: "worktree", Model: "model-a", Reason: "manual", Session: "session-a", Workspace: "/work/project/.worktrees/a", Pane: "pane-a", StartedTS: started},
-		{ID: 9, Task: 12, State: "finished", Root: "/work/other", Isolation: "in-place", Model: "model-b", Reason: "retry", Session: "session-b", Workspace: "/work/other", Pane: "pane-b", StartedTS: started.Add(time.Hour), EndedTS: ended, Exit: 17},
+		{ID: 9, Task: 12, State: "finished", Root: "/work/other", Isolation: "in-place", Model: "model-b", Reason: "retry", Session: "session-b", Workspace: "/work/other", Pane: "pane-b", StartedTS: started.Add(time.Hour), EndedTS: ended},
 	}
 	if !reflect.DeepEqual(runs, want) {
 		t.Fatalf("runs = %#v, want %#v", runs, want)

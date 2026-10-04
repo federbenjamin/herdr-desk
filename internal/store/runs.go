@@ -13,7 +13,8 @@ import (
 // ErrNotArmed is StartRun's answer when the task is no longer armed.
 var ErrNotArmed = errors.New("the task is not armed")
 
-const runCols = `id, task, state, root, isolation, model, reason, session, workspace, pane, started_ts, ended_ts, exit`
+// runCols leaves out exit: the column has no writer, since herdr owns the pane and desk never sees a worker exit.
+const runCols = `id, task, state, root, isolation, model, reason, session, workspace, pane, started_ts, ended_ts`
 
 const liveRunStates = `('` + model.RunRouting + `', '` + model.RunWaiting + `', '` + model.RunRunning + `')`
 
@@ -21,9 +22,8 @@ func scanRun(row interface{ Scan(...any) error }) (model.Run, error) {
 	var r model.Run
 	var started string
 	var ended sql.NullString
-	var exit sql.NullInt64
 	err := row.Scan(&r.ID, &r.Task, &r.State, &r.Root, &r.Isolation, &r.Model, &r.Reason, &r.Session,
-		&r.Workspace, &r.Pane, &started, &ended, &exit)
+		&r.Workspace, &r.Pane, &started, &ended)
 	if err != nil {
 		return r, err
 	}
@@ -35,7 +35,6 @@ func scanRun(row interface{ Scan(...any) error }) (model.Run, error) {
 			return r, err
 		}
 	}
-	r.Exit = int(exit.Int64)
 	return r, nil
 }
 

@@ -304,6 +304,51 @@ func TestTickFailsTheRunWhenItsPaneCannotBeRecorded(t *testing.T) {
 	spawnAssertFailureNote(t, f.task(task.Number).History, run.ID, "could not record the pane")
 }
 
+func TestTickReportsNoStartWhenItCannotConfirmTheRunAfterTheCommand(t *testing.T) {
+	root := t.TempDir()
+	f := newFixture(t, root, "self")
+	notice := filepath.Join(t.TempDir(), "notice")
+	f.config.Notify.Command = []string{spawnNotifyScript(t, notice)}
+	task := f.armRoute("unconfirmed start", root, "self")
+	h := &hookedHerdr{Herdr: f.herdr}
+	r := f.runnerWith(h)
+	db, err := sql.Open("sqlite", f.paths.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	// Once the command is typed, the run row cannot be read back: its start time no longer parses.
+	var started string
+	h.after("Run", func() {
+		if err := db.QueryRow(`SELECT started_ts FROM runs WHERE task = ?`, task.Number).Scan(&started); err != nil {
+			t.Errorf("read the start time: %v", err)
+		}
+		if _, err := db.Exec(`UPDATE runs SET started_ts = 'unreadable' WHERE task = ?`, task.Number); err != nil {
+			t.Errorf("spoil the start time: %v", err)
+		}
+	})
+
+	r.Tick(f.ctx)
+	if _, err := db.Exec(`UPDATE runs SET started_ts = ? WHERE task = ?`, started, task.Number); err != nil {
+		t.Fatalf("restore the start time: %v", err)
+	}
+	run := f.run(task.Number)
+	workspaces := f.herdr.Workspaces()
+	if run.State != model.RunFailed || f.task(task.Number).Task.Status != model.StatusBlocked || len(workspaces) != 1 || !reflect.DeepEqual(f.herdr.Closed(), []string{workspaces[0].Pane}) {
+		t.Fatalf("run = %#v; task = %#v; closed = %#v, want a failed run, a blocked task, and the pane closed", run, f.task(task.Number).Task, f.herdr.Closed())
+	}
+	spawnAssertFailureNote(t, f.task(task.Number).History, run.ID, "could not confirm the run")
+	for _, event := range f.task(task.Number).History {
+		var note model.NoteData
+		if event.Kind == model.KindNote && json.Unmarshal(event.Data, &note) == nil && strings.HasPrefix(note.Text, fmt.Sprintf("run %d: workspace", run.ID)) {
+			t.Fatalf("history holds the started note %q for a run it could not confirm", note.Text)
+		}
+	}
+	if _, err := os.Stat(notice); !os.IsNotExist(err) {
+		t.Fatalf("notify ran (%v), want no started notification for a run it could not confirm", err)
+	}
+}
+
 func TestTickNamesAPaneItCouldNotCloseAfterAFailedSpawnAndClosesItLater(t *testing.T) {
 	root := t.TempDir()
 	f := newFixture(t, root, "self")

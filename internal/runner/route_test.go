@@ -2,6 +2,8 @@ package runner_test
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -388,6 +390,36 @@ func TestApplyCompletesOnlyOpenFieldsAndHonorsRootIsolation(t *testing.T) {
 				t.Errorf("Apply() = %#v; want %#v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestApplyAndResolvePreferTheRootWrittenAsTheRouteOverASymlinkAlias(t *testing.T) {
+	real, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(real, alias); err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(t.TempDir(), "other")
+	if err := os.Symlink(real, other); err != nil {
+		t.Fatal(err)
+	}
+	roots := []config.Root{{Path: alias, Isolation: "self"}, {Path: real, Isolation: "worktree"}}
+	models := []string{"fast"}
+
+	got, err := runner.Apply(runner.Route{Root: real}, runner.Route{Model: "fast"}, roots, models)
+	if want := (runner.Route{Root: real, Isolation: "worktree", Model: "fast"}); err != nil || got != want {
+		t.Fatalf("Apply() = %#v, %v; want %#v: the root written as the route, with its isolation", got, err, want)
+	}
+	decided, needed, err := runner.Resolve(model.Task{Root: real, Model: "fast"}, roots, models)
+	if want := (runner.Route{Root: real, Isolation: "worktree", Model: "fast"}); err != nil || needed || decided != want {
+		t.Fatalf("Resolve() = %#v, %t, %v; want %#v with no router", decided, needed, err, want)
+	}
+	got, err = runner.Apply(runner.Route{Root: other}, runner.Route{Model: "fast"}, roots, models)
+	if want := (runner.Route{Root: alias, Isolation: "self", Model: "fast"}); err != nil || got != want {
+		t.Fatalf("Apply() through an unlisted alias = %#v, %v; want the first root of that folder %#v", got, err, want)
 	}
 }
 

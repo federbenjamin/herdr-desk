@@ -285,6 +285,48 @@ func TestTickBlocksATaskLeftStartedByARunThatEnded(t *testing.T) {
 	}
 }
 
+func TestTickLeavesAloneARunWhoseKillIsStillCleaningUp(t *testing.T) {
+	f := newFixture(t, "", "in-place")
+	h := &hookedHerdr{Herdr: f.herdr}
+	task, run, _ := f.start()
+	r := f.runnerWith(h)
+	inCleanup, release := make(chan struct{}), make(chan struct{})
+	h.before("ClosePane", func() {
+		close(inCleanup)
+		<-release
+	})
+	killed := make(chan error, 1)
+	go func() {
+		_, err := r.Kill(f.ctx, store.Actor{}, task.Number)
+		killed <- err
+	}()
+	<-inCleanup
+
+	r.Tick(f.ctx)
+	detail := f.task(task.Number)
+	close(release)
+	if err := <-killed; err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+	if detail.Task.Status != model.StatusStarted {
+		t.Fatalf("task while its kill cleans up = %q, want started until the kill writes it", detail.Task.Status)
+	}
+	after := f.task(task.Number)
+	notes := 0
+	for _, event := range after.History {
+		var note model.NoteData
+		if event.Kind == model.KindNote && event.Run == run.ID && json.Unmarshal(event.Data, &note) == nil && !strings.HasPrefix(note.Text, fmt.Sprintf("run %d: workspace", run.ID)) {
+			notes++
+			if strings.Contains(note.Text, "left started") {
+				t.Fatalf("history holds %q, want no repair of a run whose kill was in flight", note.Text)
+			}
+		}
+	}
+	if notes != 1 || after.Task.Status != model.StatusBlocked {
+		t.Fatalf("task = %q with %d notes after the start note, want blocked with the kill's one note: %#v", after.Task.Status, notes, after.History)
+	}
+}
+
 func watchAssertRunnerNote(t *testing.T, history []model.Event, run int64, want string) {
 	t.Helper()
 	for _, event := range history {

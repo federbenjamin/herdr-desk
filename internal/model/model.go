@@ -76,7 +76,6 @@ type Run struct {
 	Pane      string    `json:"pane"`
 	StartedTS time.Time `json:"started_ts"`
 	EndedTS   time.Time `json:"ended_ts"`
-	Exit      int       `json:"exit"`
 }
 
 // The run states. A run in the first three is live: it holds one of the runner's slots.

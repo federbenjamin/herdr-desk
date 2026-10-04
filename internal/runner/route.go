@@ -193,12 +193,18 @@ func Apply(decided, picked Route, roots []config.Root, models []string) (Route, 
 	return out, nil
 }
 
+// findRoot returns the root written as path, else the first root that names the same folder through symlinks.
 func findRoot(roots []config.Root, path string) (config.Root, bool) {
 	if path == "" {
 		return config.Root{}, false
 	}
 	for _, r := range roots {
-		if samePath(r.Path, path) {
+		if filepath.Clean(r.Path) == filepath.Clean(path) {
+			return r, true
+		}
+	}
+	for _, r := range roots {
+		if resolved(r.Path) == resolved(path) {
 			return r, true
 		}
 	}

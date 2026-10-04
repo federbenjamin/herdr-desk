@@ -86,7 +86,12 @@ func (r *Runner) spawn(ctx context.Context, h Herdr, t model.Task, run model.Run
 	if err := h.Run(ctx, created.Pane, command); err != nil {
 		return failSpawn(model.RunRunning, err.Error(), r.closeSpawned(ctx, h, t, pane))
 	}
-	if cur, ok, err := r.o.Store.CurrentRun(ctx, t.Number); err == nil && (!ok || cur.ID != run.ID || cur.State != model.RunRunning) {
+	cur, ok, err := r.o.Store.CurrentRun(ctx, t.Number)
+	if err != nil {
+		// The run may have been killed while its command was typed: nothing says it started until the store does.
+		return failSpawn(model.RunRunning, "could not confirm the run: "+err.Error(), r.closeSpawned(ctx, h, t, pane))
+	}
+	if !ok || cur.ID != run.ID || cur.State != model.RunRunning {
 		// A kill took the run while its command was typed: no worker stays, and nothing says it started.
 		r.closeSpawned(ctx, h, t, pane)
 		return false

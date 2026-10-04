@@ -118,8 +118,8 @@ func TestKillClosesAndBlocksWhenReadingPaneProcessesFails(t *testing.T) {
 	f.herdr.Fail("Processes", errors.New("process list failed"))
 
 	got, err := r.Kill(f.ctx, store.Actor{}, task.Number)
-	if err != nil {
-		t.Fatalf("Kill after Processes failure: %v", err)
+	if want := fmt.Sprintf("T%d is blocked, but its processes could not be read", task.Number); err == nil || err.Error() != want {
+		t.Fatalf("Kill after Processes failure: error = %v, want %q: nothing was signalled, so the kill is not verified", err, want)
 	}
 	if got.Status != model.StatusBlocked || f.run(task.Number).State != model.RunKilled || !reflect.DeepEqual(f.herdr.Closed(), []string{run.Pane}) {
 		t.Fatalf("returned task = %#v; run = %#v; closed = %#v, want blocked killed task and closed pane", got, f.run(task.Number), f.herdr.Closed())
@@ -317,6 +317,27 @@ func TestKillReturnsAnErrorAndWritesNothingWhenHerdrCannotBeAsked(t *testing.T) 
 				return f.runnerWith(nil)
 			},
 		},
+		{
+			name: "DESK_HERDR names no usable herdr while the runner is paused",
+			want: `DESK_HERDR "herdr" is not an absolute path`,
+			runner: func(t *testing.T, f *fixture) *runner.Runner {
+				t.Setenv("DESK_HERDR", "herdr")
+				r := f.runnerWith(nil)
+				if err := r.Pause(f.ctx, store.Actor{}, true); err != nil {
+					t.Fatalf("pause: %v", err)
+				}
+				return r
+			},
+		},
+		{
+			name: "DESK_HERDR names no usable herdr while the runner is off",
+			want: `DESK_HERDR "herdr" is not an absolute path`,
+			runner: func(t *testing.T, f *fixture) *runner.Runner {
+				t.Setenv("DESK_HERDR", "herdr")
+				f.config.Runner.Enabled = false
+				return f.runnerWith(nil)
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture(t, "", "in-place")
@@ -324,7 +345,7 @@ func TestKillReturnsAnErrorAndWritesNothingWhenHerdrCannotBeAsked(t *testing.T) 
 			before := f.task(task.Number)
 			r := tc.runner(t, f)
 
-			if _, err := r.Kill(f.ctx, store.Actor{}, task.Number); err == nil || !strings.Contains(err.Error(), tc.want) {
+			if _, err := r.Kill(f.ctx, store.Actor{}, task.Number); err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), "%!") {
 				t.Fatalf("Kill without reachable herdr error = %v, want an error holding %q", err, tc.want)
 			}
 			if got := f.run(task.Number); !reflect.DeepEqual(got, run) {
