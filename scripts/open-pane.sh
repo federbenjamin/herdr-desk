@@ -1,6 +1,6 @@
 #!/bin/sh
-# Opens a desk pane: `board` focuses the pane titled "desk" in this workspace when one is open
-# and opens it otherwise; `capture` opens the capture popup.
+# Opens a desk pane: `board` focuses this plugin's open board pane in this workspace when one is
+# open and opens it otherwise; `capture` opens the capture popup.
 set -u
 
 entrypoint="${1:?usage: open-pane.sh board|capture}"
@@ -13,7 +13,7 @@ case "$entrypoint" in
     out=$("$herdr_bin" plugin pane open --plugin "$plugin_id" --entrypoint capture --focus 2>&1)
     status=$?
     case "$out" in
-      *"popup already open"*) exit 0 ;;
+      *"popup pane is already open"*) exit 0 ;;
     esac
     [ -n "$out" ] && printf '%s\n' "$out"
     exit "$status"
@@ -25,18 +25,36 @@ case "$entrypoint" in
     ;;
 esac
 
+# herdr starts a plugin's panes in the plugin's folder and lists a pane's cwd with symlinks
+# resolved. A title plugin rewrites the label; the cwd stays.
+root=$(cd "$(dirname "$0")/.." && pwd -P)
+
+# A list that fails is not an empty one: its error and exit status end the script, and no pane opens.
 if [ -n "${HERDR_WORKSPACE_ID:-}" ]; then
-  panes=$("$herdr_bin" pane list --workspace "$HERDR_WORKSPACE_ID" 2>/dev/null) || panes=""
+  panes=$("$herdr_bin" pane list --workspace "$HERDR_WORKSPACE_ID") || exit
 else
-  panes=$("$herdr_bin" pane list 2>/dev/null) || panes=""
+  panes=$("$herdr_bin" pane list) || exit
 fi
 
-pane_id=$(printf '%s' "$panes" | grep -o '"label":"desk","pane_id":"[^"]*"' | head -n 1 |
-  sed 's/.*"pane_id":"\([^"]*\)"/\1/')
+# herdr writes a pane's keys in order: "agent" (an agent's pane only), "cwd", then "pane_id". An agent's
+# pane in the plugin's folder is the user's, never the board.
+candidates=$(printf '%s' "$panes" | grep -oE '"(agent|cwd|pane_id)":"[^"]*"' |
+  awk -F'"' -v root="$root" '
+    $2 == "agent" { agent = 1; next }
+    $2 == "cwd" { m = ($4 == root && !agent); next }
+    { if (m) print $4; agent = 0; m = 0 }')
 
-if [ -n "$pane_id" ]; then
-  # herdr has no focus-by-id: zooming on focuses the pane, zooming off keeps the focus.
-  "$herdr_bin" pane zoom "$pane_id" --on >/dev/null 2>&1 || true
-  exec "$herdr_bin" pane zoom "$pane_id" --off
-fi
+# herdr focuses by id only a pane a plugin owns and answers plugin_pane_not_found for any other, so a
+# shell in the plugin's folder refuses the focus and the next pane is tried. Any other failure ends the
+# script with its status and error, and opens no pane. When none takes the focus, the board opens.
+for pane_id in $candidates; do
+  err=$("$herdr_bin" plugin pane focus "$pane_id" 2>&1 >&3)
+  status=$?
+  [ "$status" -eq 0 ] && exit 0
+  case "$err" in
+    *'"plugin_pane_not_found"'*) continue ;;
+  esac
+  [ -n "$err" ] && printf '%s\n' "$err" >&2
+  exit "$status"
+done 3>&1
 exec "$herdr_bin" plugin pane open --plugin "$plugin_id" --entrypoint board --focus

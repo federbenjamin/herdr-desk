@@ -14,6 +14,7 @@ description: Use the desk CLI to read, add, and update the user's tasks, and to 
 - Propose new work with `--thread agent`. It lands in the user's inbox. It does not start anything. Do not set the thread `agent` on a task that is already `ready`: that is `not-allowed`.
 - Never kill a run (`desk runs kill`) and never pause or resume the runner (`desk runner pause`, `desk runner resume`). They are the user's acts; an agent gets `not-allowed`.
 - Never edit a task's title or notes to answer a question. Write a note instead.
+- Never run bare `desk` or `desk capture` on a terminal. The board and the capture popup are the user's: they take the terminal until a key ends them. Read tasks with `desk list --json`.
 
 ## When the runner started you
 

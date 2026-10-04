@@ -2,9 +2,29 @@ package main
 
 import (
 	"errors"
+	"os"
 	"strings"
 	"testing"
 )
+
+func TestIsTerminalIsFalseForNullDeviceAndAFile(t *testing.T) {
+	devNull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer devNull.Close()
+	if isTerminal(devNull) {
+		t.Errorf("isTerminal(%s) = true, want false: it is a character device, not a terminal", os.DevNull)
+	}
+	file, err := os.CreateTemp(t.TempDir(), "not-a-terminal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	if isTerminal(file) {
+		t.Error("isTerminal(a regular file) = true, want false")
+	}
+}
 
 func TestWorkingDirWarnsWhenTheDirectoryCannotBeRead(t *testing.T) {
 	var stderr strings.Builder

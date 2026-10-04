@@ -49,6 +49,24 @@ func TestValidIsolationAcceptsOnlyPublishedValues(t *testing.T) {
 	}
 }
 
+func TestIsolationsListsTheValidOnesInOrderAndIsACopy(t *testing.T) {
+	t.Parallel()
+
+	got := model.Isolations()
+	if want := []string{"", "self", "worktree", "in-place"}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("Isolations() = %q, want %q", got, want)
+	}
+	for _, value := range got {
+		if !model.ValidIsolation(value) {
+			t.Errorf("Isolations() holds %q, which ValidIsolation refuses", value)
+		}
+	}
+	got[1] = "container"
+	if model.ValidIsolation("container") || model.Isolations()[1] != "self" {
+		t.Error("changing the returned slice changed the isolations")
+	}
+}
+
 func TestOnMergedStatusMapsReviewAndDoneOnly(t *testing.T) {
 	t.Parallel()
 

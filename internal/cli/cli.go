@@ -24,14 +24,15 @@ import (
 
 // Env is what a command reads from and writes to in place of the process.
 type Env struct {
-	Stdin    io.Reader
-	Stdout   io.Writer
-	Stderr   io.Writer
-	Getenv   func(string) string
-	Cwd      string
-	StdinTTY bool
-	Spawn    func(config.Paths) error               // starts the daemon; nil → never (tests)
-	Exec     func(path string, argv []string) error // replaces the process; nil → syscall.Exec with the process's environment
+	Stdin     io.Reader
+	Stdout    io.Writer
+	Stderr    io.Writer
+	Getenv    func(string) string
+	Cwd       string
+	StdinTTY  bool
+	StdoutTTY bool
+	Spawn     func(config.Paths) error               // starts the daemon; nil → never (tests)
+	Exec      func(path string, argv []string) error // replaces the process; nil → syscall.Exec with the process's environment
 }
 
 // The exit codes.

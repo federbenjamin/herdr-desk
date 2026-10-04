@@ -3,6 +3,7 @@ package model
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -137,15 +138,14 @@ func ValidSessionID(s string) bool {
 	return s != "." && s != ".." && sessionIDRe.MatchString(s)
 }
 
-// ValidIsolation reports whether s is "", self, worktree, or in-place. config.Validate, AddRoot, and the store
-// all check an isolation with it; internal/store does not import internal/config.
-func ValidIsolation(s string) bool {
-	switch s {
-	case "", "self", "worktree", "in-place":
-		return true
-	}
-	return false
-}
+var isolations = []string{"", "self", "worktree", "in-place"}
+
+// Isolations returns every isolation in order: "", self, worktree, in-place. The board's I key cycles through it.
+func Isolations() []string { return slices.Clone(isolations) }
+
+// ValidIsolation reports whether s is one of Isolations. config.Validate, AddRoot, and the store all check an
+// isolation with it; internal/store does not import internal/config.
+func ValidIsolation(s string) bool { return slices.Contains(isolations, s) }
 
 // OnMergedStatus maps a runner.on_merged value to its status: "" and "review" give StatusReview, "done"
 // gives StatusDone, and any other value gives false. config.Validate and store.Open both parse with it.

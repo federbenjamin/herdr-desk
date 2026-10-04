@@ -25,6 +25,15 @@ const (
 	MethodBackupRun    = "backup.run" // unix socket only
 )
 
+// The values of Status.RunnerState.
+const (
+	RunnerStateOff      = "off"
+	RunnerStateOn       = "on"
+	RunnerStatePaused   = "paused"
+	RunnerStateNoRouter = "no-router"
+	RunnerStateNoHerdr  = "no-herdr"
+)
+
 // maxBody is the largest request body the server reads.
 const maxBody = 1 << 20
 
@@ -103,6 +112,9 @@ type (
 		Number int          `json:"number"`
 		Op     model.StepOp `json:"op"`
 	}
+	sessionRequest struct {
+		Session string `json:"session"`
+	}
 	killRequest struct {
 		Actor store.Actor `json:"actor"`
 		Task  int         `json:"task"`
@@ -110,9 +122,6 @@ type (
 	pauseRequest struct {
 		Actor  store.Actor `json:"actor"`
 		Paused bool        `json:"paused"`
-	}
-	sessionRequest struct {
-		Session string `json:"session"`
 	}
 	empty struct{}
 )

@@ -7,25 +7,29 @@ import (
 	"io"
 	"os"
 
+	"github.com/charmbracelet/x/term"
+
 	"github.com/federbenjamin/desk/internal/cli"
 	"github.com/federbenjamin/desk/internal/daemon"
 )
 
 func main() {
-	tty := false
-	if fi, err := os.Stdin.Stat(); err == nil {
-		tty = fi.Mode()&os.ModeCharDevice != 0
-	}
+	stdinTTY, stdoutTTY := isTerminal(os.Stdin), isTerminal(os.Stdout)
 	os.Exit(cli.Run(context.Background(), os.Args[1:], cli.Env{
-		Stdin:    os.Stdin,
-		Stdout:   os.Stdout,
-		Stderr:   os.Stderr,
-		Getenv:   os.Getenv,
-		Cwd:      workingDir(os.Getwd, os.Stderr),
-		StdinTTY: tty,
-		Spawn:    daemon.Spawn,
+		Stdin:     os.Stdin,
+		Stdout:    os.Stdout,
+		Stderr:    os.Stderr,
+		Getenv:    os.Getenv,
+		Cwd:       workingDir(os.Getwd, os.Stderr),
+		StdinTTY:  stdinTTY,
+		StdoutTTY: stdoutTTY,
+		Spawn:     daemon.Spawn,
 	}))
 }
+
+// isTerminal reports whether f is a terminal: one the terminal's own ioctl answers for, so /dev/null and other
+// character devices are not.
+func isTerminal(f *os.File) bool { return term.IsTerminal(f.Fd()) }
 
 // workingDir is the process's working directory. When it cannot be read, a task added here gets no project, so
 // the user is told why.

@@ -36,7 +36,8 @@ The global `/build` skill holds the process. This file holds what is true only o
 - **Docs**: `README.md` documents every command; `profiles/claude-code/skills/desk/SKILL.md` is
   what an agent may do. A change to a command or flag updates both in the same diff, unless the
   brief gives the file to another part.
-- **No runtime UI** in this repo until the board (U3).
+- **Board logic lives in `State.Update`** (`internal/board`), a pure function of a `State` and a message
+  that returns effects. A rule of the board is tested there; `Run` and `Capture` only run the effects.
 - **Shell**: `scripts/*.sh` and `scripts/e2e/*.sh` pass `shellcheck`.
 
 ## fixer
@@ -51,12 +52,20 @@ The global `/build` skill holds the process. This file holds what is true only o
   and no simulator.
 - Each script builds its own `desk` into a temp folder, runs real processes there, and removes
   the folder on exit. A script that fails prints `E2E FAIL: <reason>` on stderr.
-- Tools the scripts need: `go`, `git`, `jq`, `curl`, `python3`, `tar`, `shasum`, and for three of
-  them `claude` (H14, H16) and `herdr` (H15).
+- Tools the scripts need: `go`, `git`, `jq`, `curl`, `python3`, `tar`, `shasum`, `tmux` (H17 to
+  H24 drive the board in a terminal on a private `tmux -L` server), `sqlite3` (H24 seeds a run row),
+  and for some of them `claude` (H14, H16) and `herdr` (H15, H25).
 - Run every claim with the sandbox off: the scripts open unix sockets and a TCP port on
   127.0.0.1, H9 downloads goreleaser through `go run`, and H16 starts a short `claude -p` run.
 - H15 links this tree into the running herdr as a disabled plugin and unlinks it. It refuses to
   run when a plugin with the id `desk` is already installed; that is `fail (env)`.
+- H25 opens and closes panes in a real herdr. Run it in a separate named herdr session, never in one a person
+  is working in (the operator's ruling): start `herdr --session <name> server`, open one workspace in it
+  (`HERDR_SOCKET_PATH=<that session's socket> herdr workspace create --cwd <a folder> --focus`), run
+  `HERDR_SOCKET_PATH=<that session's socket> bash scripts/e2e/h25-herdr-panes.sh`, then
+  `herdr session stop <name>` and `herdr session delete <name>`. It links a temp copy of the manifest under the
+  id `desk-e2e`, never touches the installed `desk` plugin, its binary, or its home, closes only the panes that
+  run in its temp plugin folder, and unlinks `desk-e2e` on exit.
 - The runner's claims are `r01-spawn.sh` to `r12-real-claude.sh` (H1 to H12 of U2), built on `lib.sh` and
   `runner-lib.sh`. `r01` to `r10` use a fake `herdr` (`fake-herdr.py`) and two stubs, and need no `herdr` or
   `claude`. `r09` takes over a minute (`max_run_minutes = 1`).
