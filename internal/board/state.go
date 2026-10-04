@@ -296,13 +296,11 @@ func (s State) failed(m Failed) (State, []Effect) {
 func (s State) typed(e Effect) (State, unsaved, bool) {
 	switch e := e.(type) {
 	case SetTask:
-		// The SetTask a failure names is the value ctrl+s emitted, so its Notes is the pointer the save holds.
-		i := slices.IndexFunc(s.sent, func(x sent) bool { return x.notes == e.Patch.Notes })
-		if i < 0 {
+		var x sent
+		var ok bool
+		if s, x, ok = s.unsent(e); !ok {
 			return s, unsaved{}, false
 		}
-		x := s.sent[i]
-		s.sent = slices.Concat(s.sent[:i], s.sent[i+1:])
 		return s, unsaved{task: x.task, text: *x.notes, from: x.from}, true
 	case Rearm:
 		if e.Answer != "" {
@@ -312,9 +310,28 @@ func (s State) typed(e Effect) (State, unsaved, bool) {
 	return s, unsaved{}, false
 }
 
+// unsent drops from s.sent the notes save that the SetTask e carried, and returns it.
+func (s State) unsent(e SetTask) (State, sent, bool) {
+	// The SetTask an answer names is the value ctrl+s emitted, so its Notes is the pointer the save holds.
+	i := slices.IndexFunc(s.sent, func(x sent) bool { return x.notes == e.Patch.Notes })
+	if i < 0 {
+		return s, sent{}, false
+	}
+	x := s.sent[i]
+	s.sent = slices.Concat(s.sent[:i], s.sent[i+1:])
+	return s, x, true
+}
+
+// wrote drops the notes save that the write e carried, once e has succeeded and so can no longer fail.
+func (s State) wrote(e Effect) State {
+	if e, ok := e.(SetTask); ok {
+		s, _, _ = s.unsent(e)
+	}
+	return s
+}
+
 // held drops the notes saves whose text the home holds for their task in tasks: a late failure of one would give
-// back nothing the home lacks. It keeps s.sent from growing with every save that lands. A snapshot is not the
-// home's text now, so an offline Loaded drops none.
+// back nothing the home lacks. A snapshot is not the home's text now, so an offline Loaded drops none.
 func (s State) held(tasks []model.Task) State {
 	s.sent = slices.DeleteFunc(slices.Clone(s.sent), func(x sent) bool {
 		return slices.ContainsFunc(tasks, func(t model.Task) bool { return t.Number == x.task && t.Notes == *x.notes })

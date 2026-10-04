@@ -120,8 +120,20 @@ func (m runModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		msg, next = Tick{}, m.timer()
 	}
 	var eff []Effect
-	m.s, eff = m.s.Update(msg)
+	m.s, eff = feed(m.s, msg)
 	return m, tea.Batch(m.x.cmds(m.ctx, eff), next)
+}
+
+// wrote is the executor's answer to a write that succeeded, with the write.
+type wrote struct{ effect Effect }
+
+// feed applies one message of Run's program to s. A write that succeeded reaches s as a Tick, once s has dropped
+// the notes save it carried, which can no longer fail.
+func feed(s State, msg tea.Msg) (State, []Effect) {
+	if w, ok := msg.(wrote); ok {
+		s, msg = s.wrote(w.effect), Tick{}
+	}
+	return s.Update(msg)
 }
 
 func (m runModel) View() tea.View {
@@ -188,15 +200,18 @@ func (x *executor) cmds(ctx context.Context, eff []Effect) tea.Cmd {
 }
 
 // answer runs one effect. A failure's error names the effect, so State can tell which outstanding write or
-// refresh it answers.
+// refresh it answers, and a write that succeeded is a wrote that names it.
 func (x *executor) answer(ctx context.Context, e Effect) tea.Msg {
 	msg := x.run(ctx, e)
-	if f, ok := msg.(Failed); ok {
+	switch m := msg.(type) {
+	case Failed:
 		var named effectErr
-		if !errors.As(f.Err, &named) {
-			f.Err = effectErr{effect: e, err: f.Err}
+		if !errors.As(m.Err, &named) {
+			m.Err = effectErr{effect: e, err: m.Err}
 		}
-		return f
+		return m
+	case Tick:
+		return wrote{effect: e}
 	}
 	return msg
 }

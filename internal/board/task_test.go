@@ -460,6 +460,35 @@ func TestTaskPageANotesSaveTheHomeHoldsIsNotGivenBack(t *testing.T) {
 	}
 }
 
+func TestTaskPageNotesSavesThatLandBeforeOneRefreshAreNotKept(t *testing.T) {
+	task := model.Task{Number: 31, Title: "Two saves, one refresh", Notes: "draft", Status: model.StatusOpen}
+	home := &fakeHome{only: map[string]bool{"SetTask": true}}
+	s := w4TaskPage(t, 90, task, nil)
+	s, _ = s.Update(press('e'))
+	s, _ = s.Update(tea.PasteMsg{Content: " two"})
+	s, first := s.Update(ctrl('s'))
+	s, _ = s.Update(press('e'))
+	s, _ = s.Update(tea.PasteMsg{Content: " three"})
+	s, second := s.Update(ctrl('s'))
+	if n := board.Sent(s); n != 2 {
+		t.Fatalf("saves in flight = %d, want 2", n)
+	}
+	s, effects := board.Feed(s, board.Answer(home, first[0]))
+	wantEffects(t, effects, []board.Effect{board.Refresh{}, board.LoadTask{Task: 31}})
+	s, effects = board.Feed(s, board.Answer(home, second[0]))
+	wantEffects(t, effects, nil)
+	// The refresh shows only the last save's text, never the first's.
+	last := task
+	last.Notes = "draft three"
+	s, _ = s.Update(board.Loaded{Data: board.Data{Tasks: []model.Task{last}}})
+	if n := board.Sent(s); n != 0 {
+		t.Fatalf("saves kept after both landed = %d, want 0", n)
+	}
+	if calls := home.unscriptedCalls(); len(calls) != 0 {
+		t.Fatalf("unscripted calls = %v", calls)
+	}
+}
+
 func TestTaskPageNotesSaveWarnsWhenTheNotesChangedWhileEditing(t *testing.T) {
 	task := model.Task{Number: 22, Title: "Shared notes", Notes: "mine", Status: model.StatusOpen}
 	s := w4TaskPage(t, 90, task, nil)
