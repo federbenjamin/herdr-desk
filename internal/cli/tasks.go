@@ -144,9 +144,9 @@ func listFilter(ready, open, done, archived, all bool) store.Filter {
 }
 
 // listProject resolves a -p value the way add does (model.ResolveProject). The known projects are every task's
-// on the home. Offline they are those of the whole snapshot, tl, which holds live tasks only: a name none of
-// them carries may still be a project the home knows from a done task, so it is kept as it is, and since a
-// stored project is never a bare name, the list is empty rather than refused.
+// on the home. Offline they are those of the whole snapshot, tl, which holds live tasks only: a bare name none
+// of them carries may still be a project the home knows from a done task, so it is kept as it is, and since a
+// stored project is never a bare name, the list is empty rather than refused. Any other refusal stands.
 func (a *app) listProject(c *api.Client, project string, tl api.TaskList, all bool) (string, error) {
 	project, err := a.projectArg(project)
 	if err != nil || project == "" || filepath.IsAbs(project) {
@@ -165,7 +165,8 @@ func (a *app) listProject(c *api.Client, project string, tl api.TaskList, all bo
 		known = append(known, t.Project)
 	}
 	resolved, err := model.ResolveProject(project, known)
-	if tl.Offline && !slices.ContainsFunc(known, func(p string) bool { return p != "" && filepath.Base(p) == project }) {
+	bare := !strings.ContainsRune(project, filepath.Separator)
+	if tl.Offline && bare && !slices.ContainsFunc(known, func(p string) bool { return p != "" && filepath.Base(p) == project }) {
 		return project, nil
 	}
 	return resolved, err

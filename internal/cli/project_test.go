@@ -115,6 +115,9 @@ func TestOfflineListProjectResolvesNamesOverTheWholeSnapshotAndNeverRefusesWhatI
 	home.Stop()
 
 	requireRefusal(t, runDesk(t, getenv, cwd, "", "list", "--ready", "-p", "delta"), "list", model.CodeUnknownProject, 1)
+	for _, args := range [][]string{{"list", "-p", "projects/alpha"}, {"list", "--ready", "-p", "no/such"}} {
+		requireRefusal(t, runDesk(t, getenv, cwd, "", args...), "list", model.CodeUnknownProject, 1)
+	}
 
 	for _, test := range []struct {
 		args []string
