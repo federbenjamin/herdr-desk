@@ -45,7 +45,8 @@ func runnerHome(t *testing.T, listen bool, worker []string) (*testutil.Home, str
 
 func startLiveRun(t *testing.T, home *testutil.Home, root, title string) (int, model.Run) {
 	t.Helper()
-	task := addTask(t, home, title, "--status", "ready", "--thread", "agent", "--root", root, "--isolation", "in-place", "--model", "test-model")
+	task := addTask(t, home, title, "--thread", "agent")
+	requireSuccess(t, runHomeDesk(t, home, "set", fmt.Sprintf("T%d", task), "ready", "--root", root, "--isolation", "in-place", "--model", "test-model"))
 	deadline := time.NewTimer(2 * time.Second)
 	defer deadline.Stop()
 	tick := time.NewTicker(10 * time.Millisecond)
@@ -143,8 +144,8 @@ func TestRunnerStatusAndControlShowLiveCapacityAndRejectAgents(t *testing.T) {
 	}
 	paused := runHomeDesk(t, home, "runner", "pause")
 	requireSuccess(t, paused)
-	if paused.stdout != "runner paused\n" {
-		t.Fatalf("runner pause = %q, want paused state", paused.stdout)
+	if paused.stdout != "runner paused · 1/2 live\n" {
+		t.Fatalf("runner pause = %q, want paused state and live capacity", paused.stdout)
 	}
 	pausedStatus := runHomeDesk(t, home, "runner", "status")
 	requireSuccess(t, pausedStatus)
@@ -153,8 +154,8 @@ func TestRunnerStatusAndControlShowLiveCapacityAndRejectAgents(t *testing.T) {
 	}
 	resumed := runHomeDesk(t, home, "runner", "resume")
 	requireSuccess(t, resumed)
-	if resumed.stdout != "runner on\n" {
-		t.Fatalf("runner resume = %q, want prior on state", resumed.stdout)
+	if resumed.stdout != "runner on · 1/2 live\n" {
+		t.Fatalf("runner resume = %q, want on state and live capacity", resumed.stdout)
 	}
 	for _, action := range []string{"pause", "resume"} {
 		denied := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"runner", action}, "", map[string]string{"DESK_SESSION": "agent-session"}, nil)
@@ -169,8 +170,8 @@ func TestRunsKillAndRunnerPauseReachTheHomeFromAClientMachine(t *testing.T) {
 
 	paused := runDeskWithEnv(t, client, t.TempDir(), []string{"runner", "pause"}, "", nil, nil)
 	requireSuccess(t, paused)
-	if paused.stdout != "runner paused\n" {
-		t.Fatalf("client runner pause = %q, want paused state", paused.stdout)
+	if paused.stdout != "runner paused · 1/2 live\n" {
+		t.Fatalf("client runner pause = %q, want paused state and live capacity", paused.stdout)
 	}
 	killed := runDeskWithEnv(t, client, t.TempDir(), []string{"runs", "kill", fmt.Sprintf("T%d", task)}, "", nil, nil)
 	requireSuccess(t, killed)

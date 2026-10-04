@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -64,9 +65,13 @@ func (f *watchFixture) routerScript() string {
 }
 
 func (f *watchFixture) runner() *runner.Runner {
+	return f.runnerWithHerdr(f.herdr)
+}
+
+func (f *watchFixture) runnerWithHerdr(h runner.Herdr) *runner.Runner {
 	f.t.Helper()
 	return runner.New(runner.Options{
-		Store: f.store, Config: f.cfg, Paths: f.paths, Herdr: f.herdr, Exe: "/opt/desk/bin/desk",
+		Store: f.store, Config: f.cfg, Paths: f.paths, Herdr: h, Exe: "/opt/desk/bin/desk",
 		Now: func() time.Time { return f.now }, RouterTimeout: 100 * time.Millisecond, KillGrace: 10 * time.Millisecond,
 		Logf: func(format string, args ...any) { f.logs = append(f.logs, fmt.Sprintf(format, args...)) },
 	})
@@ -123,7 +128,7 @@ func TestTickBlocksAReportedBlockedSession(t *testing.T) {
 
 	r.Tick(f.ctx)
 	detail := f.task(task.Number)
-	if detail.Status != model.StatusBlocked || f.run(task.Number).State != model.RunEnded {
+	if detail.Task.Status != model.StatusBlocked || f.run(task.Number).State != model.RunEnded {
 		t.Fatalf("task = %#v; run = %#v, want blocked task and ended run", detail.Task, f.run(task.Number))
 	}
 	watchAssertRunnerNote(t, detail.History, run.ID, "")
@@ -150,12 +155,12 @@ func TestTickReviewsDoneOrIdleSessionsOnlyAfterTwoConsecutiveTicks(t *testing.T)
 			}
 			f.herdr.Set(run.Pane, run.Session, tc.status)
 			r.Tick(f.ctx)
-			if got := f.task(task.Number).Status; got != model.StatusStarted {
+			if got := f.task(task.Number).Task.Status; got != model.StatusStarted {
 				t.Fatalf("task after first %s tick = %q, want started", tc.status, got)
 			}
 			r.Tick(f.ctx)
 			detail := f.task(task.Number)
-			if detail.Status != model.StatusReview || f.run(task.Number).State != model.RunEnded {
+			if detail.Task.Status != model.StatusReview || f.run(task.Number).State != model.RunEnded {
 				t.Fatalf("task = %#v; run = %#v, want review task and ended run", detail.Task, f.run(task.Number))
 			}
 			watchAssertRunnerNote(t, detail.History, run.ID, tc.wantNote)
@@ -175,11 +180,11 @@ func TestTickResetsTheIdleCountWhenTheSessionWorksOrIsUnknown(t *testing.T) {
 			r.Tick(f.ctx)
 			f.herdr.Set(run.Pane, run.Session, "idle")
 			r.Tick(f.ctx)
-			if got := f.task(task.Number).Status; got != model.StatusStarted {
+			if got := f.task(task.Number).Task.Status; got != model.StatusStarted {
 				t.Fatalf("task after idle, %s, idle = %q, want started", reset, got)
 			}
 			r.Tick(f.ctx)
-			if got := f.task(task.Number).Status; got != model.StatusReview {
+			if got := f.task(task.Number).Task.Status; got != model.StatusReview {
 				t.Fatalf("task after second post-reset idle = %q, want review", got)
 			}
 		})
@@ -192,7 +197,7 @@ func TestTickDoesNotCountIdleForAPaneWithoutTheRunSession(t *testing.T) {
 	f.herdr.Set(run.Pane, "", "idle")
 	r.Tick(f.ctx)
 	r.Tick(f.ctx)
-	if got := f.task(task.Number).Status; got != model.StatusStarted {
+	if got := f.task(task.Number).Task.Status; got != model.StatusStarted {
 		t.Fatalf("task found only by pane id = %q, want started", got)
 	}
 }
@@ -203,7 +208,7 @@ func TestTickReviewsWhenThePaneClosesWithoutAHandBack(t *testing.T) {
 	f.herdr.Remove(run.Pane)
 	r.Tick(f.ctx)
 	detail := f.task(task.Number)
-	if detail.Status != model.StatusReview || f.run(task.Number).State != model.RunEnded {
+	if detail.Task.Status != model.StatusReview || f.run(task.Number).State != model.RunEnded {
 		t.Fatalf("task = %#v; run = %#v, want review task and ended run", detail.Task, f.run(task.Number))
 	}
 	watchAssertRunnerNote(t, detail.History, run.ID, "the pane closed without a hand-back")
@@ -215,16 +220,24 @@ func TestTickLeavesRunsAloneAfterPanesFailureAndRecoversOnTheNextTick(t *testing
 	task, run, r := f.start()
 	f.herdr.Set(run.Pane, run.Session, "blocked")
 	f.herdr.Fail("Panes", errors.New("list failed"))
+	before := f.task(task.Number)
+	beforeRun := f.run(task.Number)
 	r.Tick(f.ctx)
-	if got := f.task(task.Number).Status; got != model.StatusStarted {
+	if got := f.task(task.Number).Task.Status; got != model.StatusStarted {
 		t.Fatalf("task after Panes failure = %q, want started", got)
+	}
+	if got := f.run(task.Number); !reflect.DeepEqual(got, beforeRun) {
+		t.Fatalf("run after Panes failure = %#v, want unchanged %#v", got, beforeRun)
+	}
+	if got := f.task(task.Number).History; !reflect.DeepEqual(got, before.History) {
+		t.Fatalf("history after Panes failure = %#v, want unchanged %#v", got, before.History)
 	}
 	if got := strings.Join(f.logs, "\n"); !strings.Contains(got, "list failed") {
 		t.Fatalf("watch logs = %q, want Panes failure", got)
 	}
 	f.herdr.Fail("Panes", nil)
 	r.Tick(f.ctx)
-	if got := f.task(task.Number).Status; got != model.StatusBlocked {
+	if got := f.task(task.Number).Task.Status; got != model.StatusBlocked {
 		t.Fatalf("task after recovered Panes call = %q, want blocked", got)
 	}
 }
@@ -245,6 +258,9 @@ func TestTickDoesNotListPanesWithoutALiveRunAndStillStartsAnArmedTask(t *testing
 	if got := f.run(task.Number).State; got != model.RunRunning {
 		t.Fatalf("run after tick with no prior live runs = %q, want running", got)
 	}
+	if got := strings.Join(f.logs, "\n"); strings.Contains(got, "must not be called") {
+		t.Fatalf("watch called Panes without a live run: %q", got)
+	}
 }
 
 func TestTickWatchesLiveRunsWhenTheRunnerIsDisabled(t *testing.T) {
@@ -255,7 +271,7 @@ func TestTickWatchesLiveRunsWhenTheRunnerIsDisabled(t *testing.T) {
 	off := f.runner()
 	off.Tick(f.ctx)
 	off.Tick(f.ctx)
-	if got := f.task(task.Number).Status; got != model.StatusReview {
+	if got := f.task(task.Number).Task.Status; got != model.StatusReview {
 		t.Fatalf("task watched while disabled = %q, want review", got)
 	}
 }
@@ -270,7 +286,7 @@ func TestTickDoesNothingAfterTheWorkerHandsTheTaskBack(t *testing.T) {
 	before := f.task(task.Number)
 	r.Tick(f.ctx)
 	after := f.task(task.Number)
-	if f.run(task.Number).State != model.RunEnded || !reflect.DeepEqual(after.History, before.History) || after.Status != model.StatusReview {
+	if f.run(task.Number).State != model.RunEnded || !reflect.DeepEqual(after.History, before.History) || after.Task.Status != model.StatusReview {
 		t.Fatalf("task after hand-back and tick = %#v; run = %#v, want unchanged review task and ended run", after, f.run(task.Number))
 	}
 }
@@ -283,7 +299,7 @@ func TestTickStopsRunsPastTheConfiguredTimeLimit(t *testing.T) {
 	f.now = f.now.Add(2 * time.Minute)
 	r.Tick(f.ctx)
 	detail := f.task(task.Number)
-	if detail.Status != model.StatusBlocked || f.run(task.Number).State != model.RunKilled || !reflect.DeepEqual(f.herdr.Closed(), []string{run.Pane}) {
+	if detail.Task.Status != model.StatusBlocked || f.run(task.Number).State != model.RunKilled || !reflect.DeepEqual(f.herdr.Closed(), []string{run.Pane}) {
 		t.Fatalf("task = %#v; run = %#v; closed = %#v, want blocked killed run and closed pane", detail.Task, f.run(task.Number), f.herdr.Closed())
 	}
 	watchAssertRunnerNote(t, detail.History, run.ID, "stopped after 1 minutes (runner.max_run_minutes)")
