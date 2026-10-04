@@ -19,6 +19,8 @@ const (
 	MethodEventsAppend = "events.append"
 	MethodSessionView  = "session.view"
 	MethodRunsList     = "runs.list"
+	MethodRunsKill     = "runs.kill"
+	MethodRunnerPause  = "runner.pause"
 	MethodStatus       = "status"
 	MethodBackupRun    = "backup.run" // unix socket only
 )
@@ -61,6 +63,10 @@ type Status struct {
 	StartedTS time.Time            `json:"started_ts"`
 	RunnerOn  bool                 `json:"runner_on"`
 	Tasks     map[model.Status]int `json:"tasks"`
+	// RunnerState is off, paused, no-herdr, no-router, or on.
+	RunnerState  string `json:"runner_state"`
+	RunnerPaused bool   `json:"runner_paused"`
+	RunnerCap    int    `json:"runner_cap"` // runner.cap
 	// BackupTS is the last successful backup run, nil when none is recorded. BackupError is the error of the
 	// last attempt when it failed after that run, "" otherwise. Both come from the backup state file.
 	BackupTS    *time.Time `json:"backup_ts"`
@@ -95,6 +101,14 @@ type (
 		Actor  store.Actor  `json:"actor"`
 		Number int          `json:"number"`
 		Op     model.StepOp `json:"op"`
+	}
+	killRequest struct {
+		Actor store.Actor `json:"actor"`
+		Task  int         `json:"task"`
+	}
+	pauseRequest struct {
+		Actor  store.Actor `json:"actor"`
+		Paused bool        `json:"paused"`
 	}
 	sessionRequest struct {
 		Session string `json:"session"`

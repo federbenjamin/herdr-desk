@@ -166,6 +166,7 @@ func applyProfile(cfg *config.Config, profile string) ([]string, error) {
 		cfg.Agent.Worker = []string{"claude", "--model", "{model}", "--permission-mode", "auto", "--session-id", "{session}", "--", "{message}"}
 	})
 	fill("session_env", cfg.Agent.SessionEnv != "", func() { cfg.Agent.SessionEnv = "CLAUDE_CODE_SESSION_ID" })
+	fill("models", len(cfg.Agent.Models) > 0, func() { cfg.Agent.Models = []string{"sonnet", "opus"} })
 	return lines, nil
 }
 

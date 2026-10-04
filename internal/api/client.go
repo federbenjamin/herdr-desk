@@ -299,3 +299,17 @@ func (c *Client) Backup(ctx context.Context) (backup.Result, error) {
 	err := c.call(ctx, MethodBackupRun, empty{}, &r)
 	return r, err
 }
+
+// KillRun stops the task's live run and blocks the task.
+func (c *Client) KillRun(ctx context.Context, a store.Actor, task int) (model.Task, error) {
+	var t model.Task
+	err := c.call(ctx, MethodRunsKill, killRequest{Actor: a, Task: task}, &t)
+	return t, err
+}
+
+// PauseRunner pauses or resumes the runner and returns the status after.
+func (c *Client) PauseRunner(ctx context.Context, a store.Actor, paused bool) (Status, error) {
+	var s Status
+	err := c.call(ctx, MethodRunnerPause, pauseRequest{Actor: a, Paused: paused}, &s)
+	return s, err
+}
