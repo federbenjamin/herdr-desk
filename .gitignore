@@ -1,4 +1,5 @@
 /desk
+/bin/
 /dist/
 *.db
 *.db-wal

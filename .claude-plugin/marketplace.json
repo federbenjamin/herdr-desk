@@ -1,0 +1,15 @@
+{
+  "name": "desk",
+  "description": "desk: a task board and session journal for people who work with coding agents.",
+  "owner": {
+    "name": "federbenjamin"
+  },
+  "plugins": [
+    {
+      "name": "desk",
+      "source": "./profiles/claude-code",
+      "description": "Records this session in desk's journal and teaches the agent how to use desk.",
+      "category": "productivity"
+    }
+  ]
+}
