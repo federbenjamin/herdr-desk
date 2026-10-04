@@ -781,7 +781,8 @@ type Options struct {
 // per thing it wrote or skipped. It never prompts.
 func Run(ctx context.Context, o Options) error
 
-// WriteHerdrKeys edits herdr's config text. It returns the new text, the keys it bound, and the keys it left
+// WriteHerdrKeys edits herdr's config text. It returns the new text, the keys its block binds in that text (the same
+// list on a second run, whose text is unchanged), and the keys it left
 // because another binding holds them. force replaces those bindings.
 func WriteHerdrKeys(configText string, force bool) (out string, bound []string, skipped []string)
 
