@@ -333,6 +333,13 @@ func BranchOf(tags []string) string
 // ValidSessionID reports whether s can name a session: ^[A-Za-z0-9._-]{1,128}$ and neither "." nor "..".
 func ValidSessionID(s string) bool
 
+// ValidIsolation reports whether s is "", self, worktree, or in-place. config.Validate, AddRoot, and the store
+// all check an isolation with it; internal/store does not import internal/config.
+func ValidIsolation(s string) bool
+// OnMergedStatus maps a runner.on_merged value to its status: "" and "review" give StatusReview, "done"
+// gives StatusDone, and any other value gives false. config.Validate and store.Open both parse with it.
+func OnMergedStatus(s string) (Status, bool)
+
 type Run struct {
 	ID        int64     `json:"id"`
 	Task      int       `json:"task"`
@@ -484,8 +491,6 @@ func (c Config) Save(path string) error // 0600, written to a temp file then ren
 // WriteFileAtomic writes b to path at 0600 in a 0700 folder, through a temp file and a rename. The config, the
 // client's snapshot, and the backup export all write through it.
 func WriteFileAtomic(path string, b []byte) error
-// ValidIsolation reports whether s is "", self, worktree, or in-place. The store checks a task's isolation with it.
-func ValidIsolation(s string) bool
 func (c Config) Validate() error        // on_merged, isolation values, listen and client.home as host:port, listen never a wildcard host
 func (c Config) IsClient() bool         // Client.Home != ""
 
@@ -573,24 +578,25 @@ func (s *Store) ExportEvents(ctx context.Context, w io.Writer) (int, error)     
 ### `internal/journal`
 
 ```go
+// The json tags are the keys `desk session --json` prints, in model's snake_case style.
 type Line struct {
-	EventID  int64        // 0 for a task line
-	Task     int          // 0 when the line is about no task
-	TS       time.Time
-	Scope    string       // a branch name, or "session"
-	Text     string
-	Ref      string
-	Status   model.Status // task lines
-	Who      model.Who    // decision lines
-	Tags     []string     // tags other than branch:<b>
-	Replaces int64        // decision lines
-	Hidden   bool         // true only in a view built with all=true, on a line the default view leaves out
+	EventID  int64        `json:"event_id"` // 0 for a task line
+	Task     int          `json:"task"`     // 0 when the line is about no task
+	TS       time.Time    `json:"ts"`
+	Scope    string       `json:"scope"` // a branch name, or "session"
+	Text     string       `json:"text"`
+	Ref      string       `json:"ref"`
+	Status   model.Status `json:"status"`   // task lines
+	Who      model.Who    `json:"who"`      // decision lines
+	Tags     []string     `json:"tags"`     // tags other than branch:<b>
+	Replaces int64        `json:"replaces"` // decision lines
+	Hidden   bool         `json:"hidden"`   // true only in a view built with all=true, on a line the default view leaves out
 }
 type View struct {
-	Session   string
-	Work      []Line
-	Todo      []Line
-	Decisions []Line
+	Session   string `json:"session"`
+	Work      []Line `json:"work"`
+	Todo      []Line `json:"todo"`
+	Decisions []Line `json:"decisions"`
 }
 
 // Build returns the session's view. With all=false, hidden lines are left out.
@@ -868,6 +874,7 @@ On a home whose daemon is not running, a command starts it (`Env.Spawn`) and wai
 - `scripts/fetch-or-build.sh`
 - `scripts/open-pane.sh`
 - `scripts/coverage.sh`
+- `scripts/checks.sh` — the one place the checks live
 - `scripts/e2e/**` — the hand-test scripts
 - `.goreleaser.yml`
 - `.github/workflows/**`
@@ -1041,7 +1048,7 @@ Before, for every line: the file or behaviour does not exist.
 3. `internal/model` holds the types, constants, and helpers of `## Public surface`, with no import outside the standard library; `internal/version.Version` is `"dev"` unless set at link time. (spec: Store; §Public surface)
 4. `internal/secretscan`: `Scanner` is a func type; `Builtin()` finds each of the five patterns and returns the pattern's name, never the match; `Command(argv)` passes the text on stdin and maps exit 0 to clean, 1 to the pattern `command`, anything else or a failed start to an error; `FromConfig` picks between them. (spec: Store; §Corrections 9)
 5. `internal/store.Open` creates the database (parent 0700, file 0600, WAL) with the five tables `events`, `tasks`, `steps`, `runs`, `sessions` as the spec's Store block writes them, changed only by corrections 11 and 12, through a numbered migration; opening an existing file changes nothing. (spec: Store)
-6. `AddTask`, `SetTask`, and `Step` each write one event and update `tasks`/`steps` in the same transaction; task numbers count up from 1; a patch that changes no field and carries no `Ref` writes no event and returns the task (a patch with only a `Ref` writes one `set` event); an unknown status, an isolation `config.ValidIsolation` rejects, and an unknown step op are returned as `bad-input`; step ids are `s1`, `s2`, … and are never reused; `ListTasks` returns the tasks `Filter.Match` accepts, and `Filter.Live` is true only for a filter that narrows the live board; `GetTask` returns the task and its events; `unknown-task`, `unknown-step`, `empty-title`, `unknown-project`, `bad-input` are returned as `*model.Refusal`; a known project is a project path some existing task carries, a `Project` that is not an absolute path is a bare name, and it resolves to the one known project with that base name, with none or several being `unknown-project`. (spec: Store, CLI)
+6. `AddTask`, `SetTask`, and `Step` each write one event and update `tasks`/`steps` in the same transaction; task numbers count up from 1; a patch that changes no field and carries no `Ref` writes no event and returns the task (a patch with only a `Ref` writes one `set` event); an unknown status, an isolation `model.ValidIsolation` rejects, and an unknown step op are returned as `bad-input`; step ids are `s1`, `s2`, … and are never reused; `ListTasks` returns the tasks `Filter.Match` accepts, and `Filter.Live` is true only for a filter that narrows the live board; `GetTask` returns the task and its events; `unknown-task`, `unknown-step`, `empty-title`, `unknown-project`, `bad-input` are returned as `*model.Refusal`; a known project is a project path some existing task carries, a `Project` that is not an absolute path is a bare name, and it resolves to the one known project with that base name, with none or several being `unknown-project`. (spec: Store, CLI)
 7. Policy in the write path: an agent actor setting or adding `ready` or `done` gets `not-allowed`, and with `AgentsMayArm` only `ready` is allowed; `review` with `Merged` writes the `OnMerged` status; the text fields of a write (title, notes, thread, step text, note and decision text, ref, tags) are joined and scanned once before the insert, a hit returns `secret-detected` naming the pattern and writes nothing, a scanner error returns `scan-failed` and writes nothing. (spec: The model, Store; Design 4)
 8. Journal events and reads: `Note`, `Decide`, `Merged`, `Compacted`, `Continues` each append one event with the actor's session, who, and run; `Note` and `Decide` carry the tags they are given and `Merged`, `Compacted`, `Continues` carry none; `Merged` with an empty branch, and `Continues` whose two ids are equal or fail `model.ValidSessionID`, return `bad-input`; `Continues` also records the link in the `sessions` table; `Decide` with `Replaces` naming no decision event returns `unknown-event`; `SessionEvents` returns the chain's events (cycle-guarded) plus every `merged` event, by id, and each task the chain created with `Created`, `DoneAt`, and `Tags`; `ListRuns` returns the `runs` rows (none until U2 writes them); `ExportEvents` writes every event as one JSON line, by id. (spec: Store, Journal)
 9. `internal/config`: `ResolvePaths` follows the XDG variables with the HOME fallbacks; `Load` of a missing file is `Default()`; `Save` writes 0600 through a rename and the saved text keeps a comment starting `WARNING:` directly above `agents_may_arm`; `Validate` refuses a wildcard `listen` host (empty, `0.0.0.0`, `::`), a bad `on_merged`, and a bad isolation; `AddRoot` and `RemoveRoot` edit the roots list; `ReadToken`, `WriteToken`, and `RotateToken` keep the token file at 0600. (spec: Config, Daemon and API)
@@ -1065,7 +1072,7 @@ Before, for every line: the file or behaviour does not exist.
 27. `profiles/claude-code/.claude-plugin/plugin.json` (name `desk`), `profiles/claude-code/hooks/hooks.json` (a `SessionStart` hook, matcher `startup|resume|clear|compact|fork`, command `desk hook start --format claude-code`), and `.claude-plugin/marketplace.json` (name `desk`, one plugin `desk` with source `./profiles/claude-code`). (spec: Profile)
 28. `.goreleaser.yml` builds darwin and linux for arm64 and amd64 with `CGO_ENABLED=0`, sets `internal/version.Version`, writes `checksums.txt`, and renders a cask for `federbenjamin/homebrew-tap` (`homebrew_casks`, with a post-install hook that removes the macOS quarantine attribute from the binary); `goreleaser check` exits 0; `.github/workflows/ci.yml` runs the repo's checks on pull requests and `release.yml` runs goreleaser on a `v*` tag. (spec: Release)
 29. `README.md` covers what desk is, the three installs (herdr with Claude Code, herdr with another agent and the three `[agent]` values, no herdr), the home and client model, every command, the config file, and how to run the daemon by hand or under launchd. (spec: Release)
-30. `scripts/coverage.sh` runs the tests with coverage and exits 1 when total statement coverage of `./internal/...` (without `internal/testutil`) is under 80% or `internal/store`, `internal/journal`, or `internal/secretscan` is under 90%; `.claude/build-steps.toml`'s `checks` is `go vet ./... && sh scripts/coverage.sh && test -z "$(gofmt -l .)" && shellcheck scripts/*.sh scripts/e2e/*.sh`, and its `exit_checks` is the same line with `go test ./...` in place of `sh scripts/coverage.sh`: a builder's tree holds its part alone, so the coverage gate can only pass once every part and every slice is merged; `ci.yml` runs the `checks` line. (operator instruction; spec: Release)
+30. `scripts/coverage.sh` runs the tests with coverage and exits 1 when total statement coverage of `./internal/...` (without `internal/testutil`) is under 80% or `internal/store`, `internal/journal`, or `internal/secretscan` is under 90%; `scripts/checks.sh` is the one place the checks live: it runs `go vet ./...`, then `sh scripts/coverage.sh`, then fails when `gofmt -l .` prints anything, then `shellcheck scripts/*.sh scripts/e2e/*.sh`; with `--no-coverage` it runs `go test ./...` in place of the coverage gate. `.claude/build-steps.toml`'s `checks` is `sh scripts/checks.sh` and its `exit_checks` is `sh scripts/checks.sh --no-coverage`: a builder's tree holds its part alone, so the coverage gate can only pass once every part and every slice is merged; `ci.yml` runs `sh scripts/checks.sh`. (operator instruction; spec: Release)
 
 ## Journal rules
 
