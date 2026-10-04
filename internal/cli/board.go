@@ -1,26 +1,17 @@
 package cli
 
 import (
-	"fmt"
+	"os/exec"
 	"time"
 
 	"github.com/spf13/cobra"
 
-	"github.com/federbenjamin/desk/internal/model"
+	"github.com/federbenjamin/desk/internal/api"
+	"github.com/federbenjamin/desk/internal/board"
 	"github.com/federbenjamin/desk/internal/store"
 )
 
-// boardSections are the static board's sections, each with its statuses in the order they are shown.
-var boardSections = []struct {
-	title    string
-	statuses []model.Status
-}{
-	{"NEEDS YOU", []model.Status{model.StatusBlocked, model.StatusReview}},
-	{"IN MOTION", []model.Status{model.StatusStarted}},
-	{"ON DECK", []model.Status{model.StatusReady, model.StatusOpen}},
-}
-
-// boardFlags makes bare `desk` print the static board.
+// boardFlags makes bare `desk` run the interactive board on a terminal and print the static board anywhere else.
 func (a *app) boardFlags(root *cobra.Command) {
 	var asJSON bool
 	root.Flags().BoolVar(&asJSON, "json", false, "print the board's TaskList as JSON")
@@ -28,6 +19,13 @@ func (a *app) boardFlags(root *cobra.Command) {
 		c, err := a.client()
 		if err != nil {
 			return err
+		}
+		if a.interactive(asJSON) {
+			o, err := a.boardOptions(c)
+			if err != nil {
+				return err
+			}
+			return board.Run(a.ctx, o)
 		}
 		tl, err := c.ListTasks(a.ctx, store.Filter{})
 		if err != nil {
@@ -48,9 +46,9 @@ func (a *app) boardFlags(root *cobra.Command) {
 			head = "desk · home · runner " + onOff(st.RunnerOn)
 		}
 		a.say("%s", head)
-		for _, s := range boardSections {
-			a.say("\n%s", s.title)
-			for _, st := range s.statuses {
+		for _, s := range board.Sections() {
+			a.say("\n%s", s.Title)
+			for _, st := range s.Statuses {
 				for _, t := range tl.Tasks {
 					if t.Status == st {
 						a.say("  %s", taskLine(t))
@@ -69,20 +67,35 @@ func onOff(on bool) string {
 	return "off"
 }
 
-// snapshotAge is how old the snapshot is: seconds under a minute, minutes under an hour, hours under 48 hours,
-// then days: 40s old, 5m old, 30h old, 2d old.
+// snapshotAge is how old the snapshot is, as board.Age prints it with " old" after it.
 func snapshotAge(ts *time.Time) string {
 	if ts == nil {
 		return "of unknown age"
 	}
-	d := time.Since(*ts)
-	switch {
-	case d < time.Minute:
-		return fmt.Sprintf("%ds old", int(d.Seconds()))
-	case d < time.Hour:
-		return fmt.Sprintf("%dm old", int(d.Minutes()))
-	case d < 48*time.Hour:
-		return fmt.Sprintf("%dh old", int(d.Hours()))
+	return board.Age(time.Since(*ts)) + " old"
+}
+
+// interactive is true when the board or the capture popup may take the terminal: stdin and stdout are both
+// terminals and the caller did not ask for JSON.
+func (a *app) interactive(asJSON bool) bool {
+	return a.env.StdinTTY && a.env.StdoutTTY && !asJSON
+}
+
+// boardOptions is what board.Run and board.Capture need on this machine.
+func (a *app) boardOptions(c *api.Client) (board.Options, error) {
+	cfg, err := a.config()
+	if err != nil {
+		return board.Options{}, err
 	}
-	return fmt.Sprintf("%dd old", int(d.Hours()/24))
+	herdr := a.env.Getenv("HERDR_BIN_PATH")
+	if herdr == "" {
+		herdr, _ = exec.LookPath("herdr")
+	}
+	return board.Options{
+		Home:   c,
+		IsHome: !cfg.IsClient(),
+		Herdr:  herdr,
+		In:     a.env.Stdin,
+		Out:    a.env.Stdout,
+	}, nil
 }

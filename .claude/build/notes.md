@@ -36,7 +36,8 @@ The global `/build` skill holds the process. This file holds what is true only o
 - **Docs**: `README.md` documents every command; `profiles/claude-code/skills/desk/SKILL.md` is
   what an agent may do. A change to a command or flag updates both in the same diff, unless the
   brief gives the file to another part.
-- **No runtime UI** in this repo until the board (U3).
+- **Board logic lives in `State.Update`** (`internal/board`), a pure function of a `State` and a message
+  that returns effects. A rule of the board is tested there; `Run` and `Capture` only run the effects.
 - **Shell**: `scripts/*.sh` and `scripts/e2e/*.sh` pass `shellcheck`.
 
 ## fixer
@@ -51,12 +52,18 @@ The global `/build` skill holds the process. This file holds what is true only o
   and no simulator.
 - Each script builds its own `desk` into a temp folder, runs real processes there, and removes
   the folder on exit. A script that fails prints `E2E FAIL: <reason>` on stderr.
-- Tools the scripts need: `go`, `git`, `jq`, `curl`, `python3`, `tar`, `shasum`, and for three of
-  them `claude` (H14, H16) and `herdr` (H15).
+- Tools the scripts need: `go`, `git`, `jq`, `curl`, `python3`, `tar`, `shasum`, `tmux` (H17 to
+  H24 drive the board in a terminal on a private `tmux -L` server), `sqlite3` (H24 seeds a run row),
+  and for some of them `claude` (H14, H16) and `herdr` (H15, H25).
 - Run every claim with the sandbox off: the scripts open unix sockets and a TCP port on
   127.0.0.1, H9 downloads goreleaser through `go run`, and H16 starts a short `claude -p` run.
 - H15 links this tree into the running herdr as a disabled plugin and unlinks it. It refuses to
   run when a plugin with the id `desk` is already installed; that is `fail (env)`.
+- H25 opens and closes panes in the running herdr, which the operator may be using. It links a temp
+  copy of the manifest under the id `desk-e2e`, never touches the installed `desk` plugin, its
+  binary, or its home, closes only the panes that run in its temp plugin folder, and unlinks
+  `desk-e2e` on exit. A pane it opens shows on the operator's screen: run it as few times as the
+  claim needs.
 - Nothing serves stale code: every script builds from the tree as it is.
 
 ## test-author

@@ -4,8 +4,7 @@ A task board for you and your agents, with a runner that turns a task you arm in
 in a herdr workspace, and a journal that gives every agent session a memory.
 
 Status: pre-release, under construction. This version has the store, the daemon, the CLI, the
-journal, and the packaging. The runner (`desk worker`) and the full-screen board come later; bare
-`desk` prints a static board for now.
+journal, the board, and the packaging. The runner (`desk worker`) comes later.
 
 ## What it is
 
@@ -142,7 +141,7 @@ daemon answers, so a script can ask whether one runs.
 
 | command | does |
 |---|---|
-| `desk` | a static board: `NEEDS YOU` (blocked, review), `IN MOTION` (started), `ON DECK` (ready, then open); first line `desk · home · runner on\|off`, or `desk · offline (snapshot <age>)` |
+| `desk` | on a terminal (stdin and stdout both terminals, no `--json`), the board, which stays open until `q`; anywhere else, and with `--json`, a static board: `NEEDS YOU` (blocked, review), `IN MOTION` (started), `ON DECK` (ready, then open); first line `desk · home · runner on\|off`, or `desk · offline (snapshot <age>)` |
 | `desk add -t <title> [-n <notes>] [-p <project>\|--desk] [--thread <name>] [--status <s>] [--tag <t>]… [--branch <b>]` | creates a task and prints `T<n>`. With no `-p` or `--desk` the project is the main checkout of the git repo you are in. `-p` takes an absolute directory or the bare name of a known project. When git cannot run (not on your PATH, a timeout), the add stops with exit 3 rather than store a task without its project |
 | `desk list [--ready\|--open\|--done\|--archived\|--all] [-p <project>\|--desk]` | lists tasks; default is the five live statuses. `-p` and `--desk` narrow every filter, `--all` too; a bare name no task's project carries is `unknown-project`, as for `add`. Offline the name is looked up in the whole snapshot, which holds live tasks only, so a bare name none of them carries lists nothing; a relative path such as `a/b` is `unknown-project` online and offline |
 | `desk show <task>` | one task with its steps and history |
@@ -153,7 +152,7 @@ daemon answers, so a script can ask whether one runs.
 | `desk note --merged --branch <b> [--pr <n>] [--sha <sha>] [<text>]` | records that a branch merged |
 | `desk decide <text> [--tag <k:v>]… [--replaces e<id>] [--task <task>]` | appends a decision |
 | `desk session [<id>] [--md] [--all] [--continues <old-id>]` | prints the session's journal view; `--json` prints it with the keys `session`, `work`, `todo`, `decisions`; `--all` shows hidden lines; `--continues` first links the session to an older one |
-| `desk capture` | reads one line on stdin: words starting `#` set the thread, `@` the project, the rest is the title. On a terminal (the herdr popup) a refused line prints its error and asks again, so the pane does not close on it; an empty line or end of input exits 0. Off a terminal it takes one line and exits with the code of its refusal, as every command does |
+| `desk capture` | on a terminal (stdin and stdout both terminals, no `--json`), the capture popup: one line (words starting `#` set the thread, `@` the project, the rest is the title); Enter adds the task and prints `T<n>`; a refused line shows its error under the line and stays there; an empty line, `esc`, or `ctrl+c` exits 0 with no task. Anywhere else it reads one line on stdin and exits with the code of its refusal, as every command does |
 | `desk daemon [run]` · `stop` · `restart` · `status` | runs or controls the daemon. A second `run` prints `already running` and exits 0; on a client it prints that there is nothing to run and exits 0. `status` never starts a daemon and exits 1 when none answers; its JSON carries `backup_ts`, the last successful backup (`null` when none), `backup_error`, the error of a failed attempt since, so a failing nightly backup shows there, and `config_changed`, true when the config file was written after the daemon started |
 | `desk token [show]` · `rotate` | prints or rotates the token |
 | `desk client add <host:port> [--token-file <path>]` | joins a home; the token comes from the file or stdin, never an argument |
@@ -168,6 +167,71 @@ The session is the first of `--session <id>`, `$DESK_SESSION`, and the variable 
 
 A write whose text holds a secret (private keys, AWS, GitHub, Anthropic, and Slack tokens) is
 refused with `secret-detected` and the pattern's name, never the match.
+
+## The board
+
+Bare `desk` on a terminal is the board, in a herdr pane or any terminal. It refreshes every 3 seconds
+and after each write, writes as you (never as an agent), and uses only the terminal's 16 ANSI colours.
+`ctrl+d` is bound to nothing. `ctrl+c` and `q` quit.
+
+The header is `desk  <project> ▾  thread: <thread> ▾` on the left and the runner on the right:
+`runner ● on · 2/3 · home` (live runs and the cap), `runner ◐ paused`, `runner ○ off · home`, and
+`client` in place of `home` on a client machine. With the home unreachable it reads
+`offline (snapshot 12m)`: the board shows the last snapshot, and every key that writes refuses with
+`offline: <key> needs the home`. A refusal or error from the home shows on the status line until the next key.
+
+Below the header are the three sections, each with its title even when empty. `NEEDS YOU` lists
+blocked and review tasks, `IN MOTION` started ones (root, isolation, model, and elapsed time of the
+live run, and the last note under the row), `ON DECK` the ready ones, then `inbox` and the open ones.
+A ready task with the thread `agent` shows `#agent · queued`. `d` adds a `DONE` section.
+
+Width decides the layout: under 78 columns one surface at a time and rows without their right-hand
+detail; from 78 to 109 one surface with full rows; from 110 the board on the left and the selected
+task's page on the right.
+
+Board page keys:
+
+| key | does |
+|---|---|
+| `↓` `j` · `↑` · `g` · `G` | next row · previous row · first · last (`k` is kill, not up) |
+| `enter` | open the task's page |
+| `+` | add a task: one line, `#thread` and `@project` as in `desk capture`; a refused line stays in the box with its error |
+| `n` | set `ready`; on a blocked task it asks `answer:`, appends your answer as a note, then sets `ready` (an empty answer sets `ready` alone) |
+| `s` · `b` · `r` | set `started` · `blocked` · `review` |
+| `x` | set `done`; asks `y/n` unless the task is in `review` |
+| `a` | toggle the thread `agent` |
+| `f` | focus the run's herdr pane (the home, with herdr, a live run with a pane) |
+| `k` | kill the task's live run after `y/n`; the home sets the task `blocked` |
+| `P` | pause or resume the runner |
+| `/` | search titles and ids as you type; `enter` keeps the filter, `esc` clears it |
+| `p` · `t` | next project filter · next thread filter, then back to all |
+| `d` | open or close the done drawer: the 20 most recently updated done tasks |
+| `?` | the keys overlay |
+| `esc` | close the overlay, else the drawer, else clear the search |
+| `q` · `ctrl+c` | quit |
+
+`P` and `k` call the runner's endpoints; a home that does not serve them answers on the status line.
+`P` with no runner state reported follows the header: `on` pauses, anything else says the runner is off.
+A paste goes to the open text input (a prompt, the add box, the notes editor).
+
+Task page keys (the board's `n s b r x a f k P ? q ctrl+c` work here too, for this task):
+
+| key | does |
+|---|---|
+| `↓` `j` · `↑` | scroll |
+| `esc` | back to the board |
+| `e` | edit the notes in an editor; `ctrl+s` saves, `esc` discards |
+| `t` | steps mode: `↓` `j` `↑` move, `space` or `enter` toggles, `a` adds, `r` renames, `x` removes, `esc` leaves |
+| `R` · `M` | edit the root · the model (an empty line clears it) |
+| `I` | next isolation: none, `self`, `worktree`, `in-place` |
+| `o` | open a ref: with several, a pick list; with none, the status line says so |
+
+The page shows the head line, `root · isolation · model`, `NOTES`, `STEPS`, `HISTORY across <n> sessions`
+(claim and routing, notes with their refs, decisions, hand-backs, `archived` and `unarchived`), and
+`FILES`, the refs of the history. `o` opens an `http` or `https` URL with the OS opener, and a file
+(an absolute path, or one relative to the task's project) in the herdr plugin `herdr-file-viewer`
+when herdr lists it; with no viewer the status line says so. A ref reaches a command only as one
+argument, never through a shell.
 
 ## Config
 

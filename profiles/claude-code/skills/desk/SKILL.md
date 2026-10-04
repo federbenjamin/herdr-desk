@@ -13,6 +13,7 @@ description: Use the desk CLI to read, add, and update the user's tasks, and to 
 - Never set `ready` or `done`. The user arms a task with `ready` and closes it with `done`. A refusal `not-allowed` means you tried; stop and report it.
 - Propose new work with `--thread agent`. It lands in the user's inbox. It does not start anything.
 - Never edit a task's title or notes to answer a question. Write a note instead.
+- Never run bare `desk` or `desk capture` on a terminal. The board and the capture popup are the user's: they take the terminal until a key ends them. Read tasks with `desk list --json`.
 
 ## Commands
 
