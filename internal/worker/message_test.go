@@ -52,7 +52,7 @@ func TestFirstMessageRendersTheCompleteTaskInThePublishedShape(t *testing.T) {
 		"- 2026-10-04 14:20Z agent: note: implementation is ready (https://example.test/pr/7)\n" +
 		"- 2026-10-04 14:21Z agent: status blocked (docs/blocker.md)\n" +
 		"- 2026-10-04 14:30Z user: decided: ship after review\n\n" +
-		"When the work is finished, hand the task back: run `desk set T7 review --ref <a file or PR that shows the work>`. Add `--merged` when that PR is merged. If you cannot finish, record what you need with `desk note --task T7 \"<what you need>\"`, then run `desk set T7 blocked`. Never set ready or done."
+		"When the work is finished, hand the task back: run `desk set T7 review --ref <a file or PR that shows the work>`. Add `--merged` when that PR is merged. If you cannot finish, record what you need with `desk note --task T7 \"<what you need>\"`, then run `desk set T7 blocked`. Never set ready or done.\n"
 	if got := worker.FirstMessage(detail); got != want {
 		t.Errorf("FirstMessage() =\n%s\nwant\n%s", got, want)
 	}
@@ -69,7 +69,7 @@ func TestFirstMessageLeavesOutEmptySectionsAndTheirBlankLines(t *testing.T) {
 		{
 			name:   "notes",
 			detail: store.TaskDetail{Task: model.Task{Number: 8, Title: "No notes"}},
-			want:   "You are working on desk task T8: No notes\n\n" + strings.ReplaceAll(handBack, "T<n>", "T8"),
+			want:   "You are working on desk task T8: No notes\n\n" + strings.ReplaceAll(handBack, "T<n>", "T8") + "\n",
 		},
 		{
 			name: "steps",
@@ -77,7 +77,7 @@ func TestFirstMessageLeavesOutEmptySectionsAndTheirBlankLines(t *testing.T) {
 				{TS: time.Date(2026, time.October, 4, 14, 2, 0, 0, time.UTC), Kind: model.KindTask, Data: model.MustData(model.TaskData{Title: "No steps"})},
 			}},
 			want: "You are working on desk task T9: No steps\n\nOnly a note.\n\nHistory (oldest first):\n" +
-				"- 2026-10-04 14:02Z user: created\n\n" + strings.ReplaceAll(handBack, "T<n>", "T9"),
+				"- 2026-10-04 14:02Z user: created\n\n" + strings.ReplaceAll(handBack, "T<n>", "T9") + "\n",
 		},
 		{
 			name: "history",
@@ -85,7 +85,7 @@ func TestFirstMessageLeavesOutEmptySectionsAndTheirBlankLines(t *testing.T) {
 				{ShortID: "s1", Text: "do it"},
 			}}},
 			want: "You are working on desk task T10: No history\n\nHas steps.\n\nSteps:\n" +
-				"- [ ] s1 do it\n\n" + strings.ReplaceAll(handBack, "T<n>", "T10"),
+				"- [ ] s1 do it\n\n" + strings.ReplaceAll(handBack, "T<n>", "T10") + "\n",
 		},
 	}
 
@@ -105,7 +105,7 @@ func TestFirstMessageOmitsReferencesThatAreNotPresent(t *testing.T) {
 		{TS: time.Date(2026, time.October, 4, 14, 2, 0, 0, time.UTC), Who: model.WhoAgent, Kind: model.KindNote, Data: model.MustData(model.NoteData{Text: "plain note"})},
 	}}
 	want := "You are working on desk task T11: No ref\n\nHistory (oldest first):\n" +
-		"- 2026-10-04 14:02Z agent: note: plain note\n\n" + strings.ReplaceAll(handBack, "T<n>", "T11")
+		"- 2026-10-04 14:02Z agent: note: plain note\n\n" + strings.ReplaceAll(handBack, "T<n>", "T11") + "\n"
 	if got := worker.FirstMessage(detail); got != want {
 		t.Errorf("FirstMessage() =\n%s\nwant\n%s", got, want)
 	}
@@ -120,7 +120,7 @@ func TestFirstMessageNamesChangedFieldsWhenASetDoesNotChangeStatus(t *testing.T)
 		{TS: time.Date(2026, time.October, 4, 14, 2, 0, 0, time.UTC), Kind: model.KindSet, Data: model.MustData(model.Patch{Title: &title, Root: &root})},
 	}}
 	want := "You are working on desk task T12: Changed fields\n\nHistory (oldest first):\n" +
-		"- 2026-10-04 14:02Z user: changed title, root\n\n" + strings.ReplaceAll(handBack, "T<n>", "T12")
+		"- 2026-10-04 14:02Z user: changed title, root\n\n" + strings.ReplaceAll(handBack, "T<n>", "T12") + "\n"
 	if got := worker.FirstMessage(detail); got != want {
 		t.Errorf("FirstMessage() =\n%s\nwant\n%s", got, want)
 	}
@@ -135,7 +135,7 @@ func TestFirstMessageLeavesOutRouterAndStepEvents(t *testing.T) {
 		{TS: time.Date(2026, time.October, 4, 14, 4, 0, 0, time.UTC), Kind: model.KindNote, Data: model.MustData(model.NoteData{Text: "visible note"})},
 	}}
 	want := "You are working on desk task T13: Visible history\n\nHistory (oldest first):\n" +
-		"- 2026-10-04 14:04Z user: note: visible note\n\n" + strings.ReplaceAll(handBack, "T<n>", "T13")
+		"- 2026-10-04 14:04Z user: note: visible note\n\n" + strings.ReplaceAll(handBack, "T<n>", "T13") + "\n"
 	if got := worker.FirstMessage(detail); got != want {
 		t.Errorf("FirstMessage() =\n%s\nwant\n%s", got, want)
 	}
@@ -169,13 +169,13 @@ func TestFirstMessageDropsOldestHistoryLinesBeforeExceeding64KiB(t *testing.T) {
 	}
 	var droppedLine string
 	for _, line := range strings.Split(got, "\n") {
-		if strings.Contains(line, "dropped") {
+		if strings.Contains(line, "older history lines left out") {
 			droppedLine = line
 			break
 		}
 	}
 	if droppedLine == "" {
-		t.Error("FirstMessage() did not say how many history lines it dropped")
+		t.Error("FirstMessage() did not say how many history lines it left out")
 	} else if want := fmt.Sprintf("%d", len(history)-strings.Count(got, "event-")); !strings.Contains(droppedLine, want) {
 		t.Errorf("FirstMessage() drop line = %q, want it to name %s dropped lines", droppedLine, want)
 	}
@@ -186,7 +186,23 @@ func TestFirstMessageCarriesTemplateLookingTextWithoutExpansion(t *testing.T) {
 
 	detail := store.TaskDetail{Task: model.Task{Number: 15, Title: "Use {session} --model", Notes: "Keep {model} --flag unchanged."}}
 	want := "You are working on desk task T15: Use {session} --model\n\n" +
-		"Keep {model} --flag unchanged.\n\n" + strings.ReplaceAll(handBack, "T<n>", "T15")
+		"Keep {model} --flag unchanged.\n\n" + strings.ReplaceAll(handBack, "T<n>", "T15") + "\n"
+	if got := worker.FirstMessage(detail); got != want {
+		t.Errorf("FirstMessage() =\n%s\nwant\n%s", got, want)
+	}
+}
+
+func TestFirstMessageRendersRefOnlyChangesAndMergedEvents(t *testing.T) {
+	t.Parallel()
+
+	ref := "https://example.test/pr/16"
+	detail := store.TaskDetail{Task: model.Task{Number: 16, Title: "Merge it"}, History: []model.Event{
+		{TS: time.Date(2026, time.October, 4, 14, 2, 0, 0, time.UTC), Kind: model.KindSet, Data: model.MustData(model.Patch{Ref: ref})},
+		{TS: time.Date(2026, time.October, 4, 14, 3, 0, 0, time.UTC), Kind: model.KindMerged, Data: model.MustData(model.MergedData{Branch: "feature/merge-it"})},
+	}}
+	want := "You are working on desk task T16: Merge it\n\nHistory (oldest first):\n" +
+		"- 2026-10-04 14:02Z user: changed (https://example.test/pr/16)\n" +
+		"- 2026-10-04 14:03Z user: merged feature/merge-it\n\n" + strings.ReplaceAll(handBack, "T<n>", "T16") + "\n"
 	if got := worker.FirstMessage(detail); got != want {
 		t.Errorf("FirstMessage() =\n%s\nwant\n%s", got, want)
 	}
