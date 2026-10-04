@@ -94,8 +94,10 @@ func TestChecksFailsOnUnformattedFilesAndRefusesAnUnknownFlag(t *testing.T) {
 	if code != 1 || strings.Join(ran, ",") != "go vet,coverage.sh,gofmt" || !strings.Contains(stderr, "internal/x.go") {
 		t.Fatalf("checks.sh with an unformatted file = exit %d, ran %q, stderr %q; want exit 1 naming the file before shellcheck", code, ran, stderr)
 	}
-	code, ran, _ = runChecks(t, "", "--bogus")
-	if code != 2 || len(ran) != 0 {
-		t.Fatalf("checks.sh --bogus = exit %d, ran %q; want exit 2 and nothing run", code, ran)
+	for _, args := range [][]string{{"--bogus"}, {""}, {"--no-coverage", "--bogus"}, {"--no-coverage", "--no-coverage"}} {
+		code, ran, _ = runChecks(t, "", args...)
+		if code != 2 || len(ran) != 0 {
+			t.Errorf("checks.sh %q = exit %d, ran %q; want exit 2 and nothing run", args, code, ran)
+		}
 	}
 }

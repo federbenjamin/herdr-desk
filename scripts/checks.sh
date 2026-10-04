@@ -5,9 +5,9 @@
 set -eu
 
 coverage=1
-case "${1:-}" in
-  "") ;;
-  --no-coverage) coverage=0 ;;
+case "$#:${1:-}" in
+  0:) ;;
+  1:--no-coverage) coverage=0 ;;
   *)
     echo "usage: sh scripts/checks.sh [--no-coverage]" >&2
     exit 2
