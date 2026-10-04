@@ -26,6 +26,15 @@ type ServerOptions struct {
 	Paths     config.Paths // the token is read with config.ReadToken on each TCP request, so a rotation needs no restart
 	StartedTS time.Time
 	Backup    func(ctx context.Context) (backup.Result, error) // nil → backup.run refuses backup-off
+	Runner    RunnerControl                                    // nil → runs.kill and runner.pause are unknown methods; runner_state is "off"
+}
+
+// RunnerControl is what the server needs from the runner. *runner.Runner satisfies it.
+type RunnerControl interface {
+	State() string
+	Paused() bool
+	Pause(ctx context.Context, a store.Actor, paused bool) error
+	Kill(ctx context.Context, a store.Actor, task int) (model.Task, error)
 }
 
 // Server answers the API methods from one store.
@@ -95,21 +104,7 @@ func NewServer(o ServerOptions) *Server {
 			}
 			return runs, err
 		}),
-		MethodStatus: bind(func(ctx context.Context, _ empty) (any, error) {
-			counts, err := st.CountByStatus(ctx)
-			backupTS, backupErr := backup.Last(o.Paths)
-			return Status{
-				Version:     version.Version,
-				Listen:      o.Config.Home.Listen,
-				StartedTS:   o.StartedTS,
-				RunnerOn:    o.Config.Runner.Enabled,
-				Tasks:       counts,
-				BackupTS:    backupTS,
-				BackupError: backupErr,
-
-				ConfigChanged: o.Paths.ConfigChangedSince(o.StartedTS),
-			}, err
-		}),
+		MethodStatus: bind(func(ctx context.Context, _ empty) (any, error) { return s.status(ctx) }),
 		MethodBackupRun: bind(func(ctx context.Context, _ empty) (any, error) {
 			if o.Backup == nil {
 				return nil, &model.Refusal{Code: model.CodeBackupOff, Msg: "no [backup] git_remote is configured"}
@@ -122,7 +117,42 @@ func NewServer(o ServerOptions) *Server {
 			return res, nil
 		}),
 	}
+	if rn := o.Runner; rn != nil {
+		s.methods[MethodRunsKill] = bind(func(ctx context.Context, r killRequest) (any, error) {
+			return rn.Kill(ctx, r.Actor, r.Task)
+		})
+		s.methods[MethodRunnerPause] = bind(func(ctx context.Context, r pauseRequest) (any, error) {
+			if err := rn.Pause(ctx, r.Actor, r.Paused); err != nil {
+				return nil, err
+			}
+			return s.status(ctx)
+		})
+	}
 	return s
+}
+
+func (s *Server) status(ctx context.Context) (Status, error) {
+	o := s.o
+	counts, err := o.Store.CountByStatus(ctx)
+	backupTS, backupErr := backup.Last(o.Paths)
+	runnerState, paused := "off", false
+	if o.Runner != nil {
+		runnerState, paused = o.Runner.State(), o.Runner.Paused()
+	}
+	return Status{
+		Version:      version.Version,
+		Listen:       o.Config.Home.Listen,
+		StartedTS:    o.StartedTS,
+		RunnerOn:     o.Config.Runner.Enabled,
+		RunnerState:  runnerState,
+		RunnerPaused: paused,
+		RunnerCap:    o.Config.Runner.Cap,
+		Tasks:        counts,
+		BackupTS:     backupTS,
+		BackupError:  backupErr,
+
+		ConfigChanged: o.Paths.ConfigChangedSince(o.StartedTS),
+	}, err
 }
 
 func (s *Server) appendEvent(ctx context.Context, r AppendRequest) (any, error) {
