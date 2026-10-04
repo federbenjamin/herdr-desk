@@ -1,0 +1,46 @@
+version: 2
+
+project_name: desk
+
+builds:
+  - id: desk
+    main: ./cmd/desk
+    binary: desk
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - arm64
+      - amd64
+    ldflags:
+      - -s -w -X github.com/federbenjamin/desk/internal/version.Version={{ .Version }}
+
+archives:
+  - id: desk
+    formats:
+      - tar.gz
+    name_template: "desk_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+changelog:
+  use: github-native
+
+brews:
+  - name: desk
+    repository:
+      owner: federbenjamin
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    homepage: https://github.com/federbenjamin/desk
+    description: A task board and session journal for people who work with coding agents.
+    license: MIT
+    test: |
+      system "#{bin}/desk", "version"
