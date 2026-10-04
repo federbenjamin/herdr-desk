@@ -121,6 +121,7 @@ U1's rules hold (`docs/build/briefs/quick-u1-core.md` §Rules every part follows
 - Every child process has a timeout: herdr 10 s, git 30 s, notify 10 s, the router 2 minutes.
 - A failure note names what failed and never quotes more than 80 characters of a child's output.
 - Tests never call the real `herdr` or the real `claude`, and never signal a process they did not start.
+- No Go test and no `scripts/e2e` script other than `r11` and `r12` finds `herdr` by a search of PATH. The herdr binary is named by `DESK_HERDR` (§Public surface, `internal/herdr`): `internal/testutil` sets it, in `init`, to a path that does not exist, so every test binary that links `testutil` is sealed before its first test; a test that needs a herdr sets it to the absolute path of `scripts/e2e/fake-herdr.py` or passes a `herdrtest.Herdr`; `scripts/e2e/lib.sh` exports the same seal and `runner-lib.sh` points it at the fake. A named binary that cannot be used is an error, never a fall back to PATH. (Added 2026-10-04, after a verify run of `internal/cli`'s tests opened 29 workspaces in a live herdr through the PATH lookup.)
 - `go.mod` and `go.sum` belong to no part: no part adds a module.
 
 ## Public surface
@@ -254,12 +255,14 @@ func (s *Store) RunWrote(ctx context.Context, run int64) (bool, error)
 // Package herdr drives the herdr terminal workspace manager through its command line.
 package herdr
 
-// Find returns the path of the herdr binary on PATH.
+// Find returns the path of the herdr binary. When the environment variable DESK_HERDR is set, it is that path
+// and nothing else: a value that is not an absolute path, or that names no executable file, is an error, and PATH
+// is not searched. When DESK_HERDR is unset or empty, it is `herdr` on PATH.
 func Find() (string, error)
 
 // Client runs herdr commands.
 type Client struct {
-	Bin     string        // "" → "herdr"
+	Bin     string        // "" → what Find returns, at each command; Find's error is the command's error
 	Timeout time.Duration // 0 → 10s, per command
 }
 
@@ -528,6 +531,7 @@ func (c *Client) PauseRunner(ctx context.Context, a store.Actor, paused bool) (S
 - `profiles/claude-code/skills/desk/SKILL.md`
 - `scripts/e2e/**` — the fake herdr, the stubs, and the runner's hand-test scripts
 - `.claude/build/notes.md` — the hand-tester section
+- `internal/testutil/testutil.go` — the `DESK_HERDR` seal
 
 ## Why the parts wait
 
@@ -570,6 +574,13 @@ P3 waits for P1 (it calls the store's run methods and `config.Expand`) and for P
   - deliverables: 22, 23
   - after: P4
   - tests: none
+- P6 · the herdr seal: `DESK_HERDR`, and no test or hermetic script that searches PATH for herdr
+  - model: sonnet — the rule and the public surface name the variable, the seal, and each place that sets it
+  - files: internal/testutil/testutil.go, scripts/e2e/lib.sh
+  - test files: internal/herdr/find_test.go, internal/testutil/seal_test.go
+  - deliverables: 24
+  - after: P5
+  - tests: builder
 
 ## Test slices
 
@@ -702,6 +713,7 @@ Before, for every line: the file or behaviour does not exist, except where the l
 21. `README.md` documents the runner (arming, the route, the caps, the watch, the states, `[agent] models`, `[router]` and that a `[router] schema` file replaces the built-in enums of roots and models, what a worker template gets), `desk runs`, `desk runner`, and `desk worker`; `profiles/claude-code/skills/desk/SKILL.md` says how a worker hands back, that `stale-run` means a newer run owns the task, and that an agent never kills a run or pauses the runner. (notes §builders: Docs)
 22. `scripts/e2e/runner-lib.sh`, `stub-router.sh`, `stub-worker.sh`, and `r01-spawn.sh` … `r12-real-claude.sh` exist, one script per claim H1 to H12, each ending `E2E PASS` only when its checks hold and printing the lines its `pass:` names; `h12-setup.sh` also prints `profile models ok`; H11 and H12 close every workspace they opened, on failure too, and never close another; `shellcheck -S info scripts/e2e/*.sh` is clean. (§Hand test)
 23. `.claude/build/notes.md` `## hand-tester` says which runner claims need the real `herdr` (H11, H12) and the real `claude` (H12), that H12 spends one router run and one worker run, and that H9 takes over a minute. (§How the hand test runs)
+24. The herdr seal. `herdr.Find` follows its comment: `DESK_HERDR` set → that absolute path or an error, PATH never searched; a `herdr.Client` with an empty `Bin` resolves through `Find` at each command. `internal/testutil` has an `init` that sets `DESK_HERDR` to a path that does not exist (`os.Setenv`, so it holds for parallel tests too), and a test pins that `herdr.Find` then fails in a test binary even when a `herdr` is on PATH. Every Go test that needs a herdr process (`internal/api/runs_test.go`, `internal/cli/runs_test.go`, `internal/cli/worker_test.go`, `internal/daemon/runner_test.go`, and any other that puts a `herdr` on PATH) sets `DESK_HERDR` to the fake's absolute path in place of a PATH entry; a test of "no herdr" relies on the seal or sets `DESK_HERDR` to a missing path, not on an empty PATH. `scripts/e2e/lib.sh` exports `DESK_HERDR` as a path under `$E2E` that does not exist; `runner-lib.sh`'s fake-herdr function exports it as the fake's path; `r11` and `r12` unset it; `stub-worker.sh` calls `"${DESK_HERDR:-herdr}"`. `README.md` documents the variable in one sentence where it documents the runner's need for herdr. (§Rules every part follows)
 
 ```yaml
 description: desk U2 — the runner and the router
@@ -751,6 +763,8 @@ deliverables:
   - name: the runner's e2e scripts, stubs, and library
     covered_by: [judgment]
   - name: build notes — the hand-tester section names the runner claims' needs
+    covered_by: [judgment]
+  - name: the herdr seal — DESK_HERDR names the binary, tests and hermetic scripts never search PATH for it
     covered_by: [judgment]
 ```
 
