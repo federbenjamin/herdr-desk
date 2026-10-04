@@ -1,0 +1,185 @@
+// Package herdr drives the herdr terminal workspace manager through its command line.
+package herdr
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os/exec"
+	"slices"
+	"strings"
+	"time"
+)
+
+const (
+	defaultTimeout = 10 * time.Second
+	maxStderr      = 300
+)
+
+// Find returns the path of the herdr binary on PATH.
+func Find() (string, error) { return exec.LookPath("herdr") }
+
+// Client runs herdr commands.
+type Client struct {
+	Bin     string        // "" → "herdr"
+	Timeout time.Duration // 0 → 10s, per command
+}
+
+// Created is a new workspace and its one pane.
+type Created struct{ Workspace, Pane string }
+
+// Pane is one pane as `herdr pane list` reports it.
+type Pane struct {
+	ID        string // pane_id
+	Workspace string // workspace_id
+	Session   string // agent_session.value; "" when herdr knows no agent session for the pane
+	Status    string // agent_status: idle | working | blocked | done | unknown
+}
+
+// Processes is what runs in a pane.
+type Processes struct {
+	Group int   // the foreground process group; 0 when herdr reports none
+	PIDs  []int // the foreground processes, then the shell when herdr reports one; no duplicates
+}
+
+// CreateWorkspace runs `herdr workspace create --cwd <cwd> --label <label> --no-focus --env <e>…`; env entries are KEY=VALUE.
+func (c *Client) CreateWorkspace(ctx context.Context, cwd, label string, env []string) (Created, error) {
+	args := []string{"workspace", "create", "--cwd", cwd, "--label", label, "--no-focus"}
+	for _, e := range env {
+		args = append(args, "--env", e)
+	}
+	var res struct {
+		Result struct {
+			Workspace struct {
+				ID string `json:"workspace_id"`
+			} `json:"workspace"`
+			RootPane struct {
+				ID string `json:"pane_id"`
+			} `json:"root_pane"`
+		} `json:"result"`
+	}
+	if err := c.json(ctx, "workspace create", args, &res); err != nil {
+		return Created{}, err
+	}
+	out := Created{Workspace: res.Result.Workspace.ID, Pane: res.Result.RootPane.ID}
+	if out.Workspace == "" || out.Pane == "" {
+		return Created{}, errors.New("herdr workspace create: the answer holds no workspace or pane id")
+	}
+	return out, nil
+}
+
+// Run runs `herdr pane run <pane> <command>`, the command as one argument.
+func (c *Client) Run(ctx context.Context, pane, command string) error {
+	_, err := c.exec(ctx, "pane run", "pane", "run", pane, command)
+	return err
+}
+
+// Panes runs `herdr pane list`.
+func (c *Client) Panes(ctx context.Context) ([]Pane, error) {
+	var res struct {
+		Result struct {
+			Panes []struct {
+				ID           string `json:"pane_id"`
+				Workspace    string `json:"workspace_id"`
+				Status       string `json:"agent_status"`
+				AgentSession *struct {
+					Value string `json:"value"`
+				} `json:"agent_session"`
+			} `json:"panes"`
+		} `json:"result"`
+	}
+	if err := c.json(ctx, "pane list", []string{"pane", "list"}, &res); err != nil {
+		return nil, err
+	}
+	panes := make([]Pane, 0, len(res.Result.Panes))
+	for _, p := range res.Result.Panes {
+		pane := Pane{ID: p.ID, Workspace: p.Workspace, Status: p.Status}
+		if p.AgentSession != nil {
+			pane.Session = p.AgentSession.Value
+		}
+		panes = append(panes, pane)
+	}
+	return panes, nil
+}
+
+// Processes runs `herdr pane process-info --pane <pane>`.
+func (c *Client) Processes(ctx context.Context, pane string) (Processes, error) {
+	var res struct {
+		Result struct {
+			Info *struct {
+				Group     int `json:"foreground_process_group_id"`
+				Processes []struct {
+					PID int `json:"pid"`
+				} `json:"foreground_processes"`
+				ShellPID int `json:"shell_pid"`
+			} `json:"process_info"`
+		} `json:"result"`
+	}
+	if err := c.json(ctx, "pane process-info", []string{"pane", "process-info", "--pane", pane}, &res); err != nil {
+		return Processes{}, err
+	}
+	if res.Result.Info == nil {
+		return Processes{}, errors.New("herdr pane process-info: the answer holds no process info")
+	}
+	info := res.Result.Info
+	out := Processes{Group: info.Group}
+	for _, p := range info.Processes {
+		if p.PID != 0 && !slices.Contains(out.PIDs, p.PID) {
+			out.PIDs = append(out.PIDs, p.PID)
+		}
+	}
+	if info.ShellPID != 0 && !slices.Contains(out.PIDs, info.ShellPID) {
+		out.PIDs = append(out.PIDs, info.ShellPID)
+	}
+	return out, nil
+}
+
+// ClosePane runs `herdr pane close <pane>`.
+func (c *Client) ClosePane(ctx context.Context, pane string) error {
+	_, err := c.exec(ctx, "pane close", "pane", "close", pane)
+	return err
+}
+
+func (c *Client) json(ctx context.Context, name string, args []string, into any) error {
+	out, err := c.exec(ctx, name, args...)
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(out, into); err != nil {
+		return fmt.Errorf("herdr %s: the answer is not the expected JSON: %w", name, err)
+	}
+	return nil
+}
+
+func (c *Client) exec(ctx context.Context, name string, args ...string) ([]byte, error) {
+	timeout := c.Timeout
+	if timeout <= 0 {
+		timeout = defaultTimeout
+	}
+	bin := c.Bin
+	if bin == "" {
+		bin = "herdr"
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, args...)
+	var out, errOut bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errOut
+	cmd.WaitDelay = time.Second
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			err = fmt.Errorf("timed out after %s", timeout)
+		}
+		msg := strings.TrimSpace(errOut.String())
+		if len(msg) > maxStderr {
+			msg = strings.ToValidUTF8(msg[:maxStderr], "")
+		}
+		if msg != "" {
+			return nil, fmt.Errorf("herdr %s: %w: %s", name, err, msg)
+		}
+		return nil, fmt.Errorf("herdr %s: %w", name, err)
+	}
+	return out.Bytes(), nil
+}
