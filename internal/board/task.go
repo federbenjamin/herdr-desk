@@ -167,7 +167,7 @@ func (s State) notesKey(m tea.KeyPressMsg) (State, []Effect) {
 		}
 		s.editing = false
 		v := s.notes.Value()
-		s.notesOut = unsaved{task: t.Number, text: v, from: s.notesFrom}
+		s.sent = append(slices.Clip(s.sent), sent{task: t.Number, notes: &v, from: s.notesFrom})
 		return s, []Effect{SetTask{Task: t.Number, Patch: model.Patch{Notes: &v}}}
 	}
 	s.notes = typeNotes(s.notes, m)

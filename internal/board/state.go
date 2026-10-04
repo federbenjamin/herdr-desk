@@ -159,15 +159,22 @@ type State struct {
 	picking   bool
 	pickSel   int
 
-	// The typed text of the last notes save and the last answer, so a failure of its write opens it again.
-	notesOut, answerOut unsaved
-	// back is the typed text whose write failed, oldest first, until giveBack opens it again. A later save or
-	// answer never replaces it.
+	// sent is every notes save whose write may still fail, oldest first.
+	sent []sent
+	// back is the typed text whose write failed, oldest first, until giveBack opens it again.
 	back []unsaved
 }
 
-// unsaved is text the user typed that a write carries, for a task. from is the notes the editor started from,
-// for a notes save; failed is the write's error once it failed.
+// sent is one notes save: its task, the text its SetTask carries (by that SetTask's own pointer, so a failure
+// names exactly one save), and the notes the editor started from.
+type sent struct {
+	task  int
+	notes *string
+	from  string
+}
+
+// unsaved is typed text whose write failed, for a task: a notes save's text and the notes its editor started
+// from, or an answer. failed is the write's error.
 type unsaved struct {
 	answer bool
 	task   int
@@ -217,10 +224,13 @@ func (s State) Update(msg tea.Msg) (State, []Effect) {
 		if s.data.Offline {
 			// A snapshot holds no history: the task page shows only what the snapshot holds.
 			s.detail, s.hasDetail = store.TaskDetail{}, false
+		} else {
+			s = s.held(slices.Concat(m.Data.Tasks, m.Data.Done))
 		}
 		s.follow()
 		s, eff = s.answered()
 	case TaskLoaded:
+		s = s.held([]model.Task{m.Detail.Task})
 		if m.Detail.Task.Number == s.shown() && s.shown() != 0 && !s.data.Offline {
 			s.detail, s.hasDetail = m.Detail, true
 		}
@@ -259,24 +269,18 @@ func answers(m Failed, match func(Effect) bool) bool {
 func (s State) failed(m Failed) (State, []Effect) {
 	text := errText(m.Err)
 	shown := false
+	var named effectErr
 	switch {
 	case s.adding && s.add.busy && answers(m, func(e Effect) bool { _, ok := e.(AddTask); return ok }):
 		s, _ = s.toAdd(m)
 		shown = s.adding
-	case s.notesOut.task != 0 && answers(m, func(e Effect) bool {
-		set, ok := e.(SetTask)
-		return ok && set.Task == s.notesOut.task && set.Patch.Notes != nil
-	}):
-		s.notesOut.failed = text
-		s.back = append(slices.Clip(s.back), s.notesOut)
-		s.notesOut = unsaved{}
-	case s.answerOut.task != 0 && answers(m, func(e Effect) bool {
-		r, ok := e.(Rearm)
-		return ok && r.Task == s.answerOut.task && r.Answer != ""
-	}):
-		s.answerOut.failed = text
-		s.back = append(slices.Clip(s.back), s.answerOut)
-		s.answerOut = unsaved{}
+	case errors.As(m.Err, &named):
+		var u unsaved
+		var ok bool
+		if s, u, ok = s.typed(named.effect); ok {
+			u.failed = text
+			s.back = append(slices.Clip(s.back), u)
+		}
 	}
 	if !shown {
 		s.status = text
@@ -285,6 +289,37 @@ func (s State) failed(m Failed) (State, []Effect) {
 		return s.answered()
 	}
 	return s, nil
+}
+
+// typed is the typed text that the failed write e carried: a notes save still in s.sent, which it drops, or a
+// non-empty answer. Only a Failed that names its effect is given back, as only it tells which write failed.
+func (s State) typed(e Effect) (State, unsaved, bool) {
+	switch e := e.(type) {
+	case SetTask:
+		// The SetTask a failure names is the value ctrl+s emitted, so its Notes is the pointer the save holds.
+		i := slices.IndexFunc(s.sent, func(x sent) bool { return x.notes == e.Patch.Notes })
+		if i < 0 {
+			return s, unsaved{}, false
+		}
+		x := s.sent[i]
+		s.sent = slices.Concat(s.sent[:i], s.sent[i+1:])
+		return s, unsaved{task: x.task, text: *x.notes, from: x.from}, true
+	case Rearm:
+		if e.Answer != "" {
+			return s, unsaved{answer: true, task: e.Task, text: e.Answer}, true
+		}
+	}
+	return s, unsaved{}, false
+}
+
+// held drops the notes saves whose text the home holds for their task in tasks: a late failure of one would give
+// back nothing the home lacks. It keeps s.sent from growing with every save that lands. A snapshot is not the
+// home's text now, so an offline Loaded drops none.
+func (s State) held(tasks []model.Task) State {
+	s.sent = slices.DeleteFunc(slices.Clone(s.sent), func(x sent) bool {
+		return slices.ContainsFunc(tasks, func(t model.Task) bool { return t.Number == x.task && t.Notes == *x.notes })
+	})
+	return s
 }
 
 // giveBack opens the notes editor or the answer prompt again, with its typed text and its error on the status
@@ -835,10 +870,6 @@ func (s State) promptKey(m tea.KeyPressMsg) (State, []Effect) {
 		v := strings.TrimSpace(p.in.Value())
 		switch p.kind {
 		case promptAnswer:
-			s.answerOut = unsaved{}
-			if v != "" {
-				s.answerOut = unsaved{answer: true, task: p.task, text: v}
-			}
 			return s, []Effect{Rearm{Task: p.task, Answer: v}}
 		case promptRoot:
 			return s, []Effect{SetTask{Task: p.task, Patch: model.Patch{Root: &v}}}

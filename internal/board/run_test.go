@@ -748,6 +748,41 @@ func TestRunAFailedNotesSaveOpensTheEditorAgainWithTheText(t *testing.T) {
 	w5Quit(t, in, errs)
 }
 
+func TestRunASaveThatFailsAfterALaterSaveGivesBackItsOwnText(t *testing.T) {
+	task := model.Task{Number: 77, Title: "w5 two saves", Notes: "w5 draft", Status: model.StatusOpen}
+	release := make(chan struct{})
+	var once sync.Once
+	home := &fakeHome{tasks: []model.Task{task}, detail: store.TaskDetail{Task: task}, setHook: func(p model.Patch) error {
+		failed := false
+		if p.Notes != nil && *p.Notes == "w5 draft!" {
+			once.Do(func() { <-release; failed = true })
+		}
+		if failed {
+			return errors.New("w5 first save refused")
+		}
+		return nil
+	}}
+	out := &lockedOutput{}
+	in, errs := w5StartRun(t, home, nil, out)
+	eventually(t, "the board draw", func() bool { return strings.Contains(out.String(), task.Title) })
+	w5Write(t, in, "\re")
+	eventually(t, "the notes editor", func() bool { return strings.Contains(out.String(), "editing") })
+	w5Write(t, in, "!\x13")
+	eventually(t, "the first save held at the home", func() bool { return len(home.w5SetPatches()) == 1 })
+	w5Write(t, in, "e?\x13")
+	eventually(t, "the second save", func() bool { return len(home.w5SetPatches()) == 2 })
+	close(release)
+	eventually(t, "the first save's refusal", func() bool { return strings.Contains(out.String(), "w5 first save refused") })
+	// The editor holds the first save's text again, so ctrl+s sends it, and it lands.
+	w5Write(t, in, "\x13")
+	eventually(t, "the third save", func() bool { return len(home.w5SetPatches()) == 3 })
+	w5Quit(t, in, errs)
+	patches := home.w5SetPatches()
+	if p := patches[2]; p.Notes == nil || *p.Notes != "w5 draft!" {
+		t.Fatalf("saves = %#v, want the first save's text sent again", patches)
+	}
+}
+
 func TestRunAnotherWritesFailureDoesNotOpenTheSavedNotesAgain(t *testing.T) {
 	task := model.Task{Number: 76, Title: "w5 saved notes", Notes: "w5 draft", Status: model.StatusOpen}
 	home := &fakeHome{tasks: []model.Task{task}, detail: store.TaskDetail{Task: task}, setRefuse: func(p model.Patch) error {

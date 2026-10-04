@@ -647,7 +647,7 @@ func TestKeysAFailedAnswerOpensItsPromptAgainWithTheText(t *testing.T) {
 	if strings.Contains(s.Text(), "answer: ") {
 		t.Fatalf("enter left the answer prompt open: %q", s.Text())
 	}
-	s, _ = s.Update(board.Failed{Err: errors.New("dial home: connection refused")})
+	s, _ = s.Update(board.FailedOf(effects[0], errors.New("dial home: connection refused")))
 	if !strings.Contains(s.Text(), "answer: keep it") || !strings.HasSuffix(s.Text(), "dial home: connection refused") {
 		t.Fatalf("a failed answer = %q, want its prompt back with the text and the error", s.Text())
 	}
@@ -659,9 +659,9 @@ func TestKeysAnAnswerThatFailsWhileAPromptIsOpenWaitsForItToClose(t *testing.T) 
 	s := w2State(w2Task(9, model.StatusBlocked))
 	s, _ = s.Update(press('n'))
 	s, _ = s.Update(tea.PasteMsg{Content: "keep it"})
-	s, _ = s.Update(named(tea.KeyEnter))
+	s, answer := s.Update(named(tea.KeyEnter))
 	s, _ = s.Update(press('/'))
-	s, _ = s.Update(board.Failed{Err: errors.New("dial home: connection refused")})
+	s, _ = s.Update(board.FailedOf(answer[0], errors.New("dial home: connection refused")))
 	if text := s.Text(); strings.Contains(text, "answer: ") || !strings.Contains(text, "search: ") {
 		t.Fatalf("a failed answer took the keys from the open prompt: %q", text)
 	}
@@ -673,13 +673,34 @@ func TestKeysAnAnswerThatFailsWhileAPromptIsOpenWaitsForItToClose(t *testing.T) 
 	wantEffects(t, effects, []board.Effect{board.Rearm{Task: 9, Answer: "keep it"}})
 }
 
+func TestKeysEachFailedAnswerGivesBackItsOwnText(t *testing.T) {
+	s := w2State(w2Task(9, model.StatusBlocked))
+	s, _ = s.Update(press('n'))
+	s, _ = s.Update(tea.PasteMsg{Content: "first"})
+	s, first := s.Update(named(tea.KeyEnter))
+	s, _ = s.Update(press('n'))
+	s, _ = s.Update(tea.PasteMsg{Content: "second"})
+	s, second := s.Update(named(tea.KeyEnter))
+	// The earlier answer fails while the later one is still out.
+	s, _ = s.Update(board.FailedOf(first[0], errors.New("first refused")))
+	if text := s.Text(); !strings.Contains(text, "answer: first") || !strings.HasSuffix(text, "first refused") {
+		t.Fatalf("the earlier answer failed = %q, want its prompt back with its own text", text)
+	}
+	s, effects := s.Update(named(tea.KeyEnter))
+	wantEffects(t, effects, []board.Effect{board.Rearm{Task: 9, Answer: "first"}})
+	s, _ = s.Update(board.FailedOf(second[0], errors.New("second refused")))
+	if text := s.Text(); !strings.Contains(text, "answer: second") || !strings.HasSuffix(text, "second refused") {
+		t.Fatalf("the later answer failed = %q, want its prompt back with its own text", text)
+	}
+}
+
 func TestKeysAFailedAnswerIsNotLostToALaterAnswer(t *testing.T) {
 	s := w2State(w2Task(9, model.StatusBlocked))
 	s, _ = s.Update(press('n'))
 	s, _ = s.Update(tea.PasteMsg{Content: "keep it"})
-	s, _ = s.Update(named(tea.KeyEnter))
+	s, answer := s.Update(named(tea.KeyEnter))
 	s, _ = s.Update(press('n'))
-	s, _ = s.Update(board.Failed{Err: errors.New("dial home: connection refused")})
+	s, _ = s.Update(board.FailedOf(answer[0], errors.New("dial home: connection refused")))
 	s, _ = s.Update(tea.PasteMsg{Content: "later"})
 	s, effects := s.Update(named(tea.KeyEnter))
 	wantEffects(t, effects, []board.Effect{board.Rearm{Task: 9, Answer: "later"}})

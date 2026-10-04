@@ -49,6 +49,7 @@ type fakeHome struct {
 	addGate    chan struct{}           // AddTask waits for it to close before it answers
 	listHook   func(call int) error    // runs outside the lock before ListTasks call number call answers
 	setRefuse  func(model.Patch) error // SetTask answers its error when it returns one
+	setHook    func(model.Patch) error // runs outside the lock once SetTask records its patch; its error is the answer
 
 	liveLists, maxLiveLists int // ListTasks calls for the live tasks in flight now, and the most at once
 
@@ -182,12 +183,21 @@ func (h *fakeHome) AddTask(_ context.Context, a store.Actor, in store.AddTaskInp
 
 func (h *fakeHome) SetTask(_ context.Context, a store.Actor, number int, p model.Patch) (model.Task, error) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	if err := h.script("SetTask"); err != nil {
+		h.mu.Unlock()
 		return model.Task{}, err
 	}
 	h.setActors = append(h.setActors, a)
 	h.setPatches = append(h.setPatches, p)
+	hook := h.setHook
+	h.mu.Unlock()
+	if hook != nil {
+		if err := hook(p); err != nil {
+			return model.Task{}, err
+		}
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	if h.set != nil {
 		return model.Task{}, h.set
 	}
