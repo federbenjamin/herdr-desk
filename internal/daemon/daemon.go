@@ -22,18 +22,20 @@ import (
 	"github.com/federbenjamin/desk/internal/backup"
 	"github.com/federbenjamin/desk/internal/config"
 	"github.com/federbenjamin/desk/internal/model"
+	"github.com/federbenjamin/desk/internal/runner"
 	"github.com/federbenjamin/desk/internal/secretscan"
 	"github.com/federbenjamin/desk/internal/store"
 	"github.com/federbenjamin/desk/internal/version"
 )
 
-// Info is written once, at start, to the daemon info file.
+// Info is the daemon info file: written at start, and again when the runner's state changes.
 type Info struct {
 	PID       int       `json:"pid"`
 	Version   string    `json:"version"`
 	StartedTS time.Time `json:"started_ts"`
 	Socket    string    `json:"socket"`
 	Listen    string    `json:"listen"` // the address actually bound, "" when local only
+	Runner    string    `json:"runner"` // the runner's state
 }
 
 // ErrAlreadyRunning is Start's answer when another daemon holds the lock.
@@ -68,10 +70,40 @@ type Instance struct {
 	once    sync.Once
 	err     error
 	failed  chan error // a listener that stopped serving on its own
+
+	infoMu  sync.Mutex // guards info and infoOut: the runner's state changes from its loop and from the API
+	info    Info
+	infoOut bool // the info file has been written and not yet removed
+}
+
+// setRunnerState records the runner's state and rewrites the info file when it is out.
+func (i *Instance) setRunnerState(state string) {
+	i.infoMu.Lock()
+	defer i.infoMu.Unlock()
+	i.info.Runner = state
+	if !i.infoOut {
+		return
+	}
+	if err := writeInfo(i.p, i.info); err != nil {
+		log.Printf("desk daemon: write the info file: %v", err)
+	}
+}
+
+// publishInfo writes the info file with the runner state held so far.
+func (i *Instance) publishInfo(info Info) error {
+	i.infoMu.Lock()
+	defer i.infoMu.Unlock()
+	info.Runner = i.info.Runner
+	i.info = info
+	if err := writeInfo(i.p, info); err != nil {
+		return err
+	}
+	i.infoOut = true
+	return nil
 }
 
 // Start takes the lock, opens the store, serves the socket (and the TCP listener when configured), writes the
-// info file, and starts the backup tick. It returns ErrAlreadyRunning when the lock is held and ErrClient on a client.
+// info file, and starts the backup tick and the runner's loop. It returns ErrAlreadyRunning when the lock is held and ErrClient on a client.
 func Start(ctx context.Context, p config.Paths, c config.Config) (*Instance, error) {
 	if c.IsClient() {
 		return nil, ErrClient
@@ -140,18 +172,20 @@ func Start(ctx context.Context, p config.Paths, c config.Config) (*Instance, err
 			return backup.Run(ctx, i.st, p, remote)
 		}
 	}
-	srv := api.NewServer(api.ServerOptions{Store: i.st, Config: c, Paths: p, StartedTS: started, Backup: runBackup})
+	run := runner.New(runner.Options{Store: i.st, Config: c, Paths: p, OnState: i.setRunnerState})
+	srv := api.NewServer(api.ServerOptions{Store: i.st, Config: c, Paths: p, StartedTS: started, Backup: runBackup, Runner: run})
 	i.serve(unixLn, srv.Handler(true))
 	if tcpLn != nil {
 		i.serve(tcpLn, srv.Handler(false))
 	}
 
-	if err := writeInfo(p, Info{PID: os.Getpid(), Version: version.Version, StartedTS: started, Socket: sock, Listen: i.listen}); err != nil {
+	if err := i.publishInfo(Info{PID: os.Getpid(), Version: version.Version, StartedTS: started, Socket: sock, Listen: i.listen}); err != nil {
 		return nil, err
 	}
 
 	tickCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	i.cancel = cancel
+	i.wg.Go(func() { run.Loop(tickCtx) })
 	if runBackup != nil {
 		i.wg.Go(func() { tick(tickCtx, p, runBackup) })
 	}
@@ -216,6 +250,9 @@ func (i *Instance) close() error {
 		i.cancel()
 	}
 	i.wg.Wait()
+	i.infoMu.Lock()
+	i.infoOut = false
+	i.infoMu.Unlock()
 	if i.st != nil {
 		errs = append(errs, i.st.Close())
 	}
@@ -254,7 +291,7 @@ func writeInfo(p config.Paths, info Info) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(p.DaemonInfo(), b, 0o600)
+	return config.WriteFileAtomic(p.DaemonInfo(), b)
 }
 
 // ReadInfo reads the daemon info file.
