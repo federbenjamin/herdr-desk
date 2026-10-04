@@ -240,7 +240,7 @@ the store is one SQLite file under `$XDG_DATA_HOME/desk`; the offline snapshot i
 
 The runner lives in the home's daemon: one runner per desk. Two machines that should each run their
 own tasks are two desks. Turn it on with `desk setup --runner on` (or `[runner] enabled = true`) and
-restart the daemon.
+restart the daemon. The runner needs herdr: `DESK_HERDR` names the herdr binary when it is not on the daemon's PATH, and a set value is used as is.
 
 **Arming.** A task runs only when you arm it: status `ready` and thread `agent`, set by a person. An
 agent may add a task and set its thread to `agent` (a proposal), never `ready` or `done`, and may not

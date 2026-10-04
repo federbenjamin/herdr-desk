@@ -15,6 +15,36 @@ import (
 	"github.com/federbenjamin/desk/internal/daemon"
 )
 
+// A test binary that links this package never finds the real herdr: DESK_HERDR names a path that does not exist, so
+// herdr.Find fails instead of searching PATH. A test that needs the fake herdr calls FakeHerdr.
+func init() {
+	os.Setenv("DESK_HERDR", "/nonexistent/desk-tests-never-run-the-real-herdr")
+}
+
+// FakeHerdr points DESK_HERDR at scripts/e2e/fake-herdr.py and FAKE_HERDR_DIR at a fresh temp dir, both restored at
+// test cleanup, and returns that dir. It uses t.Setenv, so the test must not be parallel.
+func FakeHerdr(t testing.TB) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("testutil: %v", err)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			break
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatalf("testutil: no go.mod above the test's directory")
+		}
+		dir = parent
+	}
+	state := t.TempDir()
+	t.Setenv("DESK_HERDR", filepath.Join(dir, "scripts", "e2e", "fake-herdr.py"))
+	t.Setenv("FAKE_HERDR_DIR", state)
+	return state
+}
+
 // Machine is one machine's four XDG directories under a short temp dir.
 type Machine struct{ Paths config.Paths }
 

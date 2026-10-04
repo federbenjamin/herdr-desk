@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -43,8 +42,7 @@ func TestStartWritesRunnerStateForItsConfiguration(t *testing.T) {
 			name: "herdr and executable router",
 			setup: func(t *testing.T, cfg *config.Config) {
 				cfg.Runner.Enabled = true
-				setFakeHerdr(t)
-				cfg.Agent.Router = []string{"herdr"}
+				cfg.Agent.Router = []string{setFakeHerdr(t)}
 			},
 			want: "on",
 		},
@@ -74,11 +72,10 @@ func TestStartRunsTheRunnerLoopForAnArmedTask(t *testing.T) {
 	cfg := config.Default()
 	cfg.Runner.Enabled = true
 	cfg.Runner.PollSeconds = 1
-	cfg.Agent.Router = []string{"herdr"}
+	cfg.Agent.Router = []string{setFakeHerdr(t)}
 	cfg.Agent.Models = []string{"test-model"}
 	root := t.TempDir()
 	cfg.Roots = []config.Root{{Path: root, Isolation: "in-place"}}
-	setFakeHerdr(t)
 
 	_, paths := startRunnerDaemon(t, cfg)
 	client := api.NewClient(api.ClientOptions{Paths: paths, Config: cfg})
@@ -107,8 +104,7 @@ func TestStartRunsTheRunnerLoopForAnArmedTask(t *testing.T) {
 func TestPauseRunnerRewritesTheDaemonRunnerState(t *testing.T) {
 	cfg := config.Default()
 	cfg.Runner.Enabled = true
-	cfg.Agent.Router = []string{"herdr"}
-	setFakeHerdr(t)
+	cfg.Agent.Router = []string{setFakeHerdr(t)}
 
 	_, paths := startRunnerDaemon(t, cfg)
 	client := api.NewClient(api.ClientOptions{Paths: paths, Config: cfg})
@@ -125,8 +121,7 @@ func TestCloseStopsTheRunnerLoopAndRemovesDaemonInfo(t *testing.T) {
 	cfg := config.Default()
 	cfg.Runner.Enabled = true
 	cfg.Runner.PollSeconds = 1
-	cfg.Agent.Router = []string{"herdr"}
-	setFakeHerdr(t)
+	cfg.Agent.Router = []string{setFakeHerdr(t)}
 
 	instance, paths := startRunnerDaemon(t, cfg)
 	client := api.NewClient(api.ClientOptions{Paths: paths, Config: cfg})
@@ -154,18 +149,10 @@ func startRunnerDaemon(t *testing.T, cfg config.Config) (*daemon.Instance, confi
 	return instance, paths
 }
 
-func setFakeHerdr(t *testing.T) {
+func setFakeHerdr(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
-	fixture, err := filepath.Abs(filepath.Join("..", "..", "scripts", "e2e", "fake-herdr.py"))
-	if err != nil {
-		t.Fatalf("make fake herdr path absolute: %v", err)
-	}
-	if err := os.Symlink(fixture, filepath.Join(dir, "herdr")); err != nil {
-		t.Fatalf("symlink fake herdr: %v", err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("FAKE_HERDR_DIR", dir)
+	testutil.FakeHerdr(t)
+	return os.Getenv("DESK_HERDR")
 }
 
 func stringPointer(s string) *string { return &s }

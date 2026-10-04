@@ -19,19 +19,11 @@ func runnerHome(t *testing.T, listen bool, worker []string) (*testutil.Home, str
 	t.Helper()
 	root := t.TempDir()
 	bin := t.TempDir()
-	fake, err := filepath.Abs(filepath.Join("..", "..", "scripts", "e2e", "fake-herdr.py"))
-	if err != nil {
-		t.Fatalf("locate fake herdr: %v", err)
-	}
-	if err := os.Symlink(fake, filepath.Join(bin, "herdr")); err != nil {
-		t.Fatalf("link fake herdr: %v", err)
-	}
 	router := filepath.Join(bin, "router")
 	if err := os.WriteFile(router, []byte("#!/bin/sh\nprintf '%s\\n' '{\"root\":\""+root+"\",\"isolation\":\"in-place\",\"reason\":\"test\"}'\n"), 0o700); err != nil {
 		t.Fatalf("write router: %v", err)
 	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("FAKE_HERDR_DIR", t.TempDir())
+	testutil.FakeHerdr(t)
 	cfg := config.Default()
 	cfg.Runner.Enabled = true
 	cfg.Runner.Cap = 2

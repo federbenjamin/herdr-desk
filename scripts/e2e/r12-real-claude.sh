@@ -6,6 +6,8 @@
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 # shellcheck source=scripts/e2e/runner-lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/runner-lib.sh"
+# The real herdr: lib.sh sealed DESK_HERDR, and this script is one of the two that want it open.
+unset DESK_HERDR
 need_real_herdr
 command -v claude >/dev/null 2>&1 || fail "no claude"
 build
