@@ -36,8 +36,9 @@ say "schema holds the root and model enums ok"
 [ "$(cat "$STUB/router-hooks.txt")" = off ] || fail "DESK_HOOKS is '$(cat "$STUB/router-hooks.txt")' in the router"
 say "DESK_HOOKS=off ok"
 
-[ "$(task_field 1 root)" = "$REPO_ROOT" ] && [ "$(task_field 1 isolation)" = in-place ] && [ "$(task_field 1 model)" = opus ] ||
+if [ "$(task_field 1 root)" != "$REPO_ROOT" ] || [ "$(task_field 1 isolation)" != in-place ] || [ "$(task_field 1 model)" != opus ]; then
   fail "the route is not on the task: $(on home desk show T1 --json | jq -c .task)"
+fi
 task_has_note 1 "routed to $REPO_ROOT (in-place, opus): the task is about the shop app" || fail "no 'routed to' note"
 say "route saved on the task ok"
 run 0 on home desk set T1 review

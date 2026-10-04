@@ -38,8 +38,8 @@ sleep 2
 task_is 4 ready || fail "T4 is $(task_field 4 status), not ready, with three runs live"
 [ "$(live_count)" = 3 ] || fail "$(live_count) runs are live, not 3"
 say "three running, fourth ready ok"
-[ "$(run_field 1 isolation)" = self ] && [ "$(run_field 2 isolation)" = self ] || fail "the first two runs are not self runs"
-[ "$(run_field 1 root)" = "$SELF" ] && [ "$(run_field 2 root)" = "$SELF" ] || fail "the first two runs are not on one root"
+if [ "$(run_field 1 isolation)" != self ] || [ "$(run_field 2 isolation)" != self ]; then fail "the first two runs are not self runs"; fi
+if [ "$(run_field 1 root)" != "$SELF" ] || [ "$(run_field 2 root)" != "$SELF" ]; then fail "the first two runs are not on one root"; fi
 say "self root runs two ok"
 
 run 0 on home desk set T1 review

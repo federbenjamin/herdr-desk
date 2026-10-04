@@ -41,7 +41,7 @@ say "runs shows T1 running ok"
 
 PANE=$(run_field 1 pane)
 WS=$(run_field 1 workspace)
-[ -n "$PANE" ] && [ -n "$WS" ] || fail "the run row has no workspace or pane"
+if [ -z "$PANE" ] || [ -z "$WS" ]; then fail "the run row has no workspace or pane"; fi
 task_has_note 1 "run 1: workspace $WS, pane $PANE" || fail "no note 'run 1: workspace $WS, pane $PANE'"
 say "note records workspace and pane ok"
 

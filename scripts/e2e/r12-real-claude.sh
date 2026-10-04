@@ -51,7 +51,7 @@ say "T1 $(task_field 1 status)"
 [ "$(on home desk runs --all --json | jq 'length')" = 1 ] || fail "more than one run was started"
 ROUTERS=$(grep -cx router "$CALLS" || true)
 WORKERS=$(grep -cx worker "$CALLS" || true)
-[ "$ROUTERS" = 1 ] && [ "$WORKERS" = 1 ] || fail "claude ran $ROUTERS times as the router and $WORKERS times as the worker, not once each"
+if [ "$ROUTERS" != 1 ] || [ "$WORKERS" != 1 ]; then fail "claude ran $ROUTERS times as the router and $WORKERS times as the worker, not once each"; fi
 say "real runs: 1 router, 1 worker"
 
 stop_daemon home
