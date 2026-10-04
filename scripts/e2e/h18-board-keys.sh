@@ -35,7 +35,7 @@ term_keys board r
 wait_task home 1 .task.status review
 ok "r sets review"
 term_keys board x
-wait_task home 1 .task.status done
+wait_task home 1 .task.status "done"
 term_has board "done? y/n" && fail "x on a review task asked"
 ok "x on review sets done and asks nothing"
 board_unpick board
@@ -45,7 +45,7 @@ term_keys board x
 term_wait board "mark T2 done? y/n"
 [ "$(task_field home 2 .task.status)" = open ] || fail "T2 changed before y"
 term_keys board y
-wait_task home 2 .task.status done
+wait_task home 2 .task.status "done"
 ok "x on open asks, and y sets done"
 board_unpick board
 

@@ -8,7 +8,7 @@ run 0 on home desk add -t "apple in alpha" -p "$E2E/work/alpha" --thread red
 run 0 on home desk add -t "banana in beta" -p "$E2E/work/beta" --thread blue
 run 0 on home desk add -t "cherry without a project" --desk --thread red
 run 0 on home desk add -t "durian is finished" --desk
-run 0 on home desk set 4 done
+run 0 on home desk set 4 "done"
 
 term_start board 100 30 home "$BIN/desk"
 term_wait board "apple in alpha"

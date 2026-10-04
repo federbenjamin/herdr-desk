@@ -233,7 +233,7 @@ term_wait_exit() {
 }
 
 # term_widest <name>: the width of the widest line on the screen.
-term_widest() { term_screen "$1" | awk '{ n = length($0); if (n > m) m = n } END { print m + 0 }'; }
+term_widest() { term_screen "$1" | python3 -c 'import sys; print(max([len(l.rstrip("\n")) for l in sys.stdin] or [0]))'; }
 
 # board_pick <name> <task-number>: filter the board to one task with / so that it is the selected row.
 board_pick() {
