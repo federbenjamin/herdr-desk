@@ -8,6 +8,8 @@ REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 E2E=$(mktemp -d "${TMPDIR:-/tmp}/dk.XXXXXX")
 E2E=$(cd "$E2E" && pwd)
 BIN="$E2E/bin"
+# A hermetic script never finds a herdr on PATH: the name is sealed to a path that does not exist.
+export DESK_HERDR="$E2E/no-herdr"
 PIDS=()
 OUT=""
 ERR=""

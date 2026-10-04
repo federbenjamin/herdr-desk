@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -18,12 +20,29 @@ const (
 	maxStderr      = 300
 )
 
-// Find returns the path of the herdr binary on PATH.
-func Find() (string, error) { return exec.LookPath("herdr") }
+// Find returns the path of the herdr binary. DESK_HERDR, when set and not empty, must be an absolute path to an
+// executable regular file and is returned as is; PATH is not searched then. Unset or empty, herdr is looked up on PATH.
+func Find() (string, error) {
+	bin := os.Getenv("DESK_HERDR")
+	if bin == "" {
+		return exec.LookPath("herdr")
+	}
+	if !filepath.IsAbs(bin) {
+		return "", fmt.Errorf("DESK_HERDR %q is not an absolute path", bin)
+	}
+	info, err := os.Stat(bin)
+	if err != nil {
+		return "", fmt.Errorf("DESK_HERDR %q: %w", bin, err)
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+		return "", fmt.Errorf("DESK_HERDR %q is not an executable file", bin)
+	}
+	return bin, nil
+}
 
 // Client runs herdr commands.
 type Client struct {
-	Bin     string        // "" → "herdr"
+	Bin     string        // "" → Find at each command
 	Timeout time.Duration // 0 → 10s, per command
 }
 
@@ -160,7 +179,10 @@ func (c *Client) exec(ctx context.Context, name string, args ...string) ([]byte,
 	}
 	bin := c.Bin
 	if bin == "" {
-		bin = "herdr"
+		var err error
+		if bin, err = Find(); err != nil {
+			return nil, fmt.Errorf("herdr %s: %w", name, err)
+		}
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()

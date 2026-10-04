@@ -14,8 +14,9 @@ mkdir -p "$E2E/work"
 # shellcheck disable=SC2034 # read by the scripts that source this file
 WORK=$(cd "$E2E/work" && pwd -P)
 
-# use_fake_herdr: put scripts/e2e/fake-herdr.py first on PATH as `herdr`, with its state in $E2E/herdr. Call it before
-# any daemon starts: the daemon and every pane inherit PATH and FAKE_HERDR_DIR. A shim named sh in front of the real
+# use_fake_herdr: point DESK_HERDR at scripts/e2e/fake-herdr.py, and put it first on PATH as `herdr` for the stub
+# worker's pane, with its state in $E2E/herdr. Call it before any daemon starts: the daemon and every pane inherit
+# DESK_HERDR, PATH and FAKE_HERDR_DIR. A shim named sh in front of the real
 # one records the command each fake pane is given, in $E2E/herdr/pane-commands.log.
 use_fake_herdr() {
   mkdir -p "$E2E/fakebin" "$E2E/herdr"
@@ -28,6 +29,7 @@ fi
 exec /bin/sh "$@"
 SH
   chmod +x "$E2E/fakebin/sh"
+  export DESK_HERDR="$RUNNER_DIR/fake-herdr.py"
   export FAKE_HERDR_DIR="$E2E/herdr"
   export PATH="$E2E/fakebin:$PATH"
 }

@@ -14,6 +14,7 @@ import (
 
 	"github.com/federbenjamin/desk"
 	"github.com/federbenjamin/desk/internal/config"
+	"github.com/federbenjamin/desk/internal/herdr"
 	"github.com/federbenjamin/desk/internal/herdr/herdrtest"
 	"github.com/federbenjamin/desk/internal/model"
 	"github.com/federbenjamin/desk/internal/runner"
@@ -437,8 +438,8 @@ func TestStateUsesTheDocumentedPrecedenceAndPreventsFiring(t *testing.T) {
 			f := newFireFixture(t)
 			tc.adjust(f)
 			if tc.want == runner.StateNoHerdr {
-				if path, err := exec.LookPath("herdr"); err == nil {
-					t.Fatalf("herdr found at %q with empty PATH", path)
+				if path, err := herdr.Find(); err == nil {
+					t.Fatalf("herdr found at %q with empty PATH and the seal", path)
 				}
 			}
 			f.arm("not fired outside on", "agent")

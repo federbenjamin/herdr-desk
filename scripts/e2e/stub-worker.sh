@@ -30,12 +30,12 @@ printf '%s\n' "$$" >"$dir/pids-run$run"
 report() {
   local state=$1
   shift
-  herdr pane report-agent "$HERDR_PANE_ID" --source desk-e2e --agent stub --state "$state" "$@" >/dev/null
+  "${DESK_HERDR:-herdr}" pane report-agent "$HERDR_PANE_ID" --source desk-e2e --agent stub --state "$state" "$@" >/dev/null
 }
 
 report working --agent-session-id "$session"
 # The real herdr keeps an agent session only from the source herdr:claude, and report-agent does not set one.
-herdr pane report-agent-session "$HERDR_PANE_ID" --source herdr:claude --agent claude --agent-session-id "$session" >/dev/null
+"${DESK_HERDR:-herdr}" pane report-agent-session "$HERDR_PANE_ID" --source herdr:claude --agent claude --agent-session-id "$session" >/dev/null
 mode=busy
 if [ -f "$dir/mode-$task" ]; then mode=$(cat "$dir/mode-$task"); fi
 case "$mode" in

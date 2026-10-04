@@ -260,16 +260,7 @@ func TestRunnerMethodsRejectMalformedBodies(t *testing.T) {
 func startRunnerHome(t *testing.T) *testutil.Home {
 	t.Helper()
 
-	fakeDir := t.TempDir()
-	fakeHerdr, err := filepath.Abs(filepath.Join("..", "..", "scripts", "e2e", "fake-herdr.py"))
-	if err != nil {
-		t.Fatalf("make fake herdr path absolute: %v", err)
-	}
-	if err := os.Symlink(fakeHerdr, filepath.Join(fakeDir, "herdr")); err != nil {
-		t.Fatalf("symlink fake herdr: %v", err)
-	}
-	t.Setenv("PATH", fakeDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("FAKE_HERDR_DIR", fakeDir)
+	testutil.FakeHerdr(t)
 
 	cfg := config.Default()
 	cfg.Runner.Enabled = true
