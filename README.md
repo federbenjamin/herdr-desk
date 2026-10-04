@@ -156,7 +156,7 @@ daemon answers, so a script can ask whether one runs.
 | `desk decide <text> [--tag <k:v>]… [--replaces e<id>] [--task <task>]` | appends a decision |
 | `desk session [<id>] [--md] [--all] [--continues <old-id>]` | prints the session's journal view; `--json` prints it with the keys `session`, `work`, `todo`, `decisions`; `--all` shows hidden lines; `--continues` first links the session to an older one |
 | `desk capture` | reads one line on stdin: words starting `#` set the thread, `@` the project, the rest is the title. On a terminal (the herdr popup) a refused line prints its error and asks again, so the pane does not close on it; an empty line or end of input exits 0. Off a terminal it takes one line and exits with the code of its refusal, as every command does |
-| `desk daemon [run]` · `stop` · `restart` · `status` | runs or controls the daemon. A second `run` prints `already running` and exits 0; on a client it prints that there is nothing to run and exits 0. `status` never starts a daemon and exits 1 when none answers; its JSON carries `backup_ts`, the last successful backup (`null` when none), `backup_error`, the error of a failed attempt since, so a failing nightly backup shows there, and `config_changed`, true when the config file was written after the daemon started |
+| `desk daemon [run]` · `stop` · `restart` · `status` | runs or controls the daemon. A second `run` prints `already running` and exits 0; on a client it prints that there is nothing to run and exits 0. `status` never starts a daemon and exits 1 when none answers; its JSON carries `backup_ts`, the last successful backup (`null` when none), `backup_error`, the error of a failed attempt since, so a failing nightly backup shows there, and `config_changed`, true when the config file now holds a different config from the one the daemon started with |
 | `desk token [show]` · `rotate` | prints or rotates the token |
 | `desk client add <host:port> [--token-file <path>]` | joins a home; the token comes from the file or stdin, never an argument |
 | `desk roots [list]` · `add <path> [--about <a>] [--isolation <i>]` · `remove <path>` | edits `[[roots]]`. `add` takes an existing directory (anything else is a usage error, exit 2); on a path already listed it changes only the fields whose flags you pass, and `--about ""` clears one |
@@ -213,7 +213,7 @@ git_remote = ""   # set to back up events.jsonl nightly to this git remote
 ```
 
 The daemon reads the config file once, when it starts. A change needs `desk daemon restart` (on the
-home) to take effect. While the file is newer than the running daemon, each command that talks to
+home) to take effect. While the file holds a different config from the one the running daemon started with (a `touch`, or a rewrite with the same content, is not a change), each command that talks to
 the daemon, and each that writes the file (`setup`, `roots`, `client add`), prints one line on stderr
 naming `desk daemon restart`, and `desk daemon status` shows `"config_changed": true`.
 

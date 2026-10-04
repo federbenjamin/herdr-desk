@@ -173,36 +173,37 @@ func TestSaveReplacesExistingFileSecurelyAndKeepsWarningWithItsField(t *testing.
 	}
 }
 
-func TestSaveLeavesAnUnchangedFileAndItsMtimeAlone(t *testing.T) {
+func TestSaveLeavesAnUnchangedFileAlone(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	c := config.Default()
 	if err := c.Save(path); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
-	old := time.Now().Add(-time.Hour).Truncate(time.Second)
-	if err := os.Chtimes(path, old, old); err != nil {
+	first, err := os.Stat(path)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if err := c.Save(path); err != nil {
 		t.Fatalf("second Save() error = %v", err)
 	}
-	info, err := os.Stat(path)
+	second, err := os.Stat(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !info.ModTime().Equal(old) {
-		t.Errorf("Save of the same config moved the mtime to %s; want %s", info.ModTime(), old)
+	if !os.SameFile(first, second) {
+		t.Error("Save of the same config replaced the file; want it left alone")
 	}
 
 	c.Runner.Cap = 2
 	if err := c.Save(path); err != nil {
 		t.Fatalf("changed Save() error = %v", err)
 	}
-	if info, err = os.Stat(path); err != nil {
+	third, err := os.Stat(path)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if !info.ModTime().After(old) {
-		t.Error("Save of a changed config left the old mtime; want the file rewritten")
+	if os.SameFile(second, third) {
+		t.Error("Save of a changed config left the old file; want the file rewritten")
 	}
 }
 
@@ -336,31 +337,94 @@ func TestTokenOperationsKeepSingleTokenFilePrivate(t *testing.T) {
 	}
 }
 
-func TestConfigChangedSinceComparesTheFileTimeAndTreatsAMissingFileAsUnchanged(t *testing.T) {
+func TestConfigChangedComparesWhatTheFileHoldsWithWhatTheDaemonStartedWith(t *testing.T) {
 	t.Parallel()
 
-	p := config.Paths{ConfigDir: filepath.Join(t.TempDir(), "desk")}
-	started := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
-	if p.ConfigChangedSince(started) {
-		t.Error("ConfigChangedSince(no file) = true, want false")
-	}
-	if err := config.Default().Save(p.ConfigFile()); err != nil {
-		t.Fatal(err)
-	}
+	started := config.Default()
+	started.Backup.GitRemote = "somewhere:desk-backup.git"
+	digest := started.Digest()
+	longAgo := time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC)
+
 	for _, test := range []struct {
 		name  string
-		mtime time.Time
+		write func(t *testing.T, p config.Paths)
 		want  bool
 	}{
-		{"written after the start", started.Add(time.Second), true},
-		{"written before the start", started.Add(-time.Second), false},
-		{"written at the start", started, false},
+		{"the file the daemon started with", func(t *testing.T, p config.Paths) { save(t, p, started) }, false},
+		{"touched", func(t *testing.T, p config.Paths) {
+			save(t, p, started)
+			if err := os.Chtimes(p.ConfigFile(), longAgo, longAgo); err != nil {
+				t.Fatal(err)
+			}
+		}, false},
+		{"rewritten with the same bytes", func(t *testing.T, p config.Paths) {
+			save(t, p, started)
+			b, err := os.ReadFile(p.ConfigFile())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(p.ConfigFile(), b, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}, false},
+		{"reformatted to the same config", func(t *testing.T, p config.Paths) {
+			write(t, p, "# my notes\n[backup]\ngit_remote = 'somewhere:desk-backup.git'\n")
+		}, false},
+		{"changed straight after the start", func(t *testing.T, p config.Paths) {
+			save(t, p, started)
+			changed := started
+			changed.Runner.Cap = 2
+			save(t, p, changed)
+		}, true},
+		{"emptied back to the defaults", func(t *testing.T, p config.Paths) { save(t, p, config.Default()) }, true},
+		{"removed", func(t *testing.T, p config.Paths) {}, true},
+		{"no longer valid", func(t *testing.T, p config.Paths) { write(t, p, "no = [such key") }, true},
 	} {
-		if err := os.Chtimes(p.ConfigFile(), test.mtime, test.mtime); err != nil {
-			t.Fatal(err)
-		}
-		if got := p.ConfigChangedSince(started); got != test.want {
-			t.Errorf("ConfigChangedSince(%s) = %t, want %t", test.name, got, test.want)
-		}
+		t.Run(test.name, func(t *testing.T) {
+			p := config.Paths{ConfigDir: filepath.Join(t.TempDir(), "desk")}
+			test.write(t, p)
+			if got := p.ConfigChanged(digest); got != test.want {
+				t.Errorf("ConfigChanged = %t, want %t", got, test.want)
+			}
+		})
+	}
+
+	p := config.Paths{ConfigDir: filepath.Join(t.TempDir(), "desk")}
+	if p.ConfigChanged(config.Default().Digest()) {
+		t.Error("ConfigChanged(no file, daemon started on the defaults) = true, want false")
+	}
+	save(t, p, started)
+	if p.ConfigChanged("") {
+		t.Error("ConfigChanged(no digest recorded) = true, want false")
+	}
+}
+
+func save(t *testing.T, p config.Paths, c config.Config) {
+	t.Helper()
+	if err := c.Save(p.ConfigFile()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func write(t *testing.T, p config.Paths, text string) {
+	t.Helper()
+	if err := os.MkdirAll(p.ConfigDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p.ConfigFile(), []byte(text), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDigestSeparatesConfigsByContent(t *testing.T) {
+	t.Parallel()
+
+	a, b := config.Default(), config.Default()
+	if a.Digest() == "" || a.Digest() != b.Digest() {
+		t.Fatalf("Digest of equal configs = %q and %q, want one non-empty value", a.Digest(), b.Digest())
+	}
+	b.Home.Listen = "127.0.0.1:7411"
+	if a.Digest() == b.Digest() {
+		t.Error("Digest of configs with different listen addresses is equal")
 	}
 }
