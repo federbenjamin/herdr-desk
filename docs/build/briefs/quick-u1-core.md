@@ -614,9 +614,11 @@ type Result struct {
 }
 
 // Run exports every event to <BackupDir>/events.jsonl, commits when the file changed, pushes to the remote's
-// main branch, and records the time of the run in the backup state file.
+// main branch, and records the time of the run in the backup state file. A failed run records its error
+// there instead, keeping the last successful time; a later success clears the error.
 func Run(ctx context.Context, st *store.Store, p config.Paths, remote string) (Result, error)
-// Due reports whether no run is recorded or the last recorded run is over 24 hours before now.
+// Due reports whether no successful run is recorded or the last one is over 24 hours before now, so a
+// failed run is tried again on the next tick.
 func Due(p config.Paths, now time.Time) bool
 ```
 
@@ -651,6 +653,10 @@ type Status struct {
 	StartedTS time.Time            `json:"started_ts"`
 	RunnerOn  bool                 `json:"runner_on"`
 	Tasks     map[model.Status]int `json:"tasks"`
+	// BackupTS is the last successful backup run, nil when none is recorded. BackupError is the error of the
+	// last attempt when it failed after that run, "" otherwise. Both come from the backup state file.
+	BackupTS    *time.Time `json:"backup_ts"`
+	BackupError string     `json:"backup_error"`
 }
 type TaskList struct {
 	Tasks      []model.Task `json:"tasks"`
@@ -677,6 +683,11 @@ type ClientOptions struct {
 	Spawn   func(config.Paths) error // starts the daemon on a home; nil → never
 	// Refused is called once for each queued entry the home refuses for good; nil → the entry is dropped silently.
 	Refused func(kind model.Kind, r *model.Refusal)
+	// Token, when set, is used in place of the token file; `client add` checks a home with it before saving it.
+	Token string
+	// Unreachable is called with the error each time a write is queued because the home did not answer;
+	// nil → not reported. Append's results are unchanged: (Event{}, true, nil).
+	Unreachable func(err error)
 }
 func NewClient(o ClientOptions) *Client
 
@@ -832,7 +843,7 @@ The caller's session is the first of: `--session <id>`, the `DESK_SESSION` varia
 | `desk set <task> [<status>] [--thread <t>] [--root <r>] [--isolation <i>] [--model <m>] [--archive\|--unarchive] [--ref <ref>] [--merged]` | patches fields. `review --merged` writes the status `runner.on_merged` names | `T<n> <status>`; `--json` the task |
 | `desk edit <task> [--title <t>] [--notes <n>]` | replaces the title or the notes | `T<n>` |
 | `desk steps <task> add <text>` · `toggle <id>` · `rename <id> <text>` · `remove <id>` | step ids are `s1`, `s2`, … per task, never reused | the task's steps, one per line: `s1 [ ] text` |
-| `desk note <text> [--task <task>] [--ref <ref>] [--branch <b>] [--tag <t>]…` | appends a note | `e<id>`, or `queued` when the home is unreachable (exit 0, and stderr says it will be forwarded) |
+| `desk note <text> [--task <task>] [--ref <ref>] [--branch <b>] [--tag <t>]…` | appends a note | `e<id>`, or `queued` when the home is unreachable (exit 0, and stderr says it will be forwarded and why the home did not answer, from `ClientOptions.Unreachable`) |
 | `desk note --merged --branch <b> [--pr <n>] [--sha <sha>] [<text>]` | appends a `merged` event for the branch | same |
 | `desk decide <text> [--tag <k:v>]… [--replaces e<id>] [--task <task>]` | appends a decision | same |
 | `desk session [<id>] [--md] [--all] [--continues <old-id>]` | prints the session's view as markdown (`--md` is the default; `--json` prints the `View`). `--continues` first appends a `continues` event. No id: the caller's session | the view |
