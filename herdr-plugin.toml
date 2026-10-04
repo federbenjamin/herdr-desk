@@ -1,0 +1,55 @@
+# herdr-plugin.toml: manifest for the desk plugin (https://github.com/federbenjamin/desk).
+
+id = "desk"
+name = "desk"
+version = "0.1.0"
+min_herdr_version = "0.9.0"
+description = "A task board and session journal: one home per desk, a CLI, and a board pane."
+platforms = ["linux", "macos"]
+
+# Installs a checksum-verified release binary for this version and platform, else builds from
+# source with Go. It puts `desk` on your PATH (~/.local/bin) when none is there.
+[[build]]
+platforms = ["linux", "macos"]
+command = ["/bin/sh", "scripts/fetch-or-build.sh"]
+
+# Starts the daemon with herdr. A second start is a clean no-op, and on a client machine it
+# prints a note and exits 0.
+[[startup]]
+platforms = ["linux", "macos"]
+command = ["desk", "daemon"]
+
+[[panes]]
+id = "board"
+title = "desk"
+description = "The desk board"
+placement = "split"
+command = ["desk"]
+
+[[panes]]
+id = "capture"
+title = "desk capture"
+description = "Add a task from one line"
+placement = "popup"
+command = ["desk", "capture"]
+
+[[actions]]
+id = "open-board"
+title = "desk: open board"
+description = "Open the desk board in this workspace, or focus it when it is already open"
+contexts = ["global", "workspace"]
+command = ["sh", "scripts/open-pane.sh", "board"]
+
+[[actions]]
+id = "capture"
+title = "desk: capture"
+description = "Add a task from one line in a popup"
+contexts = ["global", "workspace"]
+command = ["sh", "scripts/open-pane.sh", "capture"]
+
+[[actions]]
+id = "restart"
+title = "desk: restart daemon"
+description = "Stop the desk daemon and start a fresh one"
+contexts = ["global"]
+command = ["desk", "daemon", "restart"]
