@@ -1,12 +1,12 @@
 #!/bin/sh
 # coverage.sh: runs the tests with coverage and exits 1 when statement coverage of ./internal/...
-# (without internal/testutil) is under 80%, or when internal/store, internal/journal, or
-# internal/secretscan is under 90%. A statement counts as covered when any package's tests run it.
+# (without internal/testutil) is under 80%, or when internal/store, internal/journal,
+# internal/secretscan, or internal/board is under 90%. A statement counts as covered when any package's tests run it.
 set -eu
 
 total_min=80
 strict_min=90
-strict_pkgs="internal/store internal/journal internal/secretscan"
+strict_pkgs="internal/store internal/journal internal/secretscan internal/board"
 
 cd "$(dirname "$0")/.."
 

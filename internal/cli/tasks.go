@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/federbenjamin/desk/internal/api"
+	"github.com/federbenjamin/desk/internal/board"
 	"github.com/federbenjamin/desk/internal/gitcmd"
 	"github.com/federbenjamin/desk/internal/model"
 	"github.com/federbenjamin/desk/internal/store"
@@ -499,7 +500,7 @@ func (a *app) captureLine(cmd *cobra.Command, line string, asJSON bool) error {
 	if err != nil {
 		return err
 	}
-	t, err := c.AddTask(a.ctx, actor, store.AddTaskInput{TaskData: parseCapture(line)})
+	t, err := c.AddTask(a.ctx, actor, store.AddTaskInput{TaskData: model.ParseCapture(line)})
 	if err != nil {
 		return err
 	}
@@ -511,22 +512,24 @@ func (a *app) captureLine(cmd *cobra.Command, line string, asJSON bool) error {
 	return nil
 }
 
-// parseCapture splits a captured line: #word sets the thread, @word the project, the rest is the title.
-func parseCapture(line string) model.TaskData {
-	var d model.TaskData
-	var title []string
-	for _, w := range strings.Fields(line) {
-		switch {
-		case len(w) > 1 && w[0] == '#':
-			d.Thread = w[1:]
-		case len(w) > 1 && w[0] == '@':
-			d.Project = w[1:]
-		default:
-			title = append(title, w)
-		}
+// capturePopup runs the capture popup and prints the task that lands.
+func (a *app) capturePopup() error {
+	c, err := a.client()
+	if err != nil {
+		return err
 	}
-	d.Title = strings.Join(title, " ")
-	return d
+	o, err := a.boardOptions(c)
+	if err != nil {
+		return err
+	}
+	t, err := board.Capture(a.ctx, o)
+	if err != nil {
+		return err
+	}
+	if t != nil {
+		a.say("T%d", t.Number)
+	}
+	return nil
 }
 
 func (a *app) captureCmd() *cobra.Command {
@@ -537,6 +540,9 @@ func (a *app) captureCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 	}
 	cmd.RunE = a.do(func(cmd *cobra.Command, _ []string) error {
+		if a.interactive(asJSON) {
+			return a.capturePopup()
+		}
 		in := bufio.NewReader(a.env.Stdin)
 		// On a terminal the command may run in a pane that closes when it exits, so a refused line is shown and
 		// asked for again. Anywhere else a refusal ends the command, as it does for every other one.
