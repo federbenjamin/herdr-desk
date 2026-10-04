@@ -2,11 +2,13 @@ package herdr_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -16,14 +18,38 @@ import (
 )
 
 func TestCreateWorkspaceReturnsIDs(t *testing.T) {
-	client := newFakeClient(t)
+	stateDir := t.TempDir()
+	client := newFakeClientIn(t, stateDir)
 	cwd := t.TempDir()
-	created, err := client.CreateWorkspace(context.Background(), cwd, "test workspace", []string{"FROM_WORKSPACE=green"})
+	env := []string{"FROM_WORKSPACE=green"}
+	created, err := client.CreateWorkspace(context.Background(), cwd, "test workspace", env)
 	if err != nil {
 		t.Fatalf("CreateWorkspace() error = %v", err)
 	}
 	if created.Workspace == "" || created.Pane == "" {
 		t.Fatalf("CreateWorkspace() = %#v, want workspace and pane IDs", created)
+	}
+	var state struct {
+		Workspaces map[string]struct {
+			Cwd   string   `json:"cwd"`
+			Label string   `json:"label"`
+			Env   []string `json:"env"`
+		} `json:"workspaces"`
+	}
+	stateFile := filepath.Join(stateDir, "state.json")
+	bytes, err := os.ReadFile(stateFile)
+	if err != nil {
+		t.Fatalf("read fake-herdr state: %v", err)
+	}
+	if err := json.Unmarshal(bytes, &state); err != nil {
+		t.Fatalf("decode fake-herdr state: %v", err)
+	}
+	workspace, ok := state.Workspaces[created.Workspace]
+	if !ok {
+		t.Fatalf("fake-herdr state has no workspace %q", created.Workspace)
+	}
+	if workspace.Cwd != cwd || workspace.Label != "test workspace" || !slices.Equal(workspace.Env, env) {
+		t.Fatalf("fake-herdr workspace = %#v, want cwd %q, label %q, env %#v", workspace, cwd, "test workspace", env)
 	}
 }
 
@@ -48,7 +74,11 @@ func TestRunStartsTheCommandInTheWorkspaceCwdAndEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read command output: %v", err)
 	}
-	want := cwd + ":green:" + created.Pane
+	physicalCwd, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		t.Fatalf("resolve workspace cwd: %v", err)
+	}
+	want := physicalCwd + ":green:" + created.Pane
 	if string(got) != want {
 		t.Errorf("command environment = %q, want %q", got, want)
 	}
@@ -135,7 +165,7 @@ func TestClosePaneKillsItsProcessesAndRemovesThePane(t *testing.T) {
 func TestClientErrorsNameTheFailedSubcommand(t *testing.T) {
 	t.Run("fake failure", func(t *testing.T) {
 		client := newFakeClient(t)
-		t.Setenv("FAKE_HERDR_FAIL", "workspace->create")
+		t.Setenv("FAKE_HERDR_FAIL", "workspace-create")
 		_, err := client.CreateWorkspace(context.Background(), t.TempDir(), "test", nil)
 		if err == nil || !strings.Contains(err.Error(), "workspace create") {
 			t.Fatalf("CreateWorkspace() error = %v, want workspace create", err)
@@ -177,7 +207,8 @@ func TestClientErrorsNameTheFailedSubcommand(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "pane list") {
 			t.Fatalf("Panes() error = %v, want pane list", err)
 		}
-		if got := strings.Count(err.Error(), "x"); got > 300 {
+		stderr := strings.TrimPrefix(err.Error(), "herdr pane list: exit status 1: ")
+		if got := len(stderr); got > 300 {
 			t.Fatalf("Panes() error holds %d stderr bytes, want at most 300: %q", got, err)
 		}
 	})
@@ -194,11 +225,16 @@ func writeHerdrStub(t *testing.T, body string) string {
 
 func newFakeClient(t *testing.T) herdr.Client {
 	t.Helper()
+	return newFakeClientIn(t, t.TempDir())
+}
+
+func newFakeClientIn(t *testing.T, stateDir string) herdr.Client {
+	t.Helper()
 	bin, err := filepath.Abs(filepath.Join("..", "..", "scripts", "e2e", "fake-herdr.py"))
 	if err != nil {
 		t.Fatalf("make fake-herdr path absolute: %v", err)
 	}
-	t.Setenv("FAKE_HERDR_DIR", t.TempDir())
+	t.Setenv("FAKE_HERDR_DIR", stateDir)
 	return herdr.Client{Bin: bin, Timeout: 2 * time.Second}
 }
 

@@ -30,7 +30,8 @@ func TestHerdrImplementationsSharePaneContract(t *testing.T) {
 		{
 			name: "fake command",
 			new: func(t *testing.T) herdrContract {
-				return newFakeClient(t)
+				client := newFakeClient(t)
+				return &client
 			},
 		},
 	}
