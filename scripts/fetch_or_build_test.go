@@ -202,6 +202,56 @@ func TestFetchOrBuildFallsBackToSource(t *testing.T) {
 	}
 }
 
+func TestFetchOrBuildReplacesTheDeskItInstalledBefore(t *testing.T) {
+	r := newRig(t)
+	r.release(t)
+	if err := os.MkdirAll(r.install, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := filepath.Join(r.install, "desk")
+	writeExec(t, old, "#!/bin/sh\necho old\n")
+	before, err := os.Stat(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.env = append(r.env, "PATH="+r.install+":"+filepath.Join(r.dir, "stubs")+":/usr/bin:/bin")
+
+	out := r.run(t)
+
+	if got := readFile(t, old); got != prebuilt {
+		t.Errorf("the install dir holds %q, want the released binary", got)
+	}
+	after, err := os.Stat(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.SameFile(before, after) {
+		t.Error("the installed desk was written in place; want a new file renamed over it")
+	}
+	if !strings.Contains(out, "updated "+old) || !strings.Contains(out, "desk daemon restart") {
+		t.Errorf("output does not say the desk was updated and the daemon needs a restart:\n%s", out)
+	}
+}
+
+func TestFetchOrBuildLeavesADeskFromElsewhereAlone(t *testing.T) {
+	r := newRig(t)
+	r.release(t)
+	other := filepath.Join(r.dir, "stubs", "desk")
+	writeExec(t, other, "#!/bin/sh\necho other\n")
+
+	out := r.run(t)
+
+	if got := readFile(t, other); !strings.Contains(got, "echo other") {
+		t.Errorf("the desk from elsewhere was changed to %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(r.install, "desk")); err == nil {
+		t.Error("a desk was installed although another install owns the one on PATH")
+	}
+	if !strings.Contains(out, other) {
+		t.Errorf("output does not name the desk on PATH (%s):\n%s", other, out)
+	}
+}
+
 func TestFetchOrBuildFailsWhenItCannotInstall(t *testing.T) {
 	r := newRig(t)
 	r.release(t)
