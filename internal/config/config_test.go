@@ -173,6 +173,39 @@ func TestSaveReplacesExistingFileSecurelyAndKeepsWarningWithItsField(t *testing.
 	}
 }
 
+func TestSaveLeavesAnUnchangedFileAndItsMtimeAlone(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	c := config.Default()
+	if err := c.Save(path); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	old := time.Now().Add(-time.Hour).Truncate(time.Second)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Save(path); err != nil {
+		t.Fatalf("second Save() error = %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.ModTime().Equal(old) {
+		t.Errorf("Save of the same config moved the mtime to %s; want %s", info.ModTime(), old)
+	}
+
+	c.Runner.Cap = 2
+	if err := c.Save(path); err != nil {
+		t.Fatalf("changed Save() error = %v", err)
+	}
+	if info, err = os.Stat(path); err != nil {
+		t.Fatal(err)
+	}
+	if !info.ModTime().After(old) {
+		t.Error("Save of a changed config left the old mtime; want the file rewritten")
+	}
+}
+
 func TestValidateRefusesWildcardListenAndInvalidEnumValues(t *testing.T) {
 	for _, tt := range []struct {
 		name   string
