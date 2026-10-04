@@ -42,9 +42,9 @@ ok "the header counts 1 live run"
 # the method, or the board's own reason), or, with <blocked> yes, the task is blocked because a home that serves
 # runs.kill killed the run. Only the kill may count the blocked task: the kill leaves it so.
 answered() {
-  local method=$1 blocked=$2 i t
+  local method=$1 blocked=$2 t
   shift 2
-  for i in $(seq 1 100); do
+  for _ in $(seq 1 100); do
     for t in "$@"; do
       if term_has board "$t"; then return 0; fi
     done

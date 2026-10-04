@@ -38,8 +38,8 @@ record() { OPENED+=("$1"); }
 # await_board: poll until a pane of ours that is not recorded yet appears, record it, and leave its id in PANE. It
 # is not run in a subshell: the record must reach the caller's array.
 await_board() {
-  local i id
-  for i in $(seq 1 100); do
+  local id
+  for _ in $(seq 1 100); do
     for id in $(ours); do
       if ! printf '%s\n' "${OPENED[@]:-}" | grep -qxF "$id"; then
         record "$id"
@@ -69,8 +69,7 @@ pane_text() { "$HERDR" pane read "$1" --source visible 2>/dev/null || true; }
 
 # pane_wait <pane> <text>: poll until the pane's screen holds the text.
 pane_wait() {
-  local i
-  for i in $(seq 1 100); do
+  for _ in $(seq 1 100); do
     case "$(pane_text "$1")" in *"$2"*) return 0 ;; esac
     sleep 0.1
   done

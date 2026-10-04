@@ -183,8 +183,8 @@ term_has() { term_screen "$1" | grep -qF -- "$2"; }
 
 # term_wait <name> <text>: poll until the screen holds the text, up to 10 s; on a timeout print the screen.
 term_wait() {
-  local name=$1 text=$2 i
-  for i in $(seq 1 100); do
+  local name=$1 text=$2
+  for _ in $(seq 1 100); do
     if term_has "$name" "$text"; then return 0; fi
     sleep 0.1
   done
@@ -195,8 +195,8 @@ term_wait() {
 
 # term_wait_gone <name> <text>: poll until the screen no longer holds the text.
 term_wait_gone() {
-  local name=$1 text=$2 i
-  for i in $(seq 1 100); do
+  local name=$1 text=$2
+  for _ in $(seq 1 100); do
     if ! term_has "$name" "$text"; then return 0; fi
     sleep 0.1
   done
@@ -226,8 +226,8 @@ term_alive() { [ "$(tm display-message -p -t "$1" '#{pane_dead}')" = 0 ]; }
 
 # term_wait_exit <name>: poll until the program ends, up to 10 s, and print its exit code.
 term_wait_exit() {
-  local name=$1 i
-  for i in $(seq 1 100); do
+  local name=$1
+  for _ in $(seq 1 100); do
     if ! term_alive "$name"; then
       tm display-message -p -t "$name" '#{pane_dead_status}'
       return 0
@@ -259,8 +259,8 @@ task_field() { on "$1" desk show "$2" --json | jq -r "$3"; }
 
 # wait_task <machine> <task> <jq-filter> <want>: poll until the field equals the value, up to 10 s.
 wait_task() {
-  local i got
-  for i in $(seq 1 100); do
+  local got
+  for _ in $(seq 1 100); do
     got=$(task_field "$1" "$2" "$3" 2>/dev/null || true)
     if [ "$got" = "$4" ]; then return 0; fi
     sleep 0.1
