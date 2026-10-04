@@ -11,9 +11,18 @@ description: Use the desk CLI to read, add, and update the user's tasks, and to 
 
 - Set a task's status to `review` (work is done and waits for the user) or `blocked` (you cannot go on without the user).
 - Never set `ready` or `done`. The user arms a task with `ready` and closes it with `done`. A refusal `not-allowed` means you tried; stop and report it.
-- Propose new work with `--thread agent`. It lands in the user's inbox. It does not start anything.
+- Propose new work with `--thread agent`. It lands in the user's inbox. It does not start anything. Do not set the thread `agent` on a task that is already `ready`: that is `not-allowed`.
+- Never kill a run (`desk runs kill`) and never pause or resume the runner (`desk runner pause`, `desk runner resume`). They are the user's acts; an agent gets `not-allowed`.
 - Never edit a task's title or notes to answer a question. Write a note instead.
 - Never run bare `desk` or `desk capture` on a terminal. The board and the capture popup are the user's: they take the terminal until a key ends them. Read tasks with `desk list --json`.
+
+## When the runner started you
+
+A task the runner started has `DESK_TASK`, `DESK_RUN`, and `DESK_SESSION` set in your pane, and your first message says what to do. Hand the task back when you stop:
+
+- Finished: `desk set T12 review --ref <a file or PR that shows the work>`; add `--merged` when that PR is merged.
+- You need an answer: `desk note --task T12 "<what you need>"`, then `desk set T12 blocked`. The user adds a note with the answer and arms the task again; the next run's first message holds the history.
+- Every write you make carries your run id. A refusal `stale-run` means a newer run owns the task: stop and do nothing more to it.
 
 ## Commands
 
@@ -50,7 +59,8 @@ Never retry blind. Read the code first.
 | 2 | usage error, or the refusal `bad-input` | fix the arguments |
 | 3 | the store or the home could not be reached or read (`home-unreachable`, `bad-token`, `scan-failed`) | do not retry in a loop; tell the user. `note` and `decide` are queued and sent later (stdout says `queued`); for `bad-token` the user must fix the client's token first |
 
-Refusal codes you may see: `unknown-task`, `unknown-project`, `unknown-step`, `unknown-event`, `empty-title`, `empty-text`, `secret-detected`, `not-allowed`, `bad-input`, `home-unreachable`, `bad-token`, `scan-failed`.
+Refusal codes you may see: `unknown-task`, `unknown-project`, `unknown-step`, `unknown-event`, `empty-title`, `empty-text`, `secret-detected`, `not-allowed`, `stale-run`, `no-run`, `bad-input`, `home-unreachable`, `bad-token`, `scan-failed`.
 
 - `secret-detected` names the pattern, never the text. Remove the secret and write the call again.
+- `stale-run` is final: a newer run owns the task, so do not write to it again.
 - `not-allowed` is final. Use `review` or `blocked`, or propose with `--thread agent`.

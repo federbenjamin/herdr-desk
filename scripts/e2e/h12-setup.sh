@@ -45,6 +45,9 @@ grep -Eq "session_env = [\"']CLAUDE_CODE_SESSION_ID[\"']" "$CFG" || fail "no ses
 grep -q -- '--safe-mode' "$CFG" || fail "the router template lacks --safe-mode"
 grep -q -- '--permission-mode' "$CFG" || fail "the worker template lacks --permission-mode"
 say "profile templates ok"
+python3 -c 'import sys, tomllib; c = tomllib.load(open(sys.argv[1], "rb")); sys.exit(0 if c["agent"]["models"] == ["sonnet", "opus"] else 1)' "$CFG" ||
+  fail "the profile did not write models = [\"sonnet\", \"opus\"]"
+say "profile models ok"
 grep -q '^name: desk' "$E2E/s/skills/desk/SKILL.md" || fail "the skill file was not written"
 cmp -s "$E2E/s/skills/desk/SKILL.md" "$REPO/profiles/claude-code/skills/desk/SKILL.md" || fail "the written skill differs from the repo's"
 say "skill written ok"

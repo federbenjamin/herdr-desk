@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -29,7 +31,8 @@ type Env struct {
 	Cwd       string
 	StdinTTY  bool
 	StdoutTTY bool
-	Spawn     func(config.Paths) error // starts the daemon; nil → never (tests)
+	Spawn     func(config.Paths) error               // starts the daemon; nil → never (tests)
+	Exec      func(path string, argv []string) error // replaces the process; nil → syscall.Exec with the process's environment
 }
 
 // The exit codes.
@@ -164,9 +167,14 @@ func (a *app) rootCmd() *cobra.Command {
 		a.addCmd(), a.listCmd(), a.showCmd(), a.setCmd(), a.editCmd(), a.stepsCmd(), a.captureCmd(),
 		a.noteCmd(), a.decideCmd(), a.sessionCmd(),
 		a.daemonCmd(), a.tokenCmd(), a.clientCmd(), a.rootsCmd(), a.setupCmd(), a.backupCmd(), a.versionCmd(),
-		a.hookCmd(),
+		a.hookCmd(), a.runsCmd(), a.runnerCmd(), a.workerCmd(),
 	)
 	return root
+}
+
+// execProcess replaces this process with path, keeping the environment.
+func execProcess(path string, argv []string) error {
+	return syscall.Exec(path, argv, os.Environ())
 }
 
 // config loads the config file once.

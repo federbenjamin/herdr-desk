@@ -19,10 +19,10 @@ const (
 	MethodEventsAppend = "events.append"
 	MethodSessionView  = "session.view"
 	MethodRunsList     = "runs.list"
-	MethodStatus       = "status"
-	MethodBackupRun    = "backup.run" // unix socket only
 	MethodRunsKill     = "runs.kill"
 	MethodRunnerPause  = "runner.pause"
+	MethodStatus       = "status"
+	MethodBackupRun    = "backup.run" // unix socket only
 )
 
 // The values of Status.RunnerState.
@@ -67,16 +67,15 @@ func (r AppendRequest) valid() bool {
 
 // Status is what the status method returns.
 type Status struct {
-	Version   string    `json:"version"`
-	Listen    string    `json:"listen"`
-	StartedTS time.Time `json:"started_ts"`
-	RunnerOn  bool      `json:"runner_on"`
-	// RunnerPaused is true while the runner starts no new run. RunnerCap is runner.cap. RunnerState is one of
-	// the RunnerState constants, and "" on a home that has no runner.
-	RunnerPaused bool                 `json:"runner_paused"`
-	RunnerCap    int                  `json:"runner_cap"`
-	RunnerState  string               `json:"runner_state"`
-	Tasks        map[model.Status]int `json:"tasks"`
+	Version   string               `json:"version"`
+	Listen    string               `json:"listen"`
+	StartedTS time.Time            `json:"started_ts"`
+	RunnerOn  bool                 `json:"runner_on"`
+	Tasks     map[model.Status]int `json:"tasks"`
+	// RunnerState is off, paused, no-herdr, no-router, or on.
+	RunnerState  string `json:"runner_state"`
+	RunnerPaused bool   `json:"runner_paused"`
+	RunnerCap    int    `json:"runner_cap"` // runner.cap
 	// BackupTS is the last successful backup run, nil when none is recorded. BackupError is the error of the
 	// last attempt when it failed after that run, "" otherwise. Both come from the backup state file.
 	BackupTS    *time.Time `json:"backup_ts"`

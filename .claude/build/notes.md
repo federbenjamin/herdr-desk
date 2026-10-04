@@ -59,11 +59,27 @@ The global `/build` skill holds the process. This file holds what is true only o
   127.0.0.1, H9 downloads goreleaser through `go run`, and H16 starts a short `claude -p` run.
 - H15 links this tree into the running herdr as a disabled plugin and unlinks it. It refuses to
   run when a plugin with the id `desk` is already installed; that is `fail (env)`.
-- H25 opens and closes panes in the running herdr, which the operator may be using. It links a temp
-  copy of the manifest under the id `desk-e2e`, never touches the installed `desk` plugin, its
-  binary, or its home, closes only the panes that run in its temp plugin folder, and unlinks
-  `desk-e2e` on exit. A pane it opens shows on the operator's screen: run it as few times as the
-  claim needs.
+- H25 opens and closes panes in a real herdr. Run it in a separate named herdr session, never in one a person
+  is working in (the operator's ruling): start `herdr --session <name> server`, open one workspace in it
+  (`HERDR_SOCKET_PATH=<that session's socket> herdr workspace create --cwd <a folder> --focus`), run
+  `HERDR_SOCKET_PATH=<that session's socket> bash scripts/e2e/h25-herdr-panes.sh`, then
+  `herdr session stop <name>` and `herdr session delete <name>`. It links a temp copy of the manifest under the
+  id `desk-e2e`, never touches the installed `desk` plugin, its binary, or its home, closes only the panes that
+  run in its temp plugin folder, and unlinks `desk-e2e` on exit.
+- The runner's claims are `r01-spawn.sh` to `r12-real-claude.sh` (H1 to H12 of U2), built on `lib.sh` and
+  `runner-lib.sh`. `r01` to `r10` use a fake `herdr` (`fake-herdr.py`) and two stubs, and need no `herdr` or
+  `claude`. `r09` takes over a minute (`max_run_minutes = 1`).
+- `r11` needs the real `herdr` with its server running: it opens workspaces without focus in it and closes only
+  those a run row of its own desk names. `r12` needs the real `herdr` and the real `claude`, and spends one router
+  run and one worker run of the owner's quota: run it once, on purpose.
+- `r11` and `r12` can run against a separate named herdr session, away from one a person is working in: start
+  `herdr --session <name> server` from a shell with no agent-session variables, then run each script as
+  `env -u HERDR_PANE_ID -u HERDR_TAB_ID -u HERDR_WORKSPACE_ID HERDR_SOCKET_PATH=<that session's socket> bash scripts/e2e/r1x-….sh`.
+  The `herdr` command follows `HERDR_SOCKET_PATH`.
+- A worker that stops at a question before it has a session leaves its task `blocked` until a person answers in the
+  pane. `claude` does so at its trust question in a folder it has not seen, and every new worktree is one: `r12`
+  expects the task `blocked` first, answers the question in the pane, then waits for the hand-back. A failure after
+  its pane exists prints the pane's screen.
 - Nothing serves stale code: every script builds from the tree as it is.
 
 ## test-author
