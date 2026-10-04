@@ -1,7 +1,6 @@
 package board_test
 
 import (
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -118,28 +117,28 @@ func TestTaskPageEditorsAndIsolationEmitSetTask(t *testing.T) {
 		{
 			name: "saving notes preserves the editor contents",
 			keys: []tea.KeyPressMsg{
-				w4Key('e'),
-				w4Ctrl('s'),
+				press('e'),
+				ctrl('s'),
 			},
 			want: board.SetTask{Task: 7, Patch: model.Patch{Notes: w4String("existing note")}},
 		},
 		{
 			name: "submitting root preserves its populated value",
 			keys: []tea.KeyPressMsg{
-				w4Key('R'),
+				press('R'),
 				{Code: tea.KeyEnter},
 			},
 			want: board.SetTask{Task: 7, Patch: model.Patch{Root: w4String("/work/desk")}},
 		},
 		{
 			name: "isolation advances from unset to self",
-			keys: []tea.KeyPressMsg{w4Key('I')},
+			keys: []tea.KeyPressMsg{press('I')},
 			want: board.SetTask{Task: 7, Patch: model.Patch{Isolation: w4String("self")}},
 		},
 		{
 			name: "submitting model preserves its populated value",
 			keys: []tea.KeyPressMsg{
-				w4Key('M'),
+				press('M'),
 				{Code: tea.KeyEnter},
 			},
 			want: board.SetTask{Task: 7, Patch: model.Patch{Model: w4String("gpt-5")}},
@@ -151,7 +150,7 @@ func TestTaskPageEditorsAndIsolationEmitSetTask(t *testing.T) {
 			for _, key := range tc.keys {
 				s, effects = s.Update(key)
 			}
-			w4EffectsEqual(t, effects, []board.Effect{tc.want})
+			wantEffects(t, effects, []board.Effect{tc.want})
 		})
 	}
 }
@@ -175,12 +174,12 @@ func TestTaskPagePasteAppendsToTheOpenNotesEditor(t *testing.T) {
 	task := model.Task{Number: 44, Title: "Paste a note", Notes: "existing", Status: model.StatusOpen}
 	s := w4TaskPage(t, 90, task, nil)
 
-	s, effects := s.Update(w4Key('e'))
-	w4EffectsEqual(t, effects, nil)
+	s, effects := s.Update(press('e'))
+	wantEffects(t, effects, nil)
 	s, effects = s.Update(tea.PasteMsg{Content: " pasted"})
-	w4EffectsEqual(t, effects, nil)
-	_, effects = s.Update(w4Ctrl('s'))
-	w4EffectsEqual(t, effects, []board.Effect{board.SetTask{
+	wantEffects(t, effects, nil)
+	_, effects = s.Update(ctrl('s'))
+	wantEffects(t, effects, []board.Effect{board.SetTask{
 		Task:  44,
 		Patch: model.Patch{Notes: w4String("existing pasted")},
 	}})
@@ -205,32 +204,32 @@ func TestTaskPageStepKeysEmitTheirNamedOperations(t *testing.T) {
 	}{
 		{
 			name: "space toggles the first step",
-			keys: []tea.KeyPressMsg{w4Key('t'), {Code: tea.KeySpace}},
+			keys: []tea.KeyPressMsg{press('t'), {Code: tea.KeySpace}},
 			want: board.StepTask{Task: 8, Op: model.StepOp{Op: "toggle", ShortID: "s1"}},
 		},
 		{
 			name: "enter toggles the step reached with down",
-			keys: []tea.KeyPressMsg{w4Key('t'), {Code: tea.KeyDown}, {Code: tea.KeyEnter}},
+			keys: []tea.KeyPressMsg{press('t'), {Code: tea.KeyDown}, {Code: tea.KeyEnter}},
 			want: board.StepTask{Task: 8, Op: model.StepOp{Op: "toggle", ShortID: "s2"}},
 		},
 		{
 			name: "up returns selection to the preceding step",
-			keys: []tea.KeyPressMsg{w4Key('t'), {Code: tea.KeyDown}, {Code: tea.KeyUp}, {Code: tea.KeyEnter}},
+			keys: []tea.KeyPressMsg{press('t'), {Code: tea.KeyDown}, {Code: tea.KeyUp}, {Code: tea.KeyEnter}},
 			want: board.StepTask{Task: 8, Op: model.StepOp{Op: "toggle", ShortID: "s1"}},
 		},
 		{
 			name: "adding text creates an add operation",
-			keys: []tea.KeyPressMsg{w4Key('t'), w4Key('a'), w4Key('n'), w4Key('e'), w4Key('w'), {Code: tea.KeyEnter}},
+			keys: []tea.KeyPressMsg{press('t'), press('a'), press('n'), press('e'), press('w'), {Code: tea.KeyEnter}},
 			want: board.StepTask{Task: 8, Op: model.StepOp{Op: "add", Text: "new"}},
 		},
 		{
 			name: "renaming a step submits its populated text",
-			keys: []tea.KeyPressMsg{w4Key('t'), w4Key('r'), {Code: tea.KeyEnter}},
+			keys: []tea.KeyPressMsg{press('t'), press('r'), {Code: tea.KeyEnter}},
 			want: board.StepTask{Task: 8, Op: model.StepOp{Op: "rename", ShortID: "s1", Text: "first"}},
 		},
 		{
 			name: "removing a step uses its short id",
-			keys: []tea.KeyPressMsg{w4Key('t'), w4Key('x')},
+			keys: []tea.KeyPressMsg{press('t'), press('x')},
 			want: board.StepTask{Task: 8, Op: model.StepOp{Op: "remove", ShortID: "s1"}},
 		},
 	} {
@@ -240,7 +239,7 @@ func TestTaskPageStepKeysEmitTheirNamedOperations(t *testing.T) {
 			for _, key := range tc.keys {
 				s, effects = s.Update(key)
 			}
-			w4EffectsEqual(t, effects, []board.Effect{tc.want})
+			wantEffects(t, effects, []board.Effect{tc.want})
 		})
 	}
 }
@@ -255,24 +254,24 @@ func TestTaskPageOpenRefUsesOneRefOrAPickList(t *testing.T) {
 
 	t.Run("a single ref opens immediately", func(t *testing.T) {
 		s := w4TaskPage(t, 90, task, oneRef)
-		s, effects := s.Update(w4Key('o'))
+		s, effects := s.Update(press('o'))
 		_ = s
-		w4EffectsEqual(t, effects, []board.Effect{board.OpenRef{Ref: "docs/one.md", Dir: "/work/desk"}})
+		wantEffects(t, effects, []board.Effect{board.OpenRef{Ref: "docs/one.md", Dir: "/work/desk"}})
 	})
 
 	t.Run("several refs select the navigated item", func(t *testing.T) {
 		s := w4TaskPage(t, 90, task, twoRefs)
-		s, effects := s.Update(w4Key('o'))
-		w4EffectsEqual(t, effects, nil)
-		s, _ = s.Update(w4Key('j'))
+		s, effects := s.Update(press('o'))
+		wantEffects(t, effects, nil)
+		s, _ = s.Update(press('j'))
 		_, effects = s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-		w4EffectsEqual(t, effects, []board.Effect{board.OpenRef{Ref: "docs/two.md", Dir: "/work/desk"}})
+		wantEffects(t, effects, []board.Effect{board.OpenRef{Ref: "docs/two.md", Dir: "/work/desk"}})
 	})
 
 	t.Run("no refs explains why nothing opened", func(t *testing.T) {
 		s := w4TaskPage(t, 90, task, nil)
-		s, effects := s.Update(w4Key('o'))
-		w4EffectsEqual(t, effects, nil)
+		s, effects := s.Update(press('o'))
+		wantEffects(t, effects, nil)
 		if !strings.Contains(s.Text(), "T11 has no ref") {
 			t.Errorf("no-ref status = %q, want T11 has no ref", s.Text())
 		}
@@ -283,8 +282,8 @@ func TestTaskPageNotesEditorDrawsEditsAndCancelsWithoutSaving(t *testing.T) {
 	task := model.Task{Number: 12, Title: "Edit notes", Notes: "first\nsecond", Status: model.StatusOpen}
 	s := w4TaskPage(t, 90, task, nil)
 
-	s, effects := s.Update(w4Key('e'))
-	w4EffectsEqual(t, effects, nil)
+	s, effects := s.Update(press('e'))
+	wantEffects(t, effects, nil)
 	if text := s.Text(); !strings.Contains(text, "NOTES  editing") || !strings.Contains(text, "first\nsecond") {
 		t.Fatalf("notes editor = %q, want editing notes", text)
 	}
@@ -292,14 +291,14 @@ func TestTaskPageNotesEditorDrawsEditsAndCancelsWithoutSaving(t *testing.T) {
 		t.Fatalf("rendered notes editor = %q, want both note lines", render)
 	}
 
-	s, effects = s.Update(w4Key('!'))
-	w4EffectsEqual(t, effects, nil)
+	s, effects = s.Update(press('!'))
+	wantEffects(t, effects, nil)
 	if text := s.Text(); !strings.Contains(text, "first\nsecond!") {
 		t.Fatalf("typed notes = %q, want appended character", text)
 	}
 
 	s, effects = s.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
-	w4EffectsEqual(t, effects, nil)
+	wantEffects(t, effects, nil)
 	if text := s.Text(); strings.Contains(text, "editing") || !strings.Contains(text, "first\nsecond") {
 		t.Fatalf("cancelled notes editor = %q, want original saved notes", text)
 	}
@@ -309,30 +308,30 @@ func TestTaskPageNavigationOverlayAndQuitUseTaskPageKeys(t *testing.T) {
 	task := model.Task{Number: 19, Title: "Navigate", Status: model.StatusOpen, Notes: strings.Repeat("note\n", 40)}
 	s := w4TaskPage(t, 90, task, nil)
 	before := s.Text()
-	s, effects := s.Update(w4Key('j'))
-	w4EffectsEqual(t, effects, nil)
+	s, effects := s.Update(press('j'))
+	wantEffects(t, effects, nil)
 	if s.Text() == before {
 		t.Fatal("j did not scroll the long task page")
 	}
 	s, effects = s.Update(tea.KeyPressMsg{Code: tea.KeyUp})
-	w4EffectsEqual(t, effects, nil)
+	wantEffects(t, effects, nil)
 	if s.Text() != before {
 		t.Fatal("up did not restore the initial task-page position")
 	}
 
-	s, effects = s.Update(w4Key('?'))
-	w4EffectsEqual(t, effects, nil)
+	s, effects = s.Update(press('?'))
+	wantEffects(t, effects, nil)
 	if !strings.Contains(s.Text(), "KEYS") {
 		t.Fatalf("question mark = %q, want key overlay", s.Text())
 	}
 	s, effects = s.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
-	w4EffectsEqual(t, effects, nil)
+	wantEffects(t, effects, nil)
 	if strings.Contains(s.Text(), "KEYS") {
 		t.Fatalf("esc did not close key overlay: %q", s.Text())
 	}
 
-	_, effects = s.Update(w4Key('q'))
-	w4EffectsEqual(t, effects, []board.Effect{board.Quit{}})
+	_, effects = s.Update(press('q'))
+	wantEffects(t, effects, []board.Effect{board.Quit{}})
 }
 
 func TestTaskPageOfflineRefusesWritesInEditorsAndSteps(t *testing.T) {
@@ -342,18 +341,18 @@ func TestTaskPageOfflineRefusesWritesInEditorsAndSteps(t *testing.T) {
 		keys []tea.KeyPressMsg
 		want string
 	}{
-		{"notes", []tea.KeyPressMsg{w4Key('e')}, "offline: e needs the home"},
-		{"root", []tea.KeyPressMsg{w4Key('R')}, "offline: R needs the home"},
-		{"model", []tea.KeyPressMsg{w4Key('M')}, "offline: M needs the home"},
-		{"isolation", []tea.KeyPressMsg{w4Key('I')}, "offline: I needs the home"},
-		{"step toggle", []tea.KeyPressMsg{w4Key('t'), {Code: tea.KeySpace}}, "offline: space needs the home"},
+		{"notes", []tea.KeyPressMsg{press('e')}, "offline: e needs the home"},
+		{"root", []tea.KeyPressMsg{press('R')}, "offline: R needs the home"},
+		{"model", []tea.KeyPressMsg{press('M')}, "offline: M needs the home"},
+		{"isolation", []tea.KeyPressMsg{press('I')}, "offline: I needs the home"},
+		{"step toggle", []tea.KeyPressMsg{press('t'), {Code: tea.KeySpace}}, "offline: space needs the home"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := w4TaskPageData(t, 90, board.Config{Now: func() time.Time { return w4Now }}, board.Data{Offline: true, Tasks: []model.Task{task}}, task, nil)
 			for _, key := range tc.keys {
 				var effects []board.Effect
 				s, effects = s.Update(key)
-				w4EffectsEqual(t, effects, nil)
+				wantEffects(t, effects, nil)
 			}
 			if !strings.Contains(s.Text(), tc.want) {
 				t.Fatalf("offline %s = %q, want %q", tc.name, s.Text(), tc.want)
@@ -373,21 +372,21 @@ func TestTaskPageDelegatesStatusAndRunnerKeys(t *testing.T) {
 		key  tea.KeyPressMsg
 		want board.Effect
 	}{
-		{"ready sets the ready status", open, w4Key('n'), board.SetTask{Task: 13, Patch: model.Patch{Status: w4Status(model.StatusReady)}}},
-		{"start sets the started status", open, w4Key('s'), board.SetTask{Task: 13, Patch: model.Patch{Status: w4Status(model.StatusStarted)}}},
-		{"block sets the blocked status", open, w4Key('b'), board.SetTask{Task: 13, Patch: model.Patch{Status: w4Status(model.StatusBlocked)}}},
-		{"review sets the review status", open, w4Key('r'), board.SetTask{Task: 13, Patch: model.Patch{Status: w4Status(model.StatusReview)}}},
-		{"review task finishes immediately", review, w4Key('x'), board.SetTask{Task: 14, Patch: model.Patch{Status: w4Status(model.StatusDone)}}},
-		{"agent toggles the task thread", open, w4Key('a'), board.SetTask{Task: 13, Patch: model.Patch{Thread: w4String("agent")}}},
-		{"focus carries the live run", open, w4Key('f'), board.FocusRun{Run: run}},
-		{"pause asks the runner to pause", open, w4Key('P'), board.PauseRunner{Paused: true}},
+		{"ready sets the ready status", open, press('n'), board.SetTask{Task: 13, Patch: model.Patch{Status: w4Status(model.StatusReady)}}},
+		{"start sets the started status", open, press('s'), board.SetTask{Task: 13, Patch: model.Patch{Status: w4Status(model.StatusStarted)}}},
+		{"block sets the blocked status", open, press('b'), board.SetTask{Task: 13, Patch: model.Patch{Status: w4Status(model.StatusBlocked)}}},
+		{"review sets the review status", open, press('r'), board.SetTask{Task: 13, Patch: model.Patch{Status: w4Status(model.StatusReview)}}},
+		{"review task finishes immediately", review, press('x'), board.SetTask{Task: 14, Patch: model.Patch{Status: w4Status(model.StatusDone)}}},
+		{"agent toggles the task thread", open, press('a'), board.SetTask{Task: 13, Patch: model.Patch{Thread: w4String("agent")}}},
+		{"focus carries the live run", open, press('f'), board.FocusRun{Run: run}},
+		{"pause asks the runner to pause", open, press('P'), board.PauseRunner{Paused: true}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := w4TaskPageData(t, 90, board.Config{CanFocus: true, Now: func() time.Time { return w4Now }}, board.Data{
 				Tasks: []model.Task{tc.task}, Runs: []model.Run{run}, Status: api.Status{RunnerState: api.RunnerStateOn},
 			}, tc.task, nil)
 			_, effects := s.Update(tc.key)
-			w4EffectsEqual(t, effects, []board.Effect{tc.want})
+			wantEffects(t, effects, []board.Effect{tc.want})
 		})
 	}
 }
@@ -397,26 +396,26 @@ func TestTaskPageConfirmsDoneAndKillAndLeavesThePage(t *testing.T) {
 	run := model.Run{Task: task.Number}
 	s := w4TaskPageData(t, 90, board.Config{Now: func() time.Time { return w4Now }}, board.Data{Tasks: []model.Task{task}, Runs: []model.Run{run}}, task, nil)
 
-	s, effects := s.Update(w4Key('x'))
-	w4EffectsEqual(t, effects, nil)
+	s, effects := s.Update(press('x'))
+	wantEffects(t, effects, nil)
 	if !strings.Contains(s.Text(), "mark T15 done? y/n") {
 		t.Fatalf("done prompt = %q", s.Text())
 	}
-	_, effects = s.Update(w4Key('y'))
-	w4EffectsEqual(t, effects, []board.Effect{board.SetTask{Task: 15, Patch: model.Patch{Status: w4Status(model.StatusDone)}}})
+	_, effects = s.Update(press('y'))
+	wantEffects(t, effects, []board.Effect{board.SetTask{Task: 15, Patch: model.Patch{Status: w4Status(model.StatusDone)}}})
 
 	s = w4TaskPageData(t, 90, board.Config{Now: func() time.Time { return w4Now }}, board.Data{Tasks: []model.Task{task}, Runs: []model.Run{run}}, task, nil)
-	s, effects = s.Update(w4Key('k'))
-	w4EffectsEqual(t, effects, nil)
+	s, effects = s.Update(press('k'))
+	wantEffects(t, effects, nil)
 	if !strings.Contains(s.Text(), "kill T15's run? y/n") {
 		t.Fatalf("kill prompt = %q", s.Text())
 	}
-	_, effects = s.Update(w4Key('y'))
-	w4EffectsEqual(t, effects, []board.Effect{board.KillRun{Task: 15}})
+	_, effects = s.Update(press('y'))
+	wantEffects(t, effects, []board.Effect{board.KillRun{Task: 15}})
 
 	s = w4TaskPage(t, 90, task, nil)
 	s, effects = s.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
-	w4EffectsEqual(t, effects, nil)
+	wantEffects(t, effects, nil)
 	if text := s.Text(); !strings.Contains(text, "desk  all") || strings.Contains(text, "e notes") {
 		t.Fatalf("esc from task page = %q, want board page", text)
 	}
@@ -426,34 +425,34 @@ func TestTaskPageStepModeHandlesEmptyStepsAndExits(t *testing.T) {
 	task := model.Task{Number: 16, Title: "Start steps", Status: model.StatusOpen}
 	s := w4TaskPage(t, 90, task, nil)
 
-	s, effects := s.Update(w4Key('t'))
-	w4EffectsEqual(t, effects, nil)
+	s, effects := s.Update(press('t'))
+	wantEffects(t, effects, nil)
 	if !strings.Contains(s.Text(), "a add  r rename  x remove") {
 		t.Fatalf("step mode = %q", s.Text())
 	}
-	s, effects = s.Update(w4Key('a'))
-	w4EffectsEqual(t, effects, nil)
-	s, effects = s.Update(w4Key('n'))
-	w4EffectsEqual(t, effects, nil)
-	s, effects = s.Update(w4Key('e'))
-	w4EffectsEqual(t, effects, nil)
-	s, effects = s.Update(w4Key('w'))
-	w4EffectsEqual(t, effects, nil)
+	s, effects = s.Update(press('a'))
+	wantEffects(t, effects, nil)
+	s, effects = s.Update(press('n'))
+	wantEffects(t, effects, nil)
+	s, effects = s.Update(press('e'))
+	wantEffects(t, effects, nil)
+	s, effects = s.Update(press('w'))
+	wantEffects(t, effects, nil)
 	_, effects = s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	w4EffectsEqual(t, effects, []board.Effect{board.StepTask{Task: 16, Op: model.StepOp{Op: "add", Text: "new"}}})
+	wantEffects(t, effects, []board.Effect{board.StepTask{Task: 16, Op: model.StepOp{Op: "add", Text: "new"}}})
 
 	s = w4TaskPage(t, 90, task, nil)
-	s, effects = s.Update(w4Key('t'))
-	w4EffectsEqual(t, effects, nil)
-	s, effects = s.Update(w4Key('r'))
-	w4EffectsEqual(t, effects, nil)
+	s, effects = s.Update(press('t'))
+	wantEffects(t, effects, nil)
+	s, effects = s.Update(press('r'))
+	wantEffects(t, effects, nil)
 	if strings.Contains(s.Text(), "step: ") {
 		t.Fatalf("rename on no step opened a prompt: %q", s.Text())
 	}
-	s, effects = s.Update(w4Key('z'))
-	w4EffectsEqual(t, effects, nil)
+	s, effects = s.Update(press('z'))
+	wantEffects(t, effects, nil)
 	s, effects = s.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
-	w4EffectsEqual(t, effects, nil)
+	wantEffects(t, effects, nil)
 	if strings.Contains(s.Text(), "a add  r rename  x remove") {
 		t.Fatalf("esc from step mode = %q", s.Text())
 	}
@@ -466,19 +465,19 @@ func TestTaskPagePickListMovesUpCancelsAndQuits(t *testing.T) {
 		{Kind: model.KindSet, Data: model.MustData(model.Patch{Ref: "two.md"})},
 	}
 	s := w4TaskPage(t, 90, task, history)
-	s, effects := s.Update(w4Key('o'))
-	w4EffectsEqual(t, effects, nil)
-	s, effects = s.Update(w4Key('j'))
-	w4EffectsEqual(t, effects, nil)
+	s, effects := s.Update(press('o'))
+	wantEffects(t, effects, nil)
+	s, effects = s.Update(press('j'))
+	wantEffects(t, effects, nil)
 	s, effects = s.Update(tea.KeyPressMsg{Code: tea.KeyUp})
-	w4EffectsEqual(t, effects, nil)
+	wantEffects(t, effects, nil)
 	_, effects = s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	w4EffectsEqual(t, effects, []board.Effect{board.OpenRef{Ref: "one.md", Dir: "/work/desk"}})
+	wantEffects(t, effects, []board.Effect{board.OpenRef{Ref: "one.md", Dir: "/work/desk"}})
 
 	s = w4TaskPage(t, 90, task, history)
-	s, _ = s.Update(w4Key('o'))
+	s, _ = s.Update(press('o'))
 	s, effects = s.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
-	w4EffectsEqual(t, effects, nil)
+	wantEffects(t, effects, nil)
 	if strings.Contains(s.Text(), "open which ref?") {
 		t.Fatalf("cancelled pick list = %q", s.Text())
 	}
@@ -543,33 +542,18 @@ func w4TaskPageData(t *testing.T, width int, cfg board.Config, data board.Data, 
 	s := board.NewState(cfg)
 	var effects []board.Effect
 	s, effects = s.Update(tea.WindowSizeMsg{Width: width, Height: 30})
-	w4EffectsEqual(t, effects, nil)
+	wantEffects(t, effects, nil)
 	s, effects = s.Update(board.Loaded{Data: data})
-	w4EffectsEqual(t, effects, nil)
+	wantEffects(t, effects, nil)
 	s, effects = s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if data.Offline {
-		w4EffectsEqual(t, effects, nil)
+		wantEffects(t, effects, nil)
 	} else {
-		w4EffectsEqual(t, effects, []board.Effect{board.LoadTask{Task: task.Number}})
+		wantEffects(t, effects, []board.Effect{board.LoadTask{Task: task.Number}})
 	}
 	s, effects = s.Update(board.TaskLoaded{Detail: store.TaskDetail{Task: task, History: history}})
-	w4EffectsEqual(t, effects, nil)
+	wantEffects(t, effects, nil)
 	return s
-}
-
-func w4EffectsEqual(t *testing.T, got, want []board.Effect) {
-	t.Helper()
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("effects = %#v, want %#v", got, want)
-	}
-}
-
-func w4Key(code rune) tea.KeyPressMsg {
-	return tea.KeyPressMsg{Code: code, Text: string(code)}
-}
-
-func w4Ctrl(code rune) tea.KeyPressMsg {
-	return tea.KeyPressMsg{Code: code, Mod: tea.ModCtrl}
 }
 
 func w4String(s string) *string {

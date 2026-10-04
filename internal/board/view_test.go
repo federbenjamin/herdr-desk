@@ -21,10 +21,6 @@ func w3State(width int, data board.Data) board.State {
 	return s
 }
 
-func w3Key(code rune, text string) tea.KeyPressMsg {
-	return tea.KeyPressMsg{Code: code, Text: text}
-}
-
 func w3LiveData() board.Data {
 	return board.Data{
 		Tasks: []model.Task{
@@ -151,9 +147,9 @@ func TestViewFooterWrapsAtDoubleSpaceGroups(t *testing.T) {
 
 func TestViewFiltersRowsBySearchProjectAndThread(t *testing.T) {
 	s := w3State(90, w3LiveData())
-	s, _ = s.Update(w3Key('/', "/"))
+	s, _ = s.Update(press('/'))
 	for _, r := range "queue" {
-		s, _ = s.Update(w3Key(r, string(r)))
+		s, _ = s.Update(press(r))
 	}
 	search := s.Text()
 	w3RequireContains(t, search, "queue agent")
@@ -162,20 +158,20 @@ func TestViewFiltersRowsBySearchProjectAndThread(t *testing.T) {
 			t.Fatalf("search left non-matching row %q visible:\n%s", absent, search)
 		}
 	}
-	s, _ = s.Update(w3Key(tea.KeyEscape, ""))
-	s, _ = s.Update(w3Key('p', "p"))
+	s, _ = s.Update(named(tea.KeyEscape))
+	s, _ = s.Update(press('p'))
 	project := s.Text()
 	w3RequireContains(t, project, "desk  alpha ▾", "ship release", "queue agent")
 	if strings.Contains(project, "review patch") {
 		t.Fatalf("project filter retained a beta task:\n%s", project)
 	}
-	s, _ = s.Update(w3Key('t', "t"))
+	s, _ = s.Update(press('t'))
 	firstThread := s.Text()
 	w3RequireContains(t, firstThread, "thread: ops ▾")
 	if strings.Contains(firstThread, "review patch") || strings.Contains(firstThread, "queue agent") {
 		t.Fatalf("project and thread filters did not combine:\n%s", firstThread)
 	}
-	s, _ = s.Update(w3Key('t', "t"))
+	s, _ = s.Update(press('t'))
 	thread := s.Text()
 	w3RequireContains(t, thread, "thread: agent ▾", "queue agent")
 	if strings.Contains(thread, "ship release") {
@@ -239,18 +235,18 @@ func TestViewOfflineRefusesWritesButKeepsFiltersAvailable(t *testing.T) {
 		{'+', "+"}, {'n', "n"}, {'s', "s"}, {'b', "b"}, {'r', "r"}, {'x', "x"}, {'a', "a"}, {'k', "k"}, {'P', "P"},
 	} {
 		var effects []board.Effect
-		s, effects = s.Update(w3Key(key.code, key.text))
+		s, effects = s.Update(press(key.code))
 		if len(effects) != 0 {
 			t.Fatalf("offline %q emitted effects %#v", key.text, effects)
 		}
 		w3RequireContains(t, s.Text(), "offline: "+key.text+" needs the home")
 	}
-	s, effects := s.Update(w3Key('d', "d"))
+	s, effects := s.Update(press('d'))
 	if len(effects) != 0 {
 		t.Fatalf("offline done drawer emitted effects %#v", effects)
 	}
 	w3RequireContains(t, s.Text(), "offline: the done drawer needs the home")
-	s, effects = s.Update(w3Key('p', "p"))
+	s, effects = s.Update(press('p'))
 	if len(effects) != 0 {
 		t.Fatalf("offline project filter emitted effects %#v", effects)
 	}
