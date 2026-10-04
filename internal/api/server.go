@@ -103,6 +103,7 @@ func NewServer(o ServerOptions) *Server {
 				Listen:      o.Config.Home.Listen,
 				StartedTS:   o.StartedTS,
 				RunnerOn:    o.Config.Runner.Enabled,
+				RunnerCap:   o.Config.Runner.Cap,
 				Tasks:       counts,
 				BackupTS:    backupTS,
 				BackupError: backupErr,

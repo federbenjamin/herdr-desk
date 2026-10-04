@@ -21,6 +21,17 @@ const (
 	MethodRunsList     = "runs.list"
 	MethodStatus       = "status"
 	MethodBackupRun    = "backup.run" // unix socket only
+	MethodRunsKill     = "runs.kill"
+	MethodRunnerPause  = "runner.pause"
+)
+
+// The values of Status.RunnerState.
+const (
+	RunnerStateOff      = "off"
+	RunnerStateOn       = "on"
+	RunnerStatePaused   = "paused"
+	RunnerStateNoRouter = "no-router"
+	RunnerStateNoHerdr  = "no-herdr"
 )
 
 // maxBody is the largest request body the server reads.
@@ -56,11 +67,16 @@ func (r AppendRequest) valid() bool {
 
 // Status is what the status method returns.
 type Status struct {
-	Version   string               `json:"version"`
-	Listen    string               `json:"listen"`
-	StartedTS time.Time            `json:"started_ts"`
-	RunnerOn  bool                 `json:"runner_on"`
-	Tasks     map[model.Status]int `json:"tasks"`
+	Version   string    `json:"version"`
+	Listen    string    `json:"listen"`
+	StartedTS time.Time `json:"started_ts"`
+	RunnerOn  bool      `json:"runner_on"`
+	// RunnerPaused is true while the runner starts no new run. RunnerCap is runner.cap. RunnerState is one of
+	// the RunnerState constants, and "" on a home that has no runner.
+	RunnerPaused bool                 `json:"runner_paused"`
+	RunnerCap    int                  `json:"runner_cap"`
+	RunnerState  string               `json:"runner_state"`
+	Tasks        map[model.Status]int `json:"tasks"`
 	// BackupTS is the last successful backup run, nil when none is recorded. BackupError is the error of the
 	// last attempt when it failed after that run, "" otherwise. Both come from the backup state file.
 	BackupTS    *time.Time `json:"backup_ts"`
@@ -98,6 +114,14 @@ type (
 	}
 	sessionRequest struct {
 		Session string `json:"session"`
+	}
+	killRequest struct {
+		Actor store.Actor `json:"actor"`
+		Task  int         `json:"task"`
+	}
+	pauseRequest struct {
+		Actor  store.Actor `json:"actor"`
+		Paused bool        `json:"paused"`
 	}
 	empty struct{}
 )
