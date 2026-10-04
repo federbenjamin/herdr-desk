@@ -63,3 +63,20 @@ func (p Paths) BackupDir() string { return filepath.Join(p.DataDir, "backup") }
 
 // Snapshot is CacheDir/snapshot.json.
 func (p Paths) Snapshot() string { return filepath.Join(p.CacheDir, "snapshot.json") }
+
+// RouterSystemFile is StateDir/router-system.md: where the built-in system prompt is written for the router to read.
+func (p Paths) RouterSystemFile() string { return filepath.Join(p.StateDir, "router-system.md") }
+
+// RunnerPause is StateDir/runner-paused: the runner is paused while this file exists.
+func (p Paths) RunnerPause() string { return filepath.Join(p.StateDir, "runner-paused") }
+
+// Env returns the four XDG variables that resolve to these paths, as KEY=VALUE in the order CONFIG, STATE, DATA,
+// CACHE: the inverse of ResolvePaths.
+func (p Paths) Env() []string {
+	return []string{
+		"XDG_CONFIG_HOME=" + filepath.Dir(p.ConfigDir),
+		"XDG_STATE_HOME=" + filepath.Dir(p.StateDir),
+		"XDG_DATA_HOME=" + filepath.Dir(p.DataDir),
+		"XDG_CACHE_HOME=" + filepath.Dir(p.CacheDir),
+	}
+}

@@ -76,8 +76,28 @@ type Run struct {
 	Pane      string    `json:"pane"`
 	StartedTS time.Time `json:"started_ts"`
 	EndedTS   time.Time `json:"ended_ts"`
-	Exit      int       `json:"exit"`
 }
+
+// The run states. A run in the first three is live: it holds one of the runner's slots.
+const (
+	RunRouting = "routing" // the router is choosing where the task runs
+	RunWaiting = "waiting" // routed; its root already has a live in-place run
+	RunRunning = "running" // a pane was started for it
+	RunEnded   = "ended"   // its task left started
+	RunFailed  = "failed"  // the router or the spawn failed
+	RunKilled  = "killed"  // killed by a person or by the time limit
+)
+
+// RunLive reports whether state is routing, waiting, or running.
+func RunLive(state string) bool {
+	return state == RunRouting || state == RunWaiting || state == RunRunning
+}
+
+// The tags the runner writes.
+const (
+	TagRunner = "runner" // on every note the runner writes
+	TagRouter = "router" // also on the note that records a route or a router failure
+)
 
 // SessionTask is a task created by a session in the chain, with what the journal needs.
 type SessionTask struct {

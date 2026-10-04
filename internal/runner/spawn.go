@@ -1,0 +1,208 @@
+package runner
+
+import (
+	"context"
+	"crypto/rand"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+
+	"github.com/federbenjamin/desk/internal/gitcmd"
+	"github.com/federbenjamin/desk/internal/herdr"
+	"github.com/federbenjamin/desk/internal/model"
+	"github.com/federbenjamin/desk/internal/store"
+)
+
+const maxSlug = 40
+
+// Slug turns a title into a branch-name part: lower-case letters and digits kept, every other run of characters
+// one "-", none at either end, at most 40 characters. It may be empty.
+func Slug(title string) string {
+	var b strings.Builder
+	dash := false
+	for _, c := range strings.ToLower(title) {
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
+			if dash && b.Len() > 0 {
+				b.WriteByte('-')
+			}
+			b.WriteRune(c)
+			dash = false
+			continue
+		}
+		dash = true
+	}
+	s := b.String()
+	if len(s) > maxSlug {
+		s = strings.TrimRight(s[:maxSlug], "-")
+	}
+	return s
+}
+
+// spawn starts the run's worker in a new herdr workspace. from is the run's state now (routing or waiting). It
+// reports whether the worker was started; a failure sets the run failed and the task blocked.
+func (r *Runner) spawn(ctx context.Context, h Herdr, t model.Task, run model.Run, from string) bool {
+	// failSpawn fails the run while it is in state; extra follows the clipped reason, so it is never cut.
+	failSpawn := func(ctx context.Context, state, reason, extra string) bool {
+		r.fail(ctx, run, state, []string{model.TagRunner}, "spawn: "+clip(reason)+extra)
+		return false
+	}
+	command, err := r.paneCommand()
+	if err != nil {
+		return failSpawn(ctx, from, err.Error(), "")
+	}
+	dir, err := r.workdir(ctx, t, run)
+	if err != nil {
+		return failSpawn(ctx, from, err.Error(), "")
+	}
+	session, err := newUUID()
+	if err != nil {
+		return failSpawn(ctx, from, err.Error(), "")
+	}
+	env := append([]string{
+		fmt.Sprintf("DESK_TASK=T%d", t.Number),
+		"DESK_SESSION=" + session,
+		fmt.Sprintf("DESK_RUN=%d", run.ID),
+	}, r.o.Paths.Env()...)
+	created, err := h.CreateWorkspace(ctx, dir, fmt.Sprintf("desk T%d", t.Number), env)
+	if err != nil {
+		return failSpawn(ctx, from, err.Error(), "")
+	}
+	pane := herdr.Pane{ID: created.Pane, Workspace: created.Workspace}
+	// The pane exists outside desk now: undoing the spawn goes on even when ctx ends, so a stopping daemon leaves
+	// no worker and no live run behind.
+	undo := context.WithoutCancel(ctx)
+	// The run becomes running with its pane in one write, so a running run's pane is always known to a kill; a
+	// kill that took the run while the workspace was made leaves this claim unapplied.
+	ok, err := r.o.Store.UpdateRun(ctx, run.ID, from, store.RunUpdate{
+		State: model.RunRunning, Session: session, Workspace: created.Workspace, Pane: created.Pane,
+	})
+	if err != nil {
+		return failSpawn(undo, from, "could not record the pane: "+err.Error(), r.closeSpawned(undo, h, t, pane))
+	}
+	if !ok {
+		r.closeSpawned(undo, h, t, pane)
+		return false
+	}
+	if err := h.Run(ctx, created.Pane, command); err != nil {
+		return failSpawn(undo, model.RunRunning, err.Error(), r.closeSpawned(undo, h, t, pane))
+	}
+	cur, ok, err := r.o.Store.CurrentRun(ctx, t.Number)
+	if err != nil {
+		// The run may have been killed while its command was typed: nothing says it started until the store does.
+		return failSpawn(undo, model.RunRunning, "could not confirm the run: "+err.Error(), r.closeSpawned(undo, h, t, pane))
+	}
+	if !ok || cur.ID != run.ID || cur.State != model.RunRunning {
+		// A kill took the run while its command was typed: no worker stays, and nothing says it started.
+		r.closeSpawned(undo, h, t, pane)
+		return false
+	}
+	r.note(ctx, store.Actor{Run: run.ID}, t.Number, []string{model.TagRunner},
+		fmt.Sprintf("run %d: workspace %s, pane %s", run.ID, created.Workspace, created.Pane))
+	r.notify(ctx, fmt.Sprintf("desk: T%d started", t.Number), t.Title)
+	return true
+}
+
+// closeSpawned closes a pane spawn opened and will not use. It returns "" when the pane closed, else the clause a
+// failure note ends with; the watch closes that pane again.
+func (r *Runner) closeSpawned(ctx context.Context, h Herdr, t model.Task, pane herdr.Pane) string {
+	if !r.close(ctx, h, t.Number, pane) {
+		return fmt.Sprintf("; pane %s was left open", pane.ID)
+	}
+	return ""
+}
+
+// paneCommand is the one text typed into a pane: exec of this desk binary's worker command.
+func (r *Runner) paneCommand() (string, error) {
+	exe := r.o.Exe
+	if exe == "" {
+		var err error
+		if exe, err = os.Executable(); err != nil {
+			return "", fmt.Errorf("find the desk binary: %w", err)
+		}
+	}
+	quoted, err := shellQuote(exe)
+	if err != nil {
+		return "", err
+	}
+	return "exec " + quoted + " worker", nil
+}
+
+// shellQuote returns path as it is when it holds only [A-Za-z0-9_./-], else single-quoted. A path holding a
+// single quote or a control character is refused.
+func shellQuote(path string) (string, error) {
+	if path == "" {
+		return "", errors.New("the desk binary's path is empty")
+	}
+	plain := true
+	for _, c := range path {
+		switch {
+		case c == '\'' || c < 0x20 || c == 0x7f || (c >= 0x80 && c < 0xa0):
+			return "", fmt.Errorf("the desk binary's path %q holds a quote or a control character", path)
+		case (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || strings.ContainsRune("_./-", c):
+		default:
+			plain = false
+		}
+	}
+	if plain {
+		return path, nil
+	}
+	return "'" + path + "'", nil
+}
+
+// workdir returns the folder the worker starts in: a git worktree beside the root for worktree isolation, else
+// the root, made when it is the scratch root and missing.
+func (r *Runner) workdir(ctx context.Context, t model.Task, run model.Run) (string, error) {
+	root := filepath.Clean(run.Root)
+	if run.Isolation != "worktree" {
+		if root == filepath.Clean(r.o.Paths.ScratchRoot()) {
+			if err := os.MkdirAll(root, 0o700); err != nil {
+				return "", err
+			}
+		}
+		return root, nil
+	}
+	dir := filepath.Join(filepath.Dir(root), filepath.Base(root)+"-T"+strconv.Itoa(t.Number))
+	if isWorkTree(ctx, dir) {
+		return dir, nil
+	}
+	branch := fmt.Sprintf("desk/T%d", t.Number)
+	if s := Slug(t.Title); s != "" {
+		branch += "-" + s
+	}
+	args := []string{"worktree", "add", "-b", branch, dir}
+	if _, err := gitcmd.Run(ctx, root, gitTimeout, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch); err == nil {
+		args = []string{"worktree", "add", dir, branch}
+	}
+	if _, err := gitcmd.Run(ctx, root, gitTimeout, args...); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+// isWorkTree reports whether dir is the top of a git work tree.
+func isWorkTree(ctx context.Context, dir string) bool {
+	if _, err := os.Stat(dir); err != nil {
+		return false
+	}
+	top, err := gitcmd.Run(ctx, dir, gitTimeout, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return false
+	}
+	a, errA := filepath.EvalSymlinks(top)
+	b, errB := filepath.EvalSymlinks(dir)
+	return errA == nil && errB == nil && a == b
+}
+
+// newUUID returns a random version 4 UUID.
+func newUUID() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	b[6] = b[6]&0x0f | 0x40
+	b[8] = b[8]&0x3f | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:]), nil
+}

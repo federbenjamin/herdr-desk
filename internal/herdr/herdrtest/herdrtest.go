@@ -1,0 +1,185 @@
+// Package herdrtest gives tests a herdr that lives in memory.
+package herdrtest
+
+import (
+	"context"
+	"fmt"
+	"slices"
+	"sync"
+
+	"github.com/federbenjamin/desk/internal/herdr"
+)
+
+// Workspace is one workspace created through the stand-in.
+type Workspace struct {
+	ID, Pane, Cwd, Label string
+	Env                  []string // KEY=VALUE, as given
+	Command              string   // what Run was given; "" until then
+}
+
+// Herdr has the five methods of herdr.Client, so it satisfies runner.Herdr. It is safe for concurrent use. A new
+// pane reports status "unknown" and no session. ClosePane removes the pane; Run, Processes, and ClosePane on an
+// unknown pane are errors.
+type Herdr struct {
+	mu         sync.Mutex
+	next       int
+	workspaces []Workspace
+	order      []string // pane ids in the order Panes lists them
+	panes      map[string]herdr.Pane
+	procs      map[string]herdr.Processes
+	closed     []string
+	fails      map[string]error
+}
+
+// NewHerdr returns an empty stand-in.
+func NewHerdr() *Herdr {
+	return &Herdr{
+		panes: map[string]herdr.Pane{},
+		procs: map[string]herdr.Processes{},
+		fails: map[string]error{},
+	}
+}
+
+// CreateWorkspace records a workspace and its one pane.
+func (h *Herdr) CreateWorkspace(_ context.Context, cwd, label string, env []string) (herdr.Created, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if err := h.fails["CreateWorkspace"]; err != nil {
+		return herdr.Created{}, err
+	}
+	h.next++
+	ws := Workspace{
+		ID:    fmt.Sprintf("w%d", h.next),
+		Pane:  fmt.Sprintf("w%d-1", h.next),
+		Cwd:   cwd,
+		Label: label,
+		Env:   slices.Clone(env),
+	}
+	h.workspaces = append(h.workspaces, ws)
+	h.order = append(h.order, ws.Pane)
+	h.panes[ws.Pane] = herdr.Pane{ID: ws.Pane, Workspace: ws.ID, Status: "unknown"}
+	return herdr.Created{Workspace: ws.ID, Pane: ws.Pane}, nil
+}
+
+// Run records the command typed into the pane.
+func (h *Herdr) Run(_ context.Context, pane, command string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if err := h.fails["Run"]; err != nil {
+		return err
+	}
+	if _, ok := h.panes[pane]; !ok {
+		return fmt.Errorf("herdr pane run: unknown pane %q", pane)
+	}
+	for i := range h.workspaces {
+		if h.workspaces[i].Pane == pane {
+			h.workspaces[i].Command = command
+		}
+	}
+	return nil
+}
+
+// Panes lists the open panes in the order they were created.
+func (h *Herdr) Panes(_ context.Context) ([]herdr.Pane, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if err := h.fails["Panes"]; err != nil {
+		return nil, err
+	}
+	out := make([]herdr.Pane, 0, len(h.order))
+	for _, id := range h.order {
+		out = append(out, h.panes[id])
+	}
+	return out, nil
+}
+
+// Processes returns what SetProcesses gave for the pane, empty when it gave nothing.
+func (h *Herdr) Processes(_ context.Context, pane string) (herdr.Processes, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if err := h.fails["Processes"]; err != nil {
+		return herdr.Processes{}, err
+	}
+	if _, ok := h.panes[pane]; !ok {
+		return herdr.Processes{}, fmt.Errorf("herdr pane process-info: unknown pane %q", pane)
+	}
+	p := h.procs[pane]
+	return herdr.Processes{Group: p.Group, PIDs: slices.Clone(p.PIDs)}, nil
+}
+
+// ClosePane removes the pane and records it as closed.
+func (h *Herdr) ClosePane(_ context.Context, pane string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if err := h.fails["ClosePane"]; err != nil {
+		return err
+	}
+	if _, ok := h.panes[pane]; !ok {
+		return fmt.Errorf("herdr pane close: unknown pane %q", pane)
+	}
+	h.drop(pane)
+	h.closed = append(h.closed, pane)
+	return nil
+}
+
+// Workspaces returns every workspace created, in order.
+func (h *Herdr) Workspaces() []Workspace {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	out := slices.Clone(h.workspaces)
+	for i := range out {
+		out[i].Env = slices.Clone(out[i].Env)
+	}
+	return out
+}
+
+// Set sets what Panes reports for the pane from now on.
+func (h *Herdr) Set(pane, session, status string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	p, ok := h.panes[pane]
+	if !ok {
+		p = herdr.Pane{ID: pane}
+		h.order = append(h.order, pane)
+	}
+	p.Session, p.Status = session, status
+	h.panes[pane] = p
+}
+
+// Remove makes the pane gone from Panes.
+func (h *Herdr) Remove(pane string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.drop(pane)
+}
+
+// SetProcesses sets what Processes reports for the pane.
+func (h *Herdr) SetProcesses(pane string, p herdr.Processes) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.procs[pane] = herdr.Processes{Group: p.Group, PIDs: slices.Clone(p.PIDs)}
+}
+
+// Closed returns the panes ClosePane closed, in order.
+func (h *Herdr) Closed() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return slices.Clone(h.closed)
+}
+
+// Fail makes the named method (CreateWorkspace, Run, Panes, Processes, or ClosePane) return err; nil clears it.
+func (h *Herdr) Fail(method string, err error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if err == nil {
+		delete(h.fails, method)
+		return
+	}
+	h.fails[method] = err
+}
+
+func (h *Herdr) drop(pane string) {
+	delete(h.panes, pane)
+	delete(h.procs, pane)
+	h.order = slices.DeleteFunc(h.order, func(id string) bool { return id == pane })
+}

@@ -8,6 +8,8 @@ REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 E2E=$(mktemp -d "${TMPDIR:-/tmp}/dk.XXXXXX")
 E2E=$(cd "$E2E" && pwd)
 BIN="$E2E/bin"
+# A hermetic script never finds a herdr on PATH: the name is sealed to a path that does not exist.
+export DESK_HERDR="$E2E/no-herdr"
 PIDS=()
 OUT=""
 ERR=""
@@ -91,16 +93,21 @@ err_has() { case "$ERR" in *"$1"*) ;; *) fail "stderr lacks: $1" ;; esac }
 out_lacks() { case "$OUT" in *"$1"*) fail "stdout holds: $1" ;; *) ;; esac }
 any_lacks() { case "$OUT$ERR" in *"$1"*) fail "output holds: $1" ;; *) ;; esac }
 
-# wait_for <what> <command...>: poll until the command succeeds, up to 10 s.
-wait_for() {
-  local what=$1 i
-  shift
-  for i in $(seq 1 100); do
+# wait_long <seconds> <what> <command...>: poll until the command succeeds, every 0.1 s, for up to that long. The
+# one poll loop of the e2e scripts: every other wait is built on it.
+wait_long() {
+  local secs=$1 what=$2 end
+  shift 2
+  end=$((SECONDS + secs + 1))
+  while [ "$SECONDS" -lt "$end" ]; do
     if "$@" >/dev/null 2>&1; then return 0; fi
     sleep 0.1
   done
-  fail "timed out waiting for $what (after $i tries)"
+  fail "timed out after ${secs}s waiting for $what"
 }
+
+# wait_for <what> <command...>: poll until the command succeeds, up to 10 s.
+wait_for() { wait_long 10 "$@"; }
 
 sock() { printf '%s' "$E2E/$1/state/desk/desk.sock"; }
 no_sock() { [ ! -S "$(sock "$1")" ]; }
