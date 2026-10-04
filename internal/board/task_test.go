@@ -324,6 +324,25 @@ func TestTaskPageAFailedNotesSaveOpensTheEditorAgainWithTheText(t *testing.T) {
 	wantEffects(t, effects, []board.Effect{board.SetTask{Task: 21, Patch: model.Patch{Notes: w4String("draft two")}}})
 }
 
+func TestTaskPageANotesSaveThatFailsWhileAPromptIsOpenWaitsForItToClose(t *testing.T) {
+	task := model.Task{Number: 25, Title: "Save later", Notes: "draft", Status: model.StatusOpen}
+	s := w4TaskPage(t, 90, task, nil)
+	s, _ = s.Update(press('e'))
+	s, _ = s.Update(tea.PasteMsg{Content: " two"})
+	s, _ = s.Update(ctrl('s'))
+	s, _ = s.Update(press('R'))
+	s, _ = s.Update(board.Failed{Err: errors.New("dial home: connection refused")})
+	if text := s.Text(); strings.Contains(text, "editing") || !strings.Contains(text, "root: ") {
+		t.Fatalf("a failed save took the keys from the open prompt: %q", text)
+	}
+	s, _ = s.Update(named(tea.KeyEsc))
+	if text := s.Text(); !strings.Contains(text, "NOTES  editing") || !strings.Contains(text, "draft two") || !strings.HasSuffix(text, "dial home: connection refused") {
+		t.Fatalf("after the prompt closed = %q, want the editor back with the text and the error", text)
+	}
+	_, effects := s.Update(ctrl('s'))
+	wantEffects(t, effects, []board.Effect{board.SetTask{Task: 25, Patch: model.Patch{Notes: w4String("draft two")}}})
+}
+
 func TestTaskPageNotesSaveWarnsWhenTheNotesChangedWhileEditing(t *testing.T) {
 	task := model.Task{Number: 22, Title: "Shared notes", Notes: "mine", Status: model.StatusOpen}
 	s := w4TaskPage(t, 90, task, nil)

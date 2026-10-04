@@ -44,9 +44,17 @@ candidates=$(printf '%s' "$panes" | grep -oE '"(agent|cwd|pane_id)":"[^"]*"' |
     $2 == "cwd" { m = ($4 == root && !agent); next }
     { if (m) print $4; agent = 0; m = 0 }')
 
-# herdr focuses by id only a pane a plugin owns, so a shell in the plugin's folder refuses the focus
-# and the next pane is tried. When none takes it, the board opens.
+# herdr focuses by id only a pane a plugin owns and answers plugin_pane_not_found for any other, so a
+# shell in the plugin's folder refuses the focus and the next pane is tried. Any other failure ends the
+# script with its status and error, and opens no pane. When none takes the focus, the board opens.
 for pane_id in $candidates; do
-  "$herdr_bin" plugin pane focus "$pane_id" 2>/dev/null && exit 0
-done
+  err=$("$herdr_bin" plugin pane focus "$pane_id" 2>&1 >&3)
+  status=$?
+  [ "$status" -eq 0 ] && exit 0
+  case "$err" in
+    *'"plugin_pane_not_found"'*) continue ;;
+  esac
+  [ -n "$err" ] && printf '%s\n' "$err" >&2
+  exit "$status"
+done 3>&1
 exec "$herdr_bin" plugin pane open --plugin "$plugin_id" --entrypoint board --focus

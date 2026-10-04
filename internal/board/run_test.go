@@ -800,6 +800,8 @@ func TestRunAsksAgainForTheViewerAfterAFailedOrUnreadableAnswer(t *testing.T) {
 		{nil, errors.New("w5 herdr busy")},
 		{[]byte("not json"), nil},
 		{[]byte(`{}`), nil},
+		{[]byte(`{"result":{}}`), nil},
+		{[]byte(`{"result":{"plugins":null}}`), nil},
 		{[]byte(`{"result":{"plugins":[{}]}}`), nil},
 	}
 	var mu sync.Mutex
@@ -821,7 +823,7 @@ func TestRunAsksAgainForTheViewerAfterAFailedOrUnreadableAnswer(t *testing.T) {
 	eventually(t, "the task draw", func() bool { return strings.Contains(out.String(), task.Title) })
 	w5Write(t, in, "\r")
 	eventually(t, "the task detail", func() bool { return strings.Contains(out.String(), "FILES") })
-	for i, want := range []string{"w5-herdr plugin list: w5 herdr busy", "invalid character", "the answer has no result"} {
+	for i, want := range []string{"w5-herdr plugin list: w5 herdr busy", "invalid character", "the answer has no result", "plugins list", "plugins list"} {
 		w5Write(t, in, "o")
 		eventually(t, "the viewer error "+want, func() bool { return count() == i+1 && strings.Contains(out.String(), want) })
 	}
@@ -829,9 +831,9 @@ func TestRunAsksAgainForTheViewerAfterAFailedOrUnreadableAnswer(t *testing.T) {
 		t.Errorf("the viewer error does not name the command: %q", out.String())
 	}
 	w5Write(t, in, "o")
-	eventually(t, "the viewer opened after a clean answer", func() bool { return count() == 5 })
+	eventually(t, "the viewer opened after a clean answer", func() bool { return count() == 7 })
 	w5Write(t, in, "o")
-	eventually(t, "the second open without a probe", func() bool { return count() == 6 })
+	eventually(t, "the second open without a probe", func() bool { return count() == 8 })
 	w5Quit(t, in, errs)
 	if strings.Contains(out.String(), "no file viewer is installed") {
 		t.Errorf("a failed probe was shown as a missing viewer: %q", out.String())

@@ -163,10 +163,11 @@ type State struct {
 	notesOut, answerOut unsaved
 }
 
-// unsaved is text the user typed that a write carries, for a task.
+// unsaved is text the user typed that a write carries, for a task. failed is the write's error once it failed.
 type unsaved struct {
-	task int
-	text string
+	task   int
+	text   string
+	failed string
 }
 
 // NewState returns the board page with no data, 80 columns by 24 rows.
@@ -227,6 +228,7 @@ func (s State) Update(msg tea.Msg) (State, []Effect) {
 	default:
 		return s, nil
 	}
+	s = s.giveBack()
 	s.scroll()
 	return s, eff
 }
@@ -259,25 +261,12 @@ func (s State) failed(m Failed) (State, []Effect) {
 		set, ok := e.(SetTask)
 		return ok && set.Task == s.notesOut.task && set.Patch.Notes != nil
 	}):
-		u := s.notesOut
-		s.notesOut = unsaved{}
-		if s.inputOpen() {
-			break
-		}
-		if s.shown() != u.task {
-			s.page, s.taskNum, s.hasDetail, s.detail, s.taskTop = pageTask, u.task, false, store.TaskDetail{}, 0
-		}
-		s.editing, s.notes, s.notesTop = true, newNotes(u.text), 0
-		s.notesFrom = s.task().Notes
+		s.notesOut.failed = text
 	case s.answerOut.task != 0 && answers(m, func(e Effect) bool {
 		r, ok := e.(Rearm)
 		return ok && r.Task == s.answerOut.task && r.Answer != ""
 	}):
-		u := s.answerOut
-		s.answerOut = unsaved{}
-		if !s.inputOpen() {
-			s.prompt = newPrompt(promptAnswer, "answer: ", u.task, u.text)
-		}
+		s.answerOut.failed = text
 	}
 	if !shown {
 		s.status = text
@@ -286,6 +275,32 @@ func (s State) failed(m Failed) (State, []Effect) {
 		return s.answered()
 	}
 	return s, nil
+}
+
+// giveBack opens the notes editor or the answer prompt again, with its typed text and its error on the status
+// line, when its write failed and no other input has the keys. Text whose write failed while another input was
+// open waits for that input to close.
+func (s State) giveBack() State {
+	if s.inputOpen() {
+		return s
+	}
+	switch {
+	case s.notesOut.failed != "":
+		u := s.notesOut
+		s.notesOut = unsaved{}
+		if s.shown() != u.task {
+			s.page, s.taskNum, s.hasDetail, s.detail, s.taskTop = pageTask, u.task, false, store.TaskDetail{}, 0
+		}
+		s.editing, s.notes, s.notesTop = true, newNotes(u.text), 0
+		s.notesFrom = s.task().Notes
+		s.status = u.failed
+	case s.answerOut.failed != "":
+		u := s.answerOut
+		s.answerOut = unsaved{}
+		s.prompt = newPrompt(promptAnswer, "answer: ", u.task, u.text)
+		s.status = u.failed
+	}
+	return s
 }
 
 // inputOpen reports whether a text input, the notes editor, a prompt, or the pick list has the keys.

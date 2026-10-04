@@ -71,21 +71,24 @@ func viewerListArgv(herdr string) []string {
 	return []string{herdr, "plugin", "list", "--plugin", viewerPlugin, "--json"}
 }
 
-// listsPlugin reads herdr's plugin list answer: true when it holds a plugin. An answer that is not that JSON is an
-// error, never "not installed".
+// listsPlugin reads herdr's plugin list answer: true when it holds a plugin. An answer that is not that JSON, or
+// that holds no plugins list, is an error, never "not installed"; herdr lists no plugin as "plugins":[].
 func listsPlugin(out []byte) (bool, error) {
 	var list struct {
 		Result *struct {
-			Plugins []json.RawMessage `json:"plugins"`
+			Plugins *[]json.RawMessage `json:"plugins"`
 		} `json:"result"`
 	}
 	if err := json.Unmarshal(out, &list); err != nil {
 		return false, err
 	}
-	if list.Result == nil {
+	switch {
+	case list.Result == nil:
 		return false, errors.New("the answer has no result")
+	case list.Result.Plugins == nil:
+		return false, errors.New("the answer has no plugins list")
 	}
-	return len(list.Result.Plugins) > 0, nil
+	return len(*list.Result.Plugins) > 0, nil
 }
 
 func viewerArgv(herdr, path string) []string {

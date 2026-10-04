@@ -15,8 +15,9 @@ mkdir -p "$PLUG/scripts" "$E2E/stub"
 cp "$REPO/scripts/open-pane.sh" "$PLUG/scripts/open-pane.sh"
 ROOT=$(cd "$PLUG" && pwd -P)
 
-# The stub focuses by id only the panes in STUB_OWNED, as herdr focuses only a pane a plugin owns, and fails
-# `pane list` when STUB_LIST is fail.
+# The stub focuses by id only the panes in STUB_OWNED and answers any other with herdr's plugin_pane_not_found,
+# as herdr focuses only a pane a plugin owns. It fails `pane list` when STUB_LIST is fail, and every focus with
+# another error when STUB_FOCUS is fail.
 cat >"$STUB" <<'SH'
 #!/bin/sh
 printf '%s\n' "$*" >>"$STUB_LOG"
@@ -29,10 +30,14 @@ case "$*" in
     cat "$STUB_PANES"
     ;;
   "plugin pane focus "*)
+    if [ "$STUB_FOCUS" = fail ]; then
+      echo 'error: connection reset by peer' >&2
+      exit 5
+    fi
     case " $STUB_OWNED " in
       *" $4 "*) ;;
       *)
-        echo "error: pane $4 is not a plugin pane" >&2
+        printf '{"error":{"code":"plugin_pane_not_found","message":"example"}}\n' >&2
         exit 1
         ;;
     esac
@@ -83,14 +88,15 @@ pane_list "$(agent_pane w1:p1 "desk › work" "$ROOT")" "$(plugin_pane w1:p2 Fil
 pane_list "$(plugin_pane w1:p4 zsh "$ROOT")" >"$E2E/shell.json"
 
 # open_pane <want-exit> <panes-fixture> <popup> <args...>: run the plugin copy of open-pane.sh against the stub,
-# outside any herdr workspace, with a fresh log. w1:p2 and w1:p3 are plugin panes; STUB_LIST=fail fails the list.
+# outside any herdr workspace, with a fresh log. w1:p2 and w1:p3 are plugin panes; STUB_LIST=fail fails the list,
+# and STUB_FOCUS=fail fails every focus.
 open_pane() {
   local want=$1 panes=$2 popup=$3
   shift 3
   : >"$LOG"
   run "$want" env -u HERDR_WORKSPACE_ID -u HERDR_PLUGIN_ID HERDR_BIN_PATH="$STUB" STUB_LOG="$LOG" \
     STUB_PANES="$panes" STUB_POPUP="$popup" STUB_OWNED="w1:p2 w1:p3" STUB_LIST="${STUB_LIST:-}" \
-    sh "$PLUG/scripts/open-pane.sh" "$@"
+    STUB_FOCUS="${STUB_FOCUS:-}" sh "$PLUG/scripts/open-pane.sh" "$@"
   CALLS=$(cat "$LOG")
   say "herdr calls: ${CALLS:-none}"
 }
@@ -125,6 +131,12 @@ STUB_LIST=fail open_pane 4 "$E2E/none.json" free board
 grep -qF "workspace not found" <<<"$ERR" || fail "stderr does not carry the failed list's error"
 not_called "plugin pane open"
 ok "a failed pane list exits with its status and error, and opens no pane"
+
+STUB_FOCUS=fail open_pane 5 "$E2E/renamed.json" free board
+called "plugin pane focus w1:p3"
+grep -qF "connection reset by peer" <<<"$ERR" || fail "stderr does not carry the failed focus's error"
+not_called "plugin pane open"
+ok "a focus that fails for another reason than plugin_pane_not_found exits with its status and error, and opens no pane"
 
 open_pane 0 "$E2E/none.json" free capture
 called "plugin pane open --plugin desk --entrypoint capture --focus"
