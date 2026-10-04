@@ -32,7 +32,7 @@ esac
 EOF
 chmod +x "$E2E/stub/herdr"
 
-term_start board 100 30 home HERDR_BIN_PATH="$E2E/stub/herdr" "$BIN/desk"
+term_start board 100 30 home DESK_HERDR="$E2E/stub/herdr" "$BIN/desk"
 term_wait board "worktree · opus"
 ok "the row shows the run's isolation and model"
 term_wait board "runner ● on · 1/1 · home"

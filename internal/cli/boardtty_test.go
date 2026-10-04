@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -24,15 +23,10 @@ func w7Run(t *testing.T, home *testutil.Home, args []string, stdin io.Reader, st
 	defer cancel()
 	getenv := home.Getenv(nil)
 	exit := cli.Run(ctx, args, cli.Env{
-		Stdin:  stdin,
-		Stdout: &stdout,
-		Stderr: &stderr,
-		Getenv: func(key string) string {
-			if key == "HERDR_BIN_PATH" {
-				return filepath.Join(t.TempDir(), "herdr-not-installed")
-			}
-			return getenv(key)
-		},
+		Stdin:     stdin,
+		Stdout:    &stdout,
+		Stderr:    &stderr,
+		Getenv:    getenv,
 		Cwd:       t.TempDir(),
 		StdinTTY:  stdinTTY,
 		StdoutTTY: stdoutTTY,

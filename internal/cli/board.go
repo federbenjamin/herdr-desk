@@ -1,13 +1,13 @@
 package cli
 
 import (
-	"os/exec"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/federbenjamin/desk/internal/api"
 	"github.com/federbenjamin/desk/internal/board"
+	"github.com/federbenjamin/desk/internal/herdr"
 	"github.com/federbenjamin/desk/internal/store"
 )
 
@@ -87,14 +87,12 @@ func (a *app) boardOptions(c *api.Client) (board.Options, error) {
 	if err != nil {
 		return board.Options{}, err
 	}
-	herdr := a.env.Getenv("HERDR_BIN_PATH")
-	if herdr == "" {
-		herdr, _ = exec.LookPath("herdr")
-	}
+	// No herdr is not an error here: the board says so when a key needs it.
+	bin, _ := herdr.Find()
 	return board.Options{
 		Home:   c,
 		IsHome: !cfg.IsClient(),
-		Herdr:  herdr,
+		Herdr:  bin,
 		In:     a.env.Stdin,
 		Out:    a.env.Stdout,
 	}, nil
