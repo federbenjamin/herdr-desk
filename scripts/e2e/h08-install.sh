@@ -18,8 +18,9 @@ mkdir -p "$REL"
 tar -czf "$REL/$ASSET" -C "$BIN" desk
 (cd "$REL" && shasum -a 256 "$ASSET" >checksums.txt)
 
-# A PATH with no desk on it, so the script must install one.
-CLEAN_PATH=$(tr ':' '\n' <<<"$PATH" | grep -v -x "$BIN" | paste -sd: -)
+# A PATH with no desk on it, so the script must install one: every folder that holds a desk is
+# dropped, the test's own and any the machine has installed.
+CLEAN_PATH=$(tr ':' '\n' <<<"$PATH" | while read -r d; do [ -x "$d/desk" ] || printf '%s\n' "$d"; done | paste -sd: -)
 
 # install <name> <base-url> [extra env...]: run the script with its own output folders.
 install() {

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # H10: one daemon per home. A second start is a clean no-op, a command starts the daemon when it
 # is down, stop removes the socket, a client machine runs none, a config edit made while the daemon
-# runs is named, and a daemon that is not running answers status with exit 1 and no refusal code.
+# runs is named (a touch is not an edit), and a daemon that is not running answers status with exit 1
+# and no refusal code.
 # shellcheck source=scripts/e2e/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 build
@@ -32,6 +33,12 @@ say "autostart ok"
 run 0 on home desk daemon status
 jq -e '.config_changed == false' <<<"$OUT" >/dev/null || fail "status says the config changed before any edit"
 touch "$E2E/home/config/desk/config.toml"
+run 0 on home desk list
+any_lacks "desk daemon restart"
+run 0 on home desk daemon status
+jq -e '.config_changed == false' <<<"$OUT" >/dev/null || fail "status says the config changed after a touch"
+sed -i.bak 's/poll_seconds = [0-9]*/poll_seconds = 31/' "$E2E/home/config/desk/config.toml"
+grep -q 'poll_seconds = 31' "$E2E/home/config/desk/config.toml" || fail "the edit did not change the config"
 run 0 on home desk list
 err_has "desk daemon restart"
 run 0 on home desk daemon status

@@ -29,11 +29,12 @@ import (
 
 // Info is written once, at start, to the daemon info file.
 type Info struct {
-	PID       int       `json:"pid"`
-	Version   string    `json:"version"`
-	StartedTS time.Time `json:"started_ts"`
-	Socket    string    `json:"socket"`
-	Listen    string    `json:"listen"` // the address actually bound, "" when local only
+	PID          int       `json:"pid"`
+	Version      string    `json:"version"`
+	StartedTS    time.Time `json:"started_ts"`
+	Socket       string    `json:"socket"`
+	Listen       string    `json:"listen"`        // the address actually bound, "" when local only
+	ConfigDigest string    `json:"config_digest"` // config.Config.Digest of the config the daemon started with
 }
 
 // ErrAlreadyRunning is Start's answer when another daemon holds the lock.
@@ -101,6 +102,7 @@ func Start(ctx context.Context, p config.Paths, c config.Config) (*Instance, err
 	if err := checkSocketPath(p); err != nil {
 		return nil, err
 	}
+	configDigest := c.Digest()
 	sock := p.Socket()
 	if i.st, err = store.Open(p.DB(), store.Options{
 		Scanner:      secretscan.FromConfig(c.SecretScan.Command),
@@ -140,13 +142,13 @@ func Start(ctx context.Context, p config.Paths, c config.Config) (*Instance, err
 			return backup.Run(ctx, i.st, p, remote)
 		}
 	}
-	srv := api.NewServer(api.ServerOptions{Store: i.st, Config: c, Paths: p, StartedTS: started, Backup: runBackup})
+	srv := api.NewServer(api.ServerOptions{Store: i.st, Config: c, Paths: p, StartedTS: started, ConfigDigest: configDigest, Backup: runBackup})
 	i.serve(unixLn, srv.Handler(true))
 	if tcpLn != nil {
 		i.serve(tcpLn, srv.Handler(false))
 	}
 
-	if err := writeInfo(p, Info{PID: os.Getpid(), Version: version.Version, StartedTS: started, Socket: sock, Listen: i.listen}); err != nil {
+	if err := writeInfo(p, Info{PID: os.Getpid(), Version: version.Version, StartedTS: started, Socket: sock, Listen: i.listen, ConfigDigest: configDigest}); err != nil {
 		return nil, err
 	}
 

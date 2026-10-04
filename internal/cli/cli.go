@@ -126,14 +126,15 @@ func Run(ctx context.Context, args []string, env Env) int {
 	return code
 }
 
-// warnStaleConfig says so, once, when the daemon running on this machine started before the config file was
-// last written: the daemon reads the file only at start. A client runs no daemon, so it has nothing to say.
+// warnStaleConfig says so, once, when the config file now holds a different config from the one the daemon
+// running on this machine started with: the daemon reads the file only at start. A client runs no daemon, so it
+// has nothing to say.
 func (a *app) warnStaleConfig() {
 	c, err := config.Load(a.paths.ConfigFile())
 	if err != nil || c.IsClient() {
 		return
 	}
-	if info, ok := daemon.Running(a.paths); ok && a.paths.ConfigChangedSince(info.StartedTS) {
+	if info, ok := daemon.Running(a.paths); ok && a.paths.ConfigChanged(info.ConfigDigest) {
 		fmt.Fprintln(a.env.Stderr, "desk: the config file changed after the daemon started; run `desk daemon restart` to apply it")
 	}
 }

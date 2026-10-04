@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/federbenjamin/desk/internal/api"
 	"github.com/federbenjamin/desk/internal/config"
@@ -53,6 +54,32 @@ func TestACommandNamesTheRestartWhenTheConfigChangedAfterTheDaemonStarted(t *tes
 	}
 	if daemonStatus(t, home).ConfigChanged {
 		t.Error("daemon status after the restart: config_changed = true")
+	}
+}
+
+func TestATouchOrASameContentRewriteOfTheConfigIsNoChange(t *testing.T) {
+	home := testutil.StartHome(t, testutil.HomeOptions{})
+	file := home.Paths.ConfigFile()
+	now := time.Now()
+	if err := os.Chtimes(file, now.Add(time.Hour), now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, write := range map[string]func(){
+		"touch":              func() {},
+		"same bytes":         func() { _ = os.WriteFile(file, b, 0o600) },
+		"same config, notes": func() { _ = os.WriteFile(file, append([]byte("# kept for later\n"), b...), 0o600) },
+	} {
+		write()
+		if result := runHomeDesk(t, home, "list"); strings.Contains(result.stderr, restartHint) {
+			t.Errorf("list after %s: stderr = %q, want no restart hint", name, result.stderr)
+		}
+		if daemonStatus(t, home).ConfigChanged {
+			t.Errorf("daemon status after %s: config_changed = true", name)
+		}
 	}
 }
 
