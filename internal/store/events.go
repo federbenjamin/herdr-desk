@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"strconv"
 	"strings"
 
 	"github.com/federbenjamin/desk/internal/model"
@@ -76,13 +75,12 @@ func (s *Store) Decide(ctx context.Context, a Actor, in DecisionInput) (model.Ev
 	return s.journal(ctx, a, model.KindDecision, in.Task, in.Tags, []string{in.Text}, in.DecisionData, check, nil)
 }
 
-// Merged appends a merged event for a branch. The event carries the branch's tag.
+// Merged appends a merged event for a branch. The branch lives in the event data only; the event has no tags.
 func (s *Store) Merged(ctx context.Context, a Actor, in model.MergedData) (model.Event, error) {
 	if strings.TrimSpace(in.Branch) == "" {
-		return model.Event{}, errors.New("a merged event names its branch")
+		return model.Event{}, refuse(model.CodeBadInput, "a merged event names its branch")
 	}
-	tags := []string{model.BranchTag(in.Branch)}
-	return s.journal(ctx, a, model.KindMerged, 0, tags, []string{in.SHA, in.Text}, in, nil, nil)
+	return s.journal(ctx, a, model.KindMerged, 0, nil, []string{in.SHA, in.Text}, in, nil, nil)
 }
 
 // Compacted appends a compaction marker for the actor's session.
@@ -93,8 +91,7 @@ func (s *Store) Compacted(ctx context.Context, a Actor) (model.Event, error) {
 // Continues records that the actor's session continues from, in the event log and the sessions table.
 func (s *Store) Continues(ctx context.Context, a Actor, from string) (model.Event, error) {
 	if !model.ValidSessionID(a.Session) || !model.ValidSessionID(from) || from == a.Session {
-		return model.Event{}, errors.New("continues needs two different valid session ids: " +
-			strconv.Quote(a.Session) + " and " + strconv.Quote(from))
+		return model.Event{}, refuse(model.CodeBadInput, "continues needs two different valid session ids: %q and %q", a.Session, from)
 	}
 	apply := func(tx *sql.Tx, _ model.Event) error {
 		_, err := tx.ExecContext(ctx,

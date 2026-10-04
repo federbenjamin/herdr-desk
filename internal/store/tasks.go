@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -32,7 +31,7 @@ func (s *Store) checkArm(a Actor, st model.Status) error {
 func parseStatus(s model.Status) (model.Status, error) {
 	st, ok := model.ParseStatus(string(s))
 	if !ok {
-		return "", fmt.Errorf("unknown status %q", s)
+		return "", refuse(model.CodeBadInput, "unknown status %q", s)
 	}
 	return st, nil
 }
@@ -142,7 +141,7 @@ func (s *Store) SetTask(ctx context.Context, a Actor, number int, p model.Patch)
 		p.Status = &st
 	}
 	if p.Isolation != nil && !config.ValidIsolation(*p.Isolation) {
-		return model.Task{}, fmt.Errorf("isolation must be self, worktree, or in-place, not %q", *p.Isolation)
+		return model.Task{}, refuse(model.CodeBadInput, "isolation must be self, worktree, or in-place, not %q", *p.Isolation)
 	}
 	var out model.Task
 	_, _, err := s.append(ctx, a, write{
@@ -212,7 +211,7 @@ func (s *Store) Step(ctx context.Context, a Actor, number int, op model.StepOp) 
 		op.Text = ""
 	case "rename":
 	default:
-		return model.Task{}, fmt.Errorf("unknown step op %q; want add, toggle, rename, or remove", op.Op)
+		return model.Task{}, refuse(model.CodeBadInput, "unknown step op %q; want add, toggle, rename, or remove", op.Op)
 	}
 	if (op.Op == "add" || op.Op == "rename") && strings.TrimSpace(op.Text) == "" {
 		return model.Task{}, refuse(model.CodeEmptyText, "a step needs text")

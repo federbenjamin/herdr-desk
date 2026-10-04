@@ -42,10 +42,10 @@ var ErrAlreadyRunning = errors.New("daemon already running")
 // ErrClient is Start's answer on a client machine.
 var ErrClient = errors.New("this machine is a client; it runs no daemon")
 
-// maxSocketPath is macOS's limit on a unix socket path.
-const maxSocketPath = 104
+// maxSocketPath is macOS's limit on a unix socket path, 104 bytes with the terminator.
+const maxSocketPath = 103
 
-const backupTick = time.Hour
+var backupTick = time.Hour
 
 // Instance is a running daemon.
 type Instance struct {

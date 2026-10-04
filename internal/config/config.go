@@ -116,11 +116,12 @@ func (c Config) Save(path string) error {
 	if err != nil {
 		return err
 	}
-	return writeFileAtomic(path, b)
+	return WriteFileAtomic(path, b)
 }
 
-// writeFileAtomic writes b to path at 0600 in a 0700 folder, through a temp file and a rename.
-func writeFileAtomic(path string, b []byte) error {
+// WriteFileAtomic writes b to path at 0600 in a 0700 folder, through a temp file and a rename. The config, the
+// client's snapshot, and the backup export all write through it.
+func WriteFileAtomic(path string, b []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err

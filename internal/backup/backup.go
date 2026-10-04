@@ -88,20 +88,12 @@ func Due(p config.Paths, now time.Time) bool {
 }
 
 func export(ctx context.Context, st *store.Store, path string) (int, error) {
-	f, err := os.CreateTemp(filepath.Dir(path), "."+exportFile+"-*")
+	var buf bytes.Buffer
+	n, err := st.ExportEvents(ctx, &buf)
 	if err != nil {
 		return 0, err
 	}
-	defer os.Remove(f.Name())
-	n, err := st.ExportEvents(ctx, f)
-	if err != nil {
-		f.Close()
-		return 0, err
-	}
-	if err := f.Close(); err != nil {
-		return 0, err
-	}
-	return n, os.Rename(f.Name(), path)
+	return n, config.WriteFileAtomic(path, buf.Bytes())
 }
 
 func writeState(p config.Paths, s state) error {

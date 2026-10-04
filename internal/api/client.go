@@ -23,6 +23,8 @@ type ClientOptions struct {
 	Config  config.Config
 	Timeout time.Duration            // 0 → 5s
 	Spawn   func(config.Paths) error // starts the daemon on a home; nil → never
+	// Refused is called once for each queued entry the home refuses for good; nil → the entry is dropped silently.
+	Refused func(kind model.Kind, r *model.Refusal)
 }
 
 // Client calls the home: through the unix socket on the home itself, through TCP with the token on a client.

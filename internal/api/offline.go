@@ -14,6 +14,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/federbenjamin/desk/internal/config"
 	"github.com/federbenjamin/desk/internal/model"
 )
 
@@ -28,23 +29,7 @@ func (c *Client) writeSnapshot(tasks []model.Task) error {
 	if err != nil {
 		return err
 	}
-	path := c.o.Paths.Snapshot()
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	f, err := os.CreateTemp(filepath.Dir(path), ".snapshot-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(f.Name())
-	if _, err := f.Write(b); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	return os.Rename(f.Name(), path)
+	return config.WriteFileAtomic(c.o.Paths.Snapshot(), b)
 }
 
 func (c *Client) readSnapshot() (snapshot, error) {
@@ -95,7 +80,10 @@ func (c *Client) enqueue(r AppendRequest) error {
 	return err
 }
 
-// Flush forwards the outbox in order and returns how many entries it sent. It stops at the first failure.
+// Flush forwards the outbox in order and returns how many entries it sent. It stops when the home cannot be
+// reached, keeping what was not sent. An entry the home refuses (a 409) will never be accepted: it is removed,
+// reported through ClientOptions.Refused, and Flush goes on. A line that does not parse is removed the same way,
+// reported with the code bad-input.
 func (c *Client) Flush(ctx context.Context) (int, error) {
 	f, err := c.openOutbox(os.O_RDWR)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -120,24 +108,36 @@ func (c *Client) Flush(ctx context.Context) (int, error) {
 	if err := sc.Err(); err != nil {
 		return 0, err
 	}
-	sent := 0
+	refused := func(kind model.Kind, r *model.Refusal) {
+		if c.o.Refused != nil {
+			c.o.Refused(kind, r)
+		}
+	}
+	sent, done := 0, 0
 	var sendErr error
 	for _, line := range lines {
 		var r AppendRequest
 		if err := json.Unmarshal(line, &r); err != nil {
-			sendErr = err
-			break
+			refused(r.Kind, &model.Refusal{Code: model.CodeBadInput, Msg: "an outbox line does not parse: " + err.Error()})
+			done++
+			continue
 		}
 		if err := c.send(ctx, MethodEventsAppend, r, nil, true); err != nil {
+			if ref, ok := model.AsRefusal(err); ok && !isUnreachable(err) {
+				refused(r.Kind, ref)
+				done++
+				continue
+			}
 			sendErr = err
 			break
 		}
 		sent++
+		done++
 	}
-	if sent == 0 {
+	if done == 0 {
 		return 0, sendErr
 	}
-	rest := bytes.Join(lines[sent:], []byte{'\n'})
+	rest := bytes.Join(lines[done:], []byte{'\n'})
 	if len(rest) > 0 {
 		rest = append(rest, '\n')
 	}

@@ -28,7 +28,7 @@ func WriteToken(p Paths, token string) error {
 	if token == "" || strings.ContainsAny(token, " \t\r\n") {
 		return errors.New("a token is one word with no spaces")
 	}
-	return writeFileAtomic(p.TokenFile(), []byte(token+"\n"))
+	return WriteFileAtomic(p.TokenFile(), []byte(token+"\n"))
 }
 
 // RotateToken mints a new token (32 random bytes as hex), writes it, and returns it.

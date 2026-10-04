@@ -22,6 +22,7 @@ const (
 	CodeSecretDetected  = "secret-detected"
 	CodeNotAllowed      = "not-allowed"
 	CodeBackupOff       = "backup-off"
+	CodeBadInput        = "bad-input"        // exit 2: a value the store does not know (a status, an isolation, a step op, a session id) or a merged event with no branch
 	CodeHomeUnreachable = "home-unreachable" // exit 3
 	CodeScanFailed      = "scan-failed"      // exit 3
 )
