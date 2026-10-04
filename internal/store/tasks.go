@@ -108,7 +108,8 @@ func resolveProject(ctx context.Context, q querier, project string) (string, err
 }
 
 // SetTask patches a task. A patch that changes no field and carries no ref writes no event and returns the
-// task. An agent may not ask for ready or done; review with Merged writes the OnMerged status.
+// task. An agent may not ask for ready or done; review with Merged writes the OnMerged status. checkRunRules
+// runs in the write's transaction, and a status change away from started ends the task's live run there too.
 func (s *Store) SetTask(ctx context.Context, a Actor, number int, p model.Patch) (model.Task, error) {
 	if p.Title != nil && strings.TrimSpace(*p.Title) == "" {
 		return model.Task{}, refuse(model.CodeEmptyTitle, "a task needs a title")
@@ -130,12 +131,16 @@ func (s *Store) SetTask(ctx context.Context, a Actor, number int, p model.Patch)
 		return model.Task{}, refuse(model.CodeBadInput, "isolation must be self, worktree, or in-place, not %q", *p.Isolation)
 	}
 	var out model.Task
+	endRun := false
 	_, _, err := s.append(ctx, a, write{
 		kind: model.KindSet,
 		scan: []string{deref(p.Title), deref(p.Notes), deref(p.Thread), deref(p.Root), deref(p.Isolation), deref(p.Model), p.Ref},
 		prepare: func(tx *sql.Tx) (int, any, error) {
 			cur, err := readTask(ctx, tx, number)
 			if err != nil {
+				return 0, nil, err
+			}
+			if err := s.checkRunRules(ctx, tx, a, cur, p); err != nil {
 				return 0, nil, err
 			}
 			out = cur
@@ -167,10 +172,16 @@ func (s *Store) SetTask(ctx context.Context, a Actor, number int, p model.Patch)
 				return 0, nil, nil
 			}
 			diff.Merged = p.Merged
+			endRun = cur.Status == model.StatusStarted && out.Status != model.StatusStarted
 			return number, diff, nil
 		},
 		apply: func(tx *sql.Tx, ev model.Event) error {
 			out.UpdatedTS = ev.TS
+			if endRun {
+				if err := endLiveRun(ctx, tx, number, ev.TS); err != nil {
+					return err
+				}
+			}
 			_, err := tx.ExecContext(ctx,
 				`UPDATE tasks SET title=?, notes=?, status=?, thread=?, root=?, isolation=?, model=?, archived=?, updated_ts=? WHERE number=?`,
 				out.Title, out.Notes, string(out.Status), out.Thread, out.Root, out.Isolation, out.Model, out.Archived,
@@ -179,6 +190,25 @@ func (s *Store) SetTask(ctx context.Context, a Actor, number int, p model.Patch)
 		},
 	})
 	return out, err
+}
+
+// checkRunRules refuses a status write from a run that is not the task's newest (stale-run), and an agent
+// setting the thread agent on a ready task, which would arm it on a person's ready, unless AgentsMayArm.
+func (s *Store) checkRunRules(ctx context.Context, tx *sql.Tx, a Actor, cur model.Task, p model.Patch) error {
+	if a.Run != 0 && p.Status != nil {
+		newest, err := newestRun(ctx, tx, cur.Number)
+		if err != nil {
+			return err
+		}
+		if newest != a.Run {
+			return refuse(model.CodeStaleRun, "run %d is not T%d's newest run; a newer run owns the task", a.Run, cur.Number)
+		}
+	}
+	if a.Who() == model.WhoAgent && !s.agentsMayArm && p.Thread != nil && *p.Thread == "agent" &&
+		cur.Status == model.StatusReady {
+		return refuse(model.CodeNotAllowed, "an agent may not put a ready task on the agent thread; a person arms it")
+	}
+	return nil
 }
 
 func deref(p *string) string {
