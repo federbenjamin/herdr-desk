@@ -83,14 +83,33 @@ func TestTickResetsTheIdleCountWhenTheSessionWorksOrIsUnknown(t *testing.T) {
 	}
 }
 
-func TestTickDoesNotCountIdleForAPaneWithoutTheRunSession(t *testing.T) {
+func TestTickBlocksAPaneFoundOnlyByIDThatIsBlocked(t *testing.T) {
 	f := newFixture(t, "", "in-place")
 	task, run, r := f.start()
-	f.herdr.Set(run.Pane, "", "idle")
+	// claude at its trust question: herdr shows the pane blocked before it has an agent session.
+	f.herdr.Set(run.Pane, "", "blocked")
+
 	r.Tick(f.ctx)
-	r.Tick(f.ctx)
-	if got := f.task(task.Number).Task.Status; got != model.StatusStarted {
-		t.Fatalf("task found only by pane id = %q, want started", got)
+	detail := f.task(task.Number)
+	if detail.Task.Status != model.StatusBlocked || f.run(task.Number).State != model.RunEnded {
+		t.Fatalf("task = %#v; run = %#v, want blocked task and ended run", detail.Task, f.run(task.Number))
+	}
+	watchAssertRunnerNote(t, detail.History, run.ID, "the worker is blocked waiting for an answer in pane "+run.Pane)
+	watchAssertRunnerStatus(t, detail.History, run.ID, model.StatusBlocked)
+}
+
+func TestTickChangesNothingForAPaneFoundOnlyByIDThatIsNotBlocked(t *testing.T) {
+	for _, status := range []string{"working", "unknown", "idle", "done"} {
+		t.Run(status, func(t *testing.T) {
+			f := newFixture(t, "", "in-place")
+			task, run, r := f.start()
+			f.herdr.Set(run.Pane, "", status)
+			r.Tick(f.ctx)
+			r.Tick(f.ctx)
+			if got, state := f.task(task.Number).Task.Status, f.run(task.Number).State; got != model.StatusStarted || state != model.RunRunning {
+				t.Fatalf("task found only by pane id, %s on two ticks = %q, run %q; want started and running", status, got, state)
+			}
+		})
 	}
 }
 

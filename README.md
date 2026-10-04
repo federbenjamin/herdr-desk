@@ -286,8 +286,13 @@ the first message. No task text ever reaches a shell. A note records the workspa
 `waiting` and starts when the first ends. `worktree` and `self` routes never wait.
 
 **The watch.** Every poll, for each running run, the runner finds its pane in `herdr pane list` by
-the run's agent session. A worker `blocked` in herdr sets the task `blocked`; `done` or `idle` on two
-polls in a row sets it `review`; a pane that is gone sets it `review`; a run running for more than
+the run's agent session, else by the pane and workspace the spawn recorded. A worker `blocked` in herdr
+sets the task `blocked` and ends the run, however its pane was found. A worker that stops at a question
+before it has an agent session, such as claude's trust question in a folder it has not seen (every new
+worktree is one), shows in herdr as `blocked` with no session: the task stays `blocked` until a person
+answers in the pane, and the worker, still the task's newest run, can then hand it back. `done` or `idle`
+on two polls in a row, on a pane found by its session, sets it `review`; a pane that is gone sets it
+`review`; a run running for more than
 `max_run_minutes`, counted from its spawn and not from a wait before it, is killed like `desk runs kill` does and
 the task set `blocked`. Every write a
 worker makes carries its run id, and a write from a run that is not the task's newest is refused

@@ -56,11 +56,13 @@ func (r *Runner) watch(ctx context.Context, h Herdr) {
 				toReview.note += ", before the worker wrote anything"
 			}
 			r.handBack(ctx, run, toReview)
-		case !bySession:
-			// The pane has not started its agent yet; only the time limit stops it.
 		case pane.Status == "blocked":
+			// An agent can stop at a question before it has a session (claude's trust question), so blocked counts
+			// on a pane found only by id too.
 			r.handBack(ctx, run, flip{from: model.RunRunning, to: model.RunEnded, status: model.StatusBlocked, tags: tags,
 				note: fmt.Sprintf("the worker is blocked waiting for an answer in pane %s", pane.ID)})
+		case !bySession:
+			// The pane has not started its agent yet; only the time limit stops it.
 		case pane.Status == "done" || pane.Status == "idle":
 			r.idle[run.ID]++
 			if r.idle[run.ID] < 2 {

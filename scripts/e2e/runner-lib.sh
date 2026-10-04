@@ -77,10 +77,45 @@ workspace_open() {
 
 workspace_closed() { ! workspace_open "$1"; }
 
-# runner_cleanup: stop the daemons, close every pane the fake holds or every workspace a run row named, then the
-# shared cleanup. Only workspaces named by a run row are closed on the real herdr.
+# SHOW_PANE: a pane whose visible screen runner_cleanup prints when the script fails, before anything is closed.
+SHOW_PANE=""
+
+# show_pane: print the last 30 lines of SHOW_PANE's visible screen on stderr; nothing when it is unset.
+show_pane() {
+  [ -n "$SHOW_PANE" ] || return 0
+  say "--- pane $SHOW_PANE, visible screen, last 30 lines ---" >&2
+  herdr_do pane read "$SHOW_PANE" --source visible --format text 2>&1 | tail -n 30 >&2 || true
+  say "--- end of pane $SHOW_PANE ---" >&2
+}
+
+# pane_shows <pane> <text>: the pane's visible screen holds the text.
+pane_shows() {
+  herdr_do pane read "$1" --source visible --format text 2>/dev/null | grep -F -- "$2" >/dev/null
+}
+
+# answer_trust_question <pane>: answer "Yes, I trust this folder" to claude's trust question in the pane, as a person
+# would. Keys sent at once after the question appears are ignored, and Enter alone picks "No, exit", so it waits,
+# moves down, waits, and confirms. It fails, showing the screen, when the question is not on screen within 30 s.
+answer_trust_question() {
+  local pane=$1
+  herdr_do pane wait-output "$pane" --match "trust this folder" --source visible --timeout 30000 >/dev/null 2>&1 || true
+  if ! pane_shows "$pane" "trust this folder"; then
+    SHOW_PANE=$pane
+    fail "claude's trust question is not on pane $pane's screen after 30 s"
+  fi
+  sleep 2
+  herdr_do pane send-keys "$pane" Down >/dev/null || fail "could not send Down to pane $pane"
+  sleep 1
+  herdr_do pane send-keys "$pane" Enter >/dev/null || fail "could not send Enter to pane $pane"
+}
+
+# runner_cleanup: show SHOW_PANE's screen when the script failed, stop the daemons, close every pane the fake holds or
+# every workspace a run row named, then the shared cleanup. Only workspaces named by a run row are closed on the real
+# herdr.
 runner_cleanup() {
+  local rc=$?
   local d m id
+  if [ "$rc" != 0 ]; then show_pane; fi
   if [ "$HERDR_REAL" = 1 ]; then track_workspaces; fi
   for d in "$E2E"/*/state/desk; do
     [ -f "$d/daemon.json" ] || continue

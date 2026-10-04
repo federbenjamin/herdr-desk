@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # H12 (runner): with the real herdr, the real router, and the real worker: a task with no project routes to the
-# scratch root and the worker hands it back. This spends one router run and one worker run of the owner's quota.
-# Only the workspaces a run row of this desk names are closed.
+# scratch root, the worker stops at claude's trust question (a folder claude has not seen) and the task goes blocked,
+# and once the question is answered in the pane, as a person would, the worker hands the task back. This spends one
+# router run and one worker run of the owner's quota. Only the workspaces a run row of this desk names are closed.
+# A failure once the worker's pane exists prints the pane's screen first.
 # shellcheck source=scripts/e2e/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 # shellcheck source=scripts/e2e/runner-lib.sh
@@ -39,9 +41,20 @@ run 0 on home desk add -t "desk e2e: hand this task back" \
 run 0 on home desk set T1 ready
 wait_run 1 running 120
 track_workspaces
+PANE=$(run_field 1 pane)
+SHOW_PANE=$PANE
 [ "$(run_field 1 root)" = "$SCRATCH" ] || fail "run 1 routed to '$(run_field 1 root)', not $SCRATCH"
 say "routed to the scratch root ok"
 
+# herdr shows the pane blocked, with no agent session, while claude asks whether to trust the folder.
+wait_task 1 blocked 60
+run_is 1 ended || fail "run 1 is $(run_field 1 state)"
+task_has_note 1 "the worker is blocked waiting for an answer in pane $PANE" ||
+  fail "T1 has no runner note that its worker is blocked in pane $PANE: $(task_notes 1)"
+say "trust question → blocked ok"
+
+# The hand-back comes from run 1, ended but still T1's newest run, which the store accepts.
+answer_trust_question "$PANE"
 wait_task 1 review 300
 track_workspaces
 SESSION=$(run_field 1 session)
@@ -55,6 +68,7 @@ if [ "$ROUTERS" != 1 ] || [ "$WORKERS" != 1 ]; then fail "claude ran $ROUTERS ti
 say "real runs: 1 router, 1 worker"
 
 stop_daemon home
+SHOW_PANE=""
 close_tracked_workspaces
 while read -r id; do
   wait_long 20 "workspace $id to close" workspace_closed "$id"

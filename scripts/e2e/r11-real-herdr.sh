@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # H11 (runner): on the real herdr, with the stub router and worker: a workspace opens without taking focus, the pane
-# is found by its agent session, an idle worker goes to review, and a kill leaves nothing. People may be working in
-# this herdr: the script closes only the workspaces a run row of its own desk names, and nothing else.
+# is found by its agent session, a worker whose pane closes goes to review, and a kill leaves nothing. People may be
+# working in this herdr: the script closes only the workspaces a run row of its own desk names, and nothing else.
+# A stub found by its session cannot also be seen idle (herdr ignores reported states once a pane has a session), so
+# the watch is proven here by ending the stub and its pane; the idle rule is proven by W9 and H3.
 # shellcheck source=scripts/e2e/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 # shellcheck source=scripts/e2e/runner-lib.sh
@@ -15,9 +17,9 @@ runner_up home
 route_to "$SCRATCH" in-place sonnet "stub"
 FOCUS=$(focused_workspace)
 
-# T1: a worker that goes idle without handing back.
-run 0 on home desk add -t "desk e2e: go idle" --desk --thread agent
-set_mode 1 idle
+# T1: a busy worker whose pane closes without a hand-back.
+run 0 on home desk add -t "desk e2e: close my pane" --desk --thread agent
+set_mode 1 busy
 run 0 on home desk set T1 ready
 wait_run 1 running 30
 wait_file "$STUB/worker-run1.env"
@@ -29,9 +31,15 @@ say "focus unchanged ok"
 wait_long 30 "herdr to show the agent session $SESSION" pane_has_session "$SESSION"
 [ "$(pane_of_session "$SESSION")" = "$PANE" ] || fail "herdr shows the session on $(pane_of_session "$SESSION"), the run row says $PANE"
 say "pane found by agent session ok"
+# The stub was exec'd into the pane's shell, so ending it closes the pane. Its sleep is ended too.
+WORKER1=$(head -n 1 "$STUB/pids-run1")
+CHILDREN1=$(pgrep -P "$WORKER1" || true)
+kill -TERM "$WORKER1" || fail "could not end the stub worker $WORKER1"
+for p in $CHILDREN1; do kill -TERM "$p" 2>/dev/null || true; done
 wait_task 1 review 40
 run_is 1 ended || fail "run 1 is $(run_field 1 state)"
-say "idle → review ok"
+task_has_note 1 "the pane closed without a hand-back" || fail "T1 has no note that its pane closed: $(task_notes 1)"
+say "pane closed → review ok"
 
 # T2: kill a worker with a child.
 run 0 on home desk add -t "desk e2e: kill me" --desk --thread agent
