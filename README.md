@@ -30,7 +30,9 @@ herdr plugin install federbenjamin/desk
 
 herdr runs `scripts/fetch-or-build.sh`: it downloads the release binary for your platform, checks
 its SHA-256 against `checksums.txt`, and builds from source with Go when no release matches. When no
-`desk` is on your PATH it copies the binary to `~/.local/bin/desk` and says so.
+`desk` is on your PATH it copies the binary to `~/.local/bin/desk` and says so. A later install
+replaces that copy and tells you to run `desk daemon restart`; a `desk` from anywhere else
+(Homebrew, `go install`) is left alone.
 
 Then set up the home and the Claude Code plugin:
 

@@ -4,8 +4,8 @@
 # Downloads the release archive for the version herdr-plugin.toml declares and this platform,
 # verifies its SHA-256 against checksums.txt, and places the binary at $DESK_OUT. On any miss
 # (no release, download error, checksum mismatch, unmapped platform) it builds from source with
-# Go instead, with the version set to <version>+src. When no `desk` is on PATH it also copies the
-# binary to $DESK_INSTALL_DIR.
+# Go instead, with the version set to <version>+src. It also copies the binary to
+# $DESK_INSTALL_DIR when no `desk` is on PATH, or when the one there is the copy it made before.
 #
 # Overrides, for tests: DESK_REPO_ROOT, DESK_VERSION, DESK_BASE_URL (the folder holding
 # v<version>/), DESK_OUT, DESK_INSTALL_DIR, DESK_GO.
@@ -26,15 +26,34 @@ have() { command -v "$1" >/dev/null 2>&1; }
 
 trap 'if [ -n "$tmpdir" ]; then rm -rf "$tmpdir"; fi' EXIT
 
-# install_from_path makes the binary at $out available as `desk` when none is on PATH, or exits 1
-# naming the place it could not write.
-install_from_path() {
-  if have desk; then
+# place copies $out to $install_dir/desk through a temp file and a rename. A copy over the file in
+# place would change a binary a running daemon has open, and macOS kills a process whose signed
+# file changed under it.
+place() {
+  mkdir -p "$install_dir" || return 1
+  if cp "$out" "$install_dir/.desk.new.$$" && mv -f "$install_dir/.desk.new.$$" "$install_dir/desk"; then
     return 0
   fi
-  if ! mkdir -p "$install_dir" || ! cp -f "$out" "$install_dir/desk"; then
-    echo "desk: no desk on your PATH, and it could not be installed to $install_dir/desk; copy $out onto your PATH" >&2
+  rm -f "$install_dir/.desk.new.$$"
+  return 1
+}
+
+# install_from_path makes the binary at $out the `desk` on PATH: it installs one when none is
+# there, and replaces the one this script installed before. A desk from anywhere else (Homebrew,
+# go install) is left alone. It exits 1 naming the place it could not write.
+install_from_path() {
+  on_path=$(command -v desk 2>/dev/null || true)
+  if [ -n "$on_path" ] && [ "$on_path" != "$install_dir/desk" ]; then
+    echo "desk: the desk on your PATH is $on_path, which this install does not manage; this build is at $out."
+    return 0
+  fi
+  if ! place; then
+    echo "desk: it could not be installed to $install_dir/desk; copy $out onto your PATH" >&2
     exit 1
+  fi
+  if [ -n "$on_path" ]; then
+    echo "desk: updated $install_dir/desk. Run \`desk daemon restart\` to use it."
+    return 0
   fi
   echo "desk: no desk on your PATH, so I installed it to $install_dir/desk."
   case ":$PATH:" in
