@@ -45,21 +45,21 @@ func Slug(title string) string {
 // reports whether the worker was started; a failure sets the run failed and the task blocked.
 func (r *Runner) spawn(ctx context.Context, h Herdr, t model.Task, run model.Run, from string) bool {
 	// failSpawn fails the run while it is in state; extra follows the clipped reason, so it is never cut.
-	failSpawn := func(state, reason, extra string) bool {
+	failSpawn := func(ctx context.Context, state, reason, extra string) bool {
 		r.fail(ctx, run, state, []string{model.TagRunner}, "spawn: "+clip(reason)+extra)
 		return false
 	}
 	command, err := r.paneCommand()
 	if err != nil {
-		return failSpawn(from, err.Error(), "")
+		return failSpawn(ctx, from, err.Error(), "")
 	}
 	dir, err := r.workdir(ctx, t, run)
 	if err != nil {
-		return failSpawn(from, err.Error(), "")
+		return failSpawn(ctx, from, err.Error(), "")
 	}
 	session, err := newUUID()
 	if err != nil {
-		return failSpawn(from, err.Error(), "")
+		return failSpawn(ctx, from, err.Error(), "")
 	}
 	env := append([]string{
 		fmt.Sprintf("DESK_TASK=T%d", t.Number),
@@ -68,32 +68,35 @@ func (r *Runner) spawn(ctx context.Context, h Herdr, t model.Task, run model.Run
 	}, r.o.Paths.Env()...)
 	created, err := h.CreateWorkspace(ctx, dir, fmt.Sprintf("desk T%d", t.Number), env)
 	if err != nil {
-		return failSpawn(from, err.Error(), "")
+		return failSpawn(ctx, from, err.Error(), "")
 	}
 	pane := herdr.Pane{ID: created.Pane, Workspace: created.Workspace}
+	// The pane exists outside desk now: undoing the spawn goes on even when ctx ends, so a stopping daemon leaves
+	// no worker and no live run behind.
+	undo := context.WithoutCancel(ctx)
 	// The run becomes running with its pane in one write, so a running run's pane is always known to a kill; a
 	// kill that took the run while the workspace was made leaves this claim unapplied.
 	ok, err := r.o.Store.UpdateRun(ctx, run.ID, from, store.RunUpdate{
 		State: model.RunRunning, Session: session, Workspace: created.Workspace, Pane: created.Pane,
 	})
 	if err != nil {
-		return failSpawn(from, "could not record the pane: "+err.Error(), r.closeSpawned(ctx, h, t, pane))
+		return failSpawn(undo, from, "could not record the pane: "+err.Error(), r.closeSpawned(undo, h, t, pane))
 	}
 	if !ok {
-		r.closeSpawned(ctx, h, t, pane)
+		r.closeSpawned(undo, h, t, pane)
 		return false
 	}
 	if err := h.Run(ctx, created.Pane, command); err != nil {
-		return failSpawn(model.RunRunning, err.Error(), r.closeSpawned(ctx, h, t, pane))
+		return failSpawn(undo, model.RunRunning, err.Error(), r.closeSpawned(undo, h, t, pane))
 	}
 	cur, ok, err := r.o.Store.CurrentRun(ctx, t.Number)
 	if err != nil {
 		// The run may have been killed while its command was typed: nothing says it started until the store does.
-		return failSpawn(model.RunRunning, "could not confirm the run: "+err.Error(), r.closeSpawned(ctx, h, t, pane))
+		return failSpawn(undo, model.RunRunning, "could not confirm the run: "+err.Error(), r.closeSpawned(undo, h, t, pane))
 	}
 	if !ok || cur.ID != run.ID || cur.State != model.RunRunning {
 		// A kill took the run while its command was typed: no worker stays, and nothing says it started.
-		r.closeSpawned(ctx, h, t, pane)
+		r.closeSpawned(undo, h, t, pane)
 		return false
 	}
 	r.note(ctx, store.Actor{Run: run.ID}, t.Number, []string{model.TagRunner},

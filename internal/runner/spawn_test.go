@@ -1,6 +1,7 @@
 package runner_test
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/federbenjamin/desk/internal/config"
 	"github.com/federbenjamin/desk/internal/model"
+	"github.com/federbenjamin/desk/internal/runner"
 	"github.com/federbenjamin/desk/internal/store"
 	"github.com/federbenjamin/desk/internal/testutil"
 )
@@ -305,39 +307,89 @@ func TestTickFailsTheRunWhenItsPaneCannotBeRecorded(t *testing.T) {
 }
 
 func TestTickReportsNoStartWhenItCannotConfirmTheRunAfterTheCommand(t *testing.T) {
-	root := t.TempDir()
-	f := newFixture(t, root, "self")
+	t.Run("the run row cannot be read", func(t *testing.T) {
+		root := t.TempDir()
+		f := newFixture(t, root, "self")
+		task := f.armRoute("unconfirmed start", root, "self")
+		h := &hookedHerdr{Herdr: f.herdr}
+		db, err := sql.Open("sqlite", f.paths.DB())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer db.Close()
+		// Once the command is typed, the run row cannot be read back: its start time no longer parses.
+		var started string
+		h.after("Run", func() {
+			if err := db.QueryRow(`SELECT started_ts FROM runs WHERE task = ?`, task.Number).Scan(&started); err != nil {
+				t.Errorf("read the start time: %v", err)
+			}
+			if _, err := db.Exec(`UPDATE runs SET started_ts = 'unreadable' WHERE task = ?`, task.Number); err != nil {
+				t.Errorf("spoil the start time: %v", err)
+			}
+		})
+		spawnAssertUndone(t, f.ctx, f, task, h, "could not confirm the run", func() {
+			if _, err := db.Exec(`UPDATE runs SET started_ts = ? WHERE task = ?`, started, task.Number); err != nil {
+				t.Fatalf("restore the start time: %v", err)
+			}
+		})
+	})
+}
+
+func TestTickUndoesASpawnWhoseContextEndsOnceThePaneExists(t *testing.T) {
+	for _, tc := range []struct {
+		name, hook, reason string
+	}{
+		{"before the pane is recorded", "after CreateWorkspace", "could not record the pane"},
+		{"while the command is typed", "before Run", "context canceled"},
+		{"before the run is confirmed", "after Run", "could not confirm the run"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			f := newFixture(t, root, "self")
+			task := f.armRoute("canceled start", root, "self")
+			h := &ctxHerdr{hookedHerdr: &hookedHerdr{Herdr: f.herdr}}
+			ctx, cancel := context.WithCancel(f.ctx)
+			defer cancel()
+			// The daemon stops while the spawn runs: every call on ctx from here on fails.
+			h.set(tc.hook, cancel)
+			spawnAssertUndone(t, ctx, f, task, h, tc.reason, func() {})
+		})
+	}
+}
+
+// ctxHerdr is the hooked herdr whose Run and ClosePane fail once their context has ended, as the real client's do.
+type ctxHerdr struct{ *hookedHerdr }
+
+func (h *ctxHerdr) Run(ctx context.Context, pane, command string) error {
+	h.fire("before Run")
+	defer h.fire("after Run")
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return h.Herdr.Run(ctx, pane, command)
+}
+
+func (h *ctxHerdr) ClosePane(ctx context.Context, pane string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return h.hookedHerdr.ClosePane(ctx, pane)
+}
+
+// spawnAssertUndone ticks a runner on h with ctx, runs restore, and checks the run failed with reason in its
+// spawn note, the task blocked, and the pane closed, with no started note and no notification.
+func spawnAssertUndone(t *testing.T, ctx context.Context, f *fixture, task model.Task, h runner.Herdr, reason string, restore func()) {
+	t.Helper()
 	notice := filepath.Join(t.TempDir(), "notice")
 	f.config.Notify.Command = []string{spawnNotifyScript(t, notice)}
-	task := f.armRoute("unconfirmed start", root, "self")
-	h := &hookedHerdr{Herdr: f.herdr}
-	r := f.runnerWith(h)
-	db, err := sql.Open("sqlite", f.paths.DB())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	// Once the command is typed, the run row cannot be read back: its start time no longer parses.
-	var started string
-	h.after("Run", func() {
-		if err := db.QueryRow(`SELECT started_ts FROM runs WHERE task = ?`, task.Number).Scan(&started); err != nil {
-			t.Errorf("read the start time: %v", err)
-		}
-		if _, err := db.Exec(`UPDATE runs SET started_ts = 'unreadable' WHERE task = ?`, task.Number); err != nil {
-			t.Errorf("spoil the start time: %v", err)
-		}
-	})
-
-	r.Tick(f.ctx)
-	if _, err := db.Exec(`UPDATE runs SET started_ts = ? WHERE task = ?`, started, task.Number); err != nil {
-		t.Fatalf("restore the start time: %v", err)
-	}
+	f.runnerWith(h).Tick(ctx)
+	restore()
 	run := f.run(task.Number)
 	workspaces := f.herdr.Workspaces()
 	if run.State != model.RunFailed || f.task(task.Number).Task.Status != model.StatusBlocked || len(workspaces) != 1 || !reflect.DeepEqual(f.herdr.Closed(), []string{workspaces[0].Pane}) {
 		t.Fatalf("run = %#v; task = %#v; closed = %#v, want a failed run, a blocked task, and the pane closed", run, f.task(task.Number).Task, f.herdr.Closed())
 	}
-	spawnAssertFailureNote(t, f.task(task.Number).History, run.ID, "could not confirm the run")
+	spawnAssertFailureNote(t, f.task(task.Number).History, run.ID, reason)
 	for _, event := range f.task(task.Number).History {
 		var note model.NoteData
 		if event.Kind == model.KindNote && json.Unmarshal(event.Data, &note) == nil && strings.HasPrefix(note.Text, fmt.Sprintf("run %d: workspace", run.ID)) {
