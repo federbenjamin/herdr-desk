@@ -168,7 +168,7 @@ Assumptions the design rests on:
 - The token grants every write. There is one token per desk.
 - Event ids are a total order (one writer, `INTEGER PRIMARY KEY`). Every journal rule compares ids, never timestamps.
 - Delivery from the outbox is at-least-once: a forward whose answer is lost is sent again and lands twice. A doubled journal line is accepted over a dedupe key.
-- macOS limits a unix socket path to 104 bytes. A longer path is an error that names the path, not a truncation.
+- macOS limits a unix socket path to 103 bytes (104 with the terminator). A longer path is an error that names the path, not a truncation.
 
 Libraries (check current docs through context7 before the first call): `modernc.org/sqlite` (pure Go; `go test` must pass with `CGO_ENABLED=0`), `github.com/spf13/cobra`, `github.com/pelletier/go-toml/v2`, `golang.org/x/sys/unix` for `flock`. No test library: tests use the standard `testing` package only.
 
@@ -480,6 +480,9 @@ type Backup struct {
 func Default() Config                   // runner off, cap 1, 20 runs a day, 180 minutes, poll 30, on_merged "review"
 func Load(path string) (Config, error)  // a missing file is Default(), nil; unknown keys and bad values are errors
 func (c Config) Save(path string) error // 0600, written to a temp file then renamed; keeps the WARNING comment
+// WriteFileAtomic writes b to path at 0600 in a 0700 folder, through a temp file and a rename. The config, the
+// client's snapshot, and the backup export all write through it.
+func WriteFileAtomic(path string, b []byte) error
 // ValidIsolation reports whether s is "", self, worktree, or in-place. The store checks a task's isolation with it.
 func ValidIsolation(s string) bool
 func (c Config) Validate() error        // on_merged, isolation values, listen and client.home as host:port, listen never a wildcard host
@@ -665,6 +668,8 @@ type ClientOptions struct {
 	Config  config.Config
 	Timeout time.Duration            // 0 → 5s
 	Spawn   func(config.Paths) error // starts the daemon on a home; nil → never
+	// Refused is called once for each queued entry the home refuses for good; nil → the entry is dropped silently.
+	Refused func(kind model.Kind, r *model.Refusal)
 }
 func NewClient(o ClientOptions) *Client
 
@@ -683,7 +688,10 @@ func (c *Client) ListRuns(ctx context.Context) ([]model.Run, error)
 // Status never starts the daemon.
 func (c *Client) Status(ctx context.Context) (Status, error)
 func (c *Client) Backup(ctx context.Context) (backup.Result, error)
-// Flush forwards the outbox in order and returns how many entries it sent. It stops at the first failure.
+// Flush forwards the outbox in order and returns how many entries it sent. It stops when the home cannot be
+// reached, keeping what was not sent. An entry the home refuses (a 409) will never be accepted: it is removed,
+// reported through ClientOptions.Refused, and Flush goes on. A line that does not parse is removed the same way,
+// reported with the code bad-input.
 func (c *Client) Flush(ctx context.Context) (int, error)
 ```
 
@@ -830,7 +838,7 @@ The caller's session is the first of: `--session <id>`, the `DESK_SESSION` varia
 | `desk backup` | runs the backup now | `backup: <n> events, committed\|unchanged, pushed` |
 | `desk version` | | `desk <version>` |
 
-Reads while the home is unreachable: bare `desk`, and `desk list` with `--ready`, `--open`, `-p`, `--desk`, or no flag (the filters with `Filter.Live()`), answer from the snapshot, exit 0, with the offline first line (bare `desk`) or `"offline": true` (`--json`) and a line on stderr. Every other read and every task write exits 3 with `home-unreachable`. Before any call, the client forwards its outbox.
+Reads while the home is unreachable: bare `desk`, and `desk list` with `--ready`, `--open`, `-p`, `--desk`, or no flag (the filters with `Filter.Live()`), answer from the snapshot, exit 0, with the offline first line (bare `desk`) or `"offline": true` (`--json`) and a line on stderr. Every other read and every task write exits 3 with `home-unreachable`. Before any call, the client forwards its outbox. A queued entry the home refuses on that forward prints `desk: a queued <kind> was refused: <code>: <message>` on stderr of the command that forwarded it; that command's own output and exit code do not change.
 
 On a home whose daemon is not running, a command starts it (`Env.Spawn`) and waits for the socket. `desk daemon …` and `desk version` never start it. `desk daemon stop` exits 0 whether or not one was running; `desk daemon restart` is stop, then start detached.
 
@@ -951,7 +959,7 @@ P5 waits for P4 because `setup.ClientAdd` calls `api.Client.Status`. P2 and P7 w
   - covers: 12, 15
   - under test: NewClient, ListTasks, Append, Flush, StartHome, NewClientMachine
 - W7 · plain · the daemon's lifecycle and the backup
-  - files: internal/daemon/daemon_test.go, internal/backup/backup_test.go
+  - files: internal/daemon/daemon_test.go, internal/daemon/export_test.go, internal/backup/backup_test.go
   - covers: 13, 14
   - under test: Start, Close, ReadInfo, Stop, backup.Run, backup.Due
 - W8 · plain · setup, the herdr keys, joining a home, and the skill
@@ -1037,8 +1045,8 @@ Before, for every line: the file or behaviour does not exist.
 9. `internal/config`: `ResolvePaths` follows the XDG variables with the HOME fallbacks; `Load` of a missing file is `Default()`; `Save` writes 0600 through a rename and the saved text keeps a comment starting `WARNING:` directly above `agents_may_arm`; `Validate` refuses a wildcard `listen` host (empty, `0.0.0.0`, `::`), a bad `on_merged`, and a bad isolation; `AddRoot` and `RemoveRoot` edit the roots list; `ReadToken`, `WriteToken`, and `RotateToken` keep the token file at 0600. (spec: Config, Daemon and API)
 10. `internal/journal.Build` and `View.Markdown` render Work log, Todo, and Decisions by the rules in §Journal rules below, and each of the nine ported tests has a Go test with the same claim. (spec: Journal; §Corrections 5)
 11. `internal/api` server: the ten methods over `POST /v1/<method>` with the status codes of `## Public surface`, through one shared decode, call, encode adapter; on the untrusted handler a request without the exact token (constant-time compare, token read per request) gets 401 and `backup.run` is not served; bodies over 1 MiB get 413; an `AppendRequest` whose set field does not match its kind gets 400; who is derived from the actor's session and no `who` field is read. (spec: Daemon and API; Design 2, 3)
-12. `internal/api.Client`: uses the unix socket on a home and TCP with the token on a client; returns a server refusal as `*model.Refusal`; returns `home-unreachable` when the home cannot be reached (after `Spawn` on a home, when set); `ListTasks` with a `Live()` filter asks the home for the zero `Filter`, writes the snapshot, and returns what the filter matches, and when the home is unreachable answers from the snapshot, marked `Offline` with its time; `Status` never starts a daemon; `Append` queues to the outbox when unreachable and `Flush` forwards in order, keeping what was not sent; every call forwards the outbox first. (spec: The model; Design 8; §Corrections 7)
-13. `internal/daemon`: `Start` takes an exclusive `flock`, returns `ErrAlreadyRunning` when held and `ErrClient` on a client, removes a stale socket, serves the unix socket (0600) and the configured TCP address, writes the info file once, and each hour runs the backup when it is on and `backup.Due`; `Close` and a signal stop it cleanly and remove the socket and the info file; `Stop` signals only while the lock is held; `Spawn` behaves as `## Public surface` says; a socket path over 104 bytes is an error naming the path. (spec: Daemon and API; §Corrections 13)
+12. `internal/api.Client`: uses the unix socket on a home and TCP with the token on a client; returns a server refusal as `*model.Refusal`; returns `home-unreachable` when the home cannot be reached (after `Spawn` on a home, when set); `ListTasks` with a `Live()` filter asks the home for the zero `Filter`, writes the snapshot, and returns what the filter matches, and when the home is unreachable answers from the snapshot, marked `Offline` with its time; `Status` never starts a daemon; `Append` queues to the outbox when unreachable and `Flush` forwards in order, keeping what was not sent; a queued entry the home refuses, or a line that does not parse, is removed and reported through `ClientOptions.Refused`, and never stops the entries behind it; every call forwards the outbox first. (spec: The model; Design 8; §Corrections 7)
+13. `internal/daemon`: `Start` takes an exclusive `flock`, returns `ErrAlreadyRunning` when held and `ErrClient` on a client, removes a stale socket, serves the unix socket (0600) and the configured TCP address, writes the info file once, and each hour runs the backup when it is on and `backup.Due` (the interval is an unexported package variable, `backupTick`, which `internal/daemon/export_test.go` lets a test shorten); `Close` and a signal stop it cleanly and remove the socket and the info file; `Stop` signals only while the lock is held; `Spawn` behaves as `## Public surface` says; a socket path over 103 bytes is an error naming the path. (spec: Daemon and API; §Corrections 13)
 14. `internal/backup.Run` writes `events.jsonl`, commits only when it changed, pushes to the remote's `main`, and records the run; `Due` is true with no recorded run or one over 24 hours old; with no remote configured the `backup.run` method refuses `backup-off`. (spec: Store "Backup"; §Corrections 8)
 15. `internal/testutil` gives tests a real in-process home on short temp directories, a way to stop and restart it, and a second machine set up as its client. (§Public surface)
 16. `setup.Run` writes or updates the config without losing an existing value, mints a 32-byte hex token (0600) when `Listen` is set and no token exists, creates the scratch root as a git repo, writes `<SkillDir>/desk/SKILL.md` when asked, with `Profile: "claude-code"` writes the spec's `router` and `worker` argv arrays and `session_env`, and when herdr has a config file writes `[notify] command` as herdr's notification argv unless one is set; it prints one line per thing written or skipped and never prompts. (spec: Profile, Config, herdr bridge)
