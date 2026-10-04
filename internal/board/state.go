@@ -329,7 +329,7 @@ func (s State) paste(m tea.PasteMsg) (State, []Effect) {
 		return s.toAdd(m)
 	case s.editing:
 		s.notes = typeNotes(s.notes, m)
-	case s.prompt.kind != promptNone && !s.prompt.confirm():
+	case s.prompt.kind != promptNone:
 		s = s.typePrompt(m)
 	}
 	return s, nil

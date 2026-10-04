@@ -45,9 +45,10 @@ type fakeHome struct {
 
 	only       map[string]bool
 	unscripted []string
-	addReplies []addReply           // answered in order before add is
-	addGate    chan struct{}        // AddTask waits for it to close before it answers
-	listHook   func(call int) error // runs outside the lock before ListTasks call number call answers
+	addReplies []addReply              // answered in order before add is
+	addGate    chan struct{}           // AddTask waits for it to close before it answers
+	listHook   func(call int) error    // runs outside the lock before ListTasks call number call answers
+	setRefuse  func(model.Patch) error // SetTask answers its error when it returns one
 
 	liveLists, maxLiveLists int // ListTasks calls for the live tasks in flight now, and the most at once
 
@@ -189,6 +190,11 @@ func (h *fakeHome) SetTask(_ context.Context, a store.Actor, number int, p model
 	h.setPatches = append(h.setPatches, p)
 	if h.set != nil {
 		return model.Task{}, h.set
+	}
+	if h.setRefuse != nil {
+		if err := h.setRefuse(p); err != nil {
+			return model.Task{}, err
+		}
 	}
 	for _, task := range h.tasks {
 		if task.Number == number {

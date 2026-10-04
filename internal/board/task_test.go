@@ -410,7 +410,7 @@ func TestTaskPageHistorySaysWhichEventsAreUnreadable(t *testing.T) {
 	task := model.Task{Number: 26, Title: "Odd history", Status: model.StatusOpen}
 	var history []model.Event
 	for _, kind := range []model.Kind{model.KindTask, model.KindSet, model.KindStep, model.KindNote, model.KindDecision, model.KindMerged} {
-		history = append(history, model.Event{TS: w4Now, Kind: kind, Data: []byte(`{"text": 5, "status": 5, "op": 5, "branch": 5, "ref": 5}`)})
+		history = append(history, model.Event{TS: w4Now, Kind: kind, Data: []byte(`{"text": 5, "status": 5, "op": 5, "branch": 5, "ref": "w4-unreadable.md"}`)})
 	}
 	text := w4TaskPage(t, 90, task, history).Text()
 	for _, kind := range []string{"task", "set", "step", "note", "decision", "merged"} {

@@ -14,8 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"charm.land/lipgloss/v2"
-
 	"github.com/federbenjamin/desk/internal/api"
 	"github.com/federbenjamin/desk/internal/board"
 	"github.com/federbenjamin/desk/internal/model"
@@ -681,15 +679,21 @@ func TestRunAWritesFailureDoesNotEndTheOutstandingRefresh(t *testing.T) {
 	}
 }
 
-func TestRunARefreshFailureIsNotShownAsTheRefusalOfAnOutstandingAdd(t *testing.T) {
+func TestRunARefreshFailureDoesNotAnswerAnOutstandingAdd(t *testing.T) {
 	gate := make(chan struct{})
 	home := &fakeHome{addGate: gate}
+	var mu sync.Mutex
+	failedWhileOut := 0
 	home.listHook = func(int) error {
 		if _, inputs := home.w5Add(); len(inputs) > 0 {
+			mu.Lock()
+			failedWhileOut++
+			mu.Unlock()
 			return errors.New("w5 list failed")
 		}
 		return nil
 	}
+	failures := func() int { mu.Lock(); defer mu.Unlock(); return failedWhileOut }
 	ctx, cancel := context.WithCancel(context.Background())
 	in, writer := io.Pipe()
 	t.Cleanup(func() { _ = writer.Close() })
@@ -704,14 +708,18 @@ func TestRunARefreshFailureIsNotShownAsTheRefusalOfAnOutstandingAdd(t *testing.T
 		_, inputs := home.w5Add()
 		return len(inputs) == 1 && strings.Contains(out.String(), "w5 list failed")
 	})
-	// A refusal under the add box is drawn red; the status line is not.
-	if red := lipgloss.NewStyle().Foreground(lipgloss.Red).Render("w5 list failed"); strings.Contains(out.String(), strings.TrimSuffix(red, "\x1b[m")) {
-		t.Errorf("a refresh failure was drawn as the add's refusal: %q", out.String())
-	}
-	close(gate)
+	// Taken as the add's answer, a refresh failure would let a second enter send the line again. Two more
+	// refreshes that start after the enter was read prove the board took it.
+	w5Write(t, writer, "\r")
+	after := failures()
+	eventually(t, "two refreshes after the second enter", func() bool { return failures() >= after+2 })
 	cancel()
 	if err := <-errs; err != nil {
 		t.Fatalf("Run error: %v", err)
+	}
+	close(gate)
+	if _, inputs := home.w5Add(); len(inputs) != 1 {
+		t.Errorf("AddTask was called %d times while the first was out, want once: %#v", len(inputs), inputs)
 	}
 }
 
@@ -737,6 +745,27 @@ func TestRunAFailedNotesSaveOpensTheEditorAgainWithTheText(t *testing.T) {
 	}
 	// ctrl+c closes the editor that the second failure opened again, then q quits.
 	w5Write(t, in, "\x03")
+	w5Quit(t, in, errs)
+}
+
+func TestRunAnotherWritesFailureDoesNotOpenTheSavedNotesAgain(t *testing.T) {
+	task := model.Task{Number: 76, Title: "w5 saved notes", Notes: "w5 draft", Status: model.StatusOpen}
+	home := &fakeHome{tasks: []model.Task{task}, detail: store.TaskDetail{Task: task}, setRefuse: func(p model.Patch) error {
+		if p.Status != nil {
+			return errors.New("w5 start refused")
+		}
+		return nil
+	}}
+	out := &lockedOutput{}
+	in, errs := w5StartRun(t, home, nil, out)
+	eventually(t, "the board draw", func() bool { return strings.Contains(out.String(), task.Title) })
+	w5Write(t, in, "\re")
+	eventually(t, "the notes editor", func() bool { return strings.Contains(out.String(), "editing") })
+	w5Write(t, in, "\x13")
+	eventually(t, "the notes save", func() bool { return len(home.w5SetPatches()) == 1 })
+	w5Write(t, in, "s")
+	eventually(t, "the refused start", func() bool { return strings.Contains(out.String(), "w5 start refused") })
+	// With the editor closed, q quits; an editor opened again would take it as text.
 	w5Quit(t, in, errs)
 }
 

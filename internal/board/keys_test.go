@@ -371,12 +371,12 @@ func TestKeysPasteGoesOnlyToTheOpenTextInput(t *testing.T) {
 }
 
 func TestKeysPasteUpdatesSearch(t *testing.T) {
-	s := w2State(w2Task(1, model.StatusOpen))
+	s := w2State(w2Task(1, model.StatusOpen), w2Task(2, model.StatusOpen))
 	s, _ = s.Update(press('/'))
 	s, effects := s.Update(tea.PasteMsg{Content: "task a"})
 	wantEffects(t, effects, nil)
-	if !strings.Contains(s.Text(), "search: task a") {
-		t.Fatalf("paste into search = %q, want pasted query", s.Text())
+	if !strings.Contains(s.Text(), "search: task a") || strings.Contains(s.Text(), "T2") {
+		t.Fatalf("paste into search = %q, want pasted query and only the matching row", s.Text())
 	}
 }
 
