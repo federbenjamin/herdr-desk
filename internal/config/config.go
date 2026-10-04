@@ -112,11 +112,17 @@ func Load(path string) (Config, error) {
 }
 
 // Save writes the config to path, 0600, through a temp file and a rename. The comment above
-// agents_may_arm is part of the struct, so every save keeps it.
+// agents_may_arm is part of the struct, so every save keeps it. A file that already holds these bytes at 0600 is
+// left alone: its mtime says when the config last changed, and the stale-config check reads it.
 func (c Config) Save(path string) error {
 	b, err := toml.Marshal(c)
 	if err != nil {
 		return err
+	}
+	if info, err := os.Stat(path); err == nil && info.Mode().Perm() == 0o600 {
+		if old, err := os.ReadFile(path); err == nil && bytes.Equal(old, b) {
+			return nil
+		}
 	}
 	return WriteFileAtomic(path, b)
 }

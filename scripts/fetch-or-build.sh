@@ -4,7 +4,8 @@
 # Downloads the release archive for the version herdr-plugin.toml declares and this platform,
 # verifies its SHA-256 against checksums.txt, and places the binary at $DESK_OUT. On any miss
 # (no release, download error, checksum mismatch, unmapped platform) it builds from source with
-# Go instead. When no `desk` is on PATH it also copies the binary to $DESK_INSTALL_DIR.
+# Go instead, with the version set to <version>+src. When no `desk` is on PATH it also copies the
+# binary to $DESK_INSTALL_DIR.
 #
 # Overrides, for tests: DESK_REPO_ROOT, DESK_VERSION, DESK_BASE_URL (the folder holding
 # v<version>/), DESK_OUT, DESK_INSTALL_DIR, DESK_GO.
@@ -48,7 +49,9 @@ build_from_source() {
     exit 1
   fi
   mkdir -p "$(dirname "$out")" || exit 1
-  if ! (cd "$repo_root" && CGO_ENABLED=0 "$go_cmd" build -o "$out" ./cmd/desk); then
+  # The "+src" suffix marks a source build, so `desk version` shows which install this is.
+  ldflags="-X github.com/federbenjamin/desk/internal/version.Version=${version:-dev}+src"
+  if ! (cd "$repo_root" && CGO_ENABLED=0 "$go_cmd" build -ldflags "$ldflags" -o "$out" ./cmd/desk); then
     echo "desk: go build failed" >&2
     exit 1
   fi

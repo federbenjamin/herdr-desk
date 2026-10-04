@@ -42,11 +42,13 @@ printf '%064d  %s\n' 0 "$ASSET" >"$E2E/bad/v$V/checksums.txt"
 install mis "file://$E2E/bad"
 case "$OUT$ERR" in *"checksum"*) ;; *) fail "no word about the checksum mismatch" ;; esac
 run 0 "$E2E/mis/out/desk" version
+case "$OUT" in *"desk $V+src"*) ;; *) fail "a source build does not say it is one: $OUT" ;; esac
 say "checksum mismatch fell back ok"
 
 mkdir -p "$E2E/empty"
 install src "file://$E2E/empty"
 run 0 "$E2E/src/out/desk" version
+case "$OUT" in *"desk $V+src"*) ;; *) fail "a source build does not say it is one: $OUT" ;; esac
 say "source build ok"
 
 WANT=1 install none "file://$E2E/empty" DESK_GO="$E2E/no-such-go"

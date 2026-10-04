@@ -15,9 +15,12 @@ import (
 const spawnWait = 5 * time.Second
 
 // Spawn starts `<this executable> daemon run` detached, output to the daemon log, and waits up to 5s for the socket.
-// A socket that already answers starts nothing. A child that exits because another daemon holds the lock (two
+// A socket path over the limit is refused before anything starts, with the reason. A socket that already answers starts nothing. A child that exits because another daemon holds the lock (two
 // commands spawning at once) is not a failure: Spawn waits for that daemon's socket instead.
 func Spawn(p config.Paths) error {
+	if err := checkSocketPath(p); err != nil {
+		return err
+	}
 	if socketAnswers(p) {
 		return nil
 	}

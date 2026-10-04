@@ -106,6 +106,8 @@ func NewServer(o ServerOptions) *Server {
 				Tasks:       counts,
 				BackupTS:    backupTS,
 				BackupError: backupErr,
+
+				ConfigChanged: o.Paths.ConfigChangedSince(o.StartedTS),
 			}, err
 		}),
 		MethodBackupRun: bind(func(ctx context.Context, _ empty) (any, error) {

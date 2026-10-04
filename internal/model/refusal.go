@@ -25,6 +25,7 @@ const (
 	CodeBadInput        = "bad-input"        // exit 2: a value the store does not know (a status, an isolation, a step op, a session id) or a merged event with no branch
 	CodeHomeUnreachable = "home-unreachable" // exit 3
 	CodeScanFailed      = "scan-failed"      // exit 3
+	CodeBadToken        = "bad-token"        // exit 3: the home refused the client's token (HTTP 401)
 )
 
 // AsRefusal reports the Refusal in err's chain, if any.

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 
 	"github.com/federbenjamin/desk/internal/config"
 	"github.com/federbenjamin/desk/internal/daemon"
+	"github.com/federbenjamin/desk/internal/model"
 	"github.com/federbenjamin/desk/internal/setup"
 	"github.com/federbenjamin/desk/internal/version"
 )
@@ -89,7 +91,13 @@ func (a *app) daemonCmd() *cobra.Command {
 			}
 			st, err := c.Status(a.ctx)
 			if err != nil {
-				return &exitError{code: exitRefused, msg: err.Error()}
+				// Exit 1, as the status command's contract says. The refusal code stays off the line:
+				// home-unreachable means exit 3 everywhere else.
+				msg := err.Error()
+				if r, ok := model.AsRefusal(err); ok && (r.Code == model.CodeHomeUnreachable || r.Code == model.CodeBadToken) {
+					msg = r.Msg
+				}
+				return &exitError{code: exitRefused, msg: msg}
 			}
 			return a.printJSON(st)
 		}),
@@ -207,6 +215,7 @@ func (a *app) clientCmd() *cobra.Command {
 		if err := setup.ClientAdd(a.ctx, a.paths, home, token); err != nil {
 			return err
 		}
+		a.wroteConfig = true
 		a.say("client of %s", home)
 		return nil
 	})
@@ -232,8 +241,8 @@ func (a *app) rootsCmd() *cobra.Command {
 		RunE:  a.do(list),
 	}
 	cmd.PersistentFlags().BoolVar(&asJSON, "json", false, "print the roots as a JSON array")
-	edit := func(change func(c *config.Config, path string) error) func(*cobra.Command, []string) error {
-		return a.do(func(_ *cobra.Command, args []string) error {
+	edit := func(change func(cmd *cobra.Command, c *config.Config, path string) error) func(*cobra.Command, []string) error {
+		return a.do(func(cmd *cobra.Command, args []string) error {
 			c, err := a.config()
 			if err != nil {
 				return err
@@ -242,21 +251,35 @@ func (a *app) rootsCmd() *cobra.Command {
 			if !filepath.IsAbs(path) {
 				path = filepath.Join(a.env.Cwd, path)
 			}
-			if err := change(&c, path); err != nil {
+			if err := change(cmd, &c, path); err != nil {
 				return usage("%v", err)
 			}
 			if err := c.Save(a.paths.ConfigFile()); err != nil {
 				return err
 			}
+			a.wroteConfig = true
 			return a.printRoots(c.Roots, asJSON)
 		})
 	}
 	add := &cobra.Command{
 		Use:   "add <path>",
-		Short: "Add a root, or replace the one with that path",
+		Short: "Add a root, or change the one with that path (only the fields whose flags you pass)",
 		Args:  cobra.ExactArgs(1),
-		RunE: edit(func(c *config.Config, path string) error {
-			return c.AddRoot(config.Root{Path: path, About: about, Isolation: isolation})
+		RunE: edit(func(cmd *cobra.Command, c *config.Config, path string) error {
+			if info, err := os.Stat(path); err != nil || !info.IsDir() {
+				return fmt.Errorf("root %s is not an existing directory", path)
+			}
+			r := config.Root{Path: path}
+			if i := slices.IndexFunc(c.Roots, func(have config.Root) bool { return filepath.Clean(have.Path) == filepath.Clean(path) }); i >= 0 {
+				r = c.Roots[i]
+			}
+			if cmd.Flags().Changed("about") {
+				r.About = about
+			}
+			if cmd.Flags().Changed("isolation") {
+				r.Isolation = isolation
+			}
+			return c.AddRoot(r)
 		}),
 	}
 	add.Flags().StringVar(&about, "about", "", "what the root holds, for the router")
@@ -265,7 +288,7 @@ func (a *app) rootsCmd() *cobra.Command {
 		Use:   "remove <path>",
 		Short: "Remove a root",
 		Args:  cobra.ExactArgs(1),
-		RunE:  edit(func(c *config.Config, path string) error { return c.RemoveRoot(path) }),
+		RunE:  edit(func(_ *cobra.Command, c *config.Config, path string) error { return c.RemoveRoot(path) }),
 	}
 	cmd.AddCommand(&cobra.Command{Use: "list", Short: "List the roots", Args: cobra.NoArgs, RunE: a.do(list)}, add, remove)
 	return cmd
@@ -318,6 +341,7 @@ func (a *app) setupCmd() *cobra.Command {
 		if o.SkillDir != "" && !filepath.IsAbs(o.SkillDir) {
 			o.SkillDir = filepath.Join(a.env.Cwd, o.SkillDir)
 		}
+		a.wroteConfig = true
 		return setup.Run(a.ctx, o)
 	})
 	f := cmd.Flags()

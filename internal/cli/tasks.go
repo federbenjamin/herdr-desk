@@ -22,6 +22,9 @@ import (
 
 const gitTimeout = 10 * time.Second
 
+// timeFormat is how desk prints a time: UTC, to the minute, with a Z.
+const timeFormat = "2006-01-02 15:04Z"
+
 // mainCheckout returns the main checkout of the git repo dir is in, "" when git says dir is in none. A worktree
 // resolves to its main checkout. Any other git failure is an error, so a task never loses its project to it.
 func (a *app) mainCheckout(dir string) (string, error) {
@@ -106,6 +109,7 @@ func (a *app) addCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
+		a.refreshSessionView(cmd, c, actor.Session)
 		if asJSON {
 			return a.printJSON(t)
 		}
@@ -245,7 +249,7 @@ func (a *app) listCmd() *cobra.Command {
 func (a *app) warnOffline(cmd *cobra.Command, tl api.TaskList) {
 	when := "an unknown time"
 	if tl.SnapshotTS != nil {
-		when = tl.SnapshotTS.Local().Format(time.DateTime)
+		when = tl.SnapshotTS.UTC().Format(timeFormat)
 	}
 	a.warn(cmd, "the home did not answer; showing the snapshot from %s", when)
 }
@@ -303,7 +307,7 @@ func (a *app) showTask(d store.TaskDetail) {
 	if len(d.History) > 0 {
 		a.say("\nhistory:")
 		for _, e := range d.History {
-			a.say("e%d  %s  %s  %s  %s", e.ID, e.TS.UTC().Format("2006-01-02 15:04Z"), e.Who, e.Kind, e.Data)
+			a.say("e%d  %s  %s  %s  %s", e.ID, e.TS.UTC().Format(timeFormat), e.Who, e.Kind, e.Data)
 		}
 	}
 }
@@ -364,6 +368,7 @@ func (a *app) setCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
+		a.refreshSessionView(cmd, c, actor.Session)
 		if asJSON {
 			return a.printJSON(t)
 		}
@@ -419,6 +424,7 @@ func (a *app) editCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
+		a.refreshSessionView(cmd, c, actor.Session)
 		if asJSON {
 			return a.printJSON(t)
 		}
@@ -483,6 +489,28 @@ func (a *app) stepsCmd() *cobra.Command {
 	return cmd
 }
 
+// captureLine adds the task one captured line names and prints it.
+func (a *app) captureLine(cmd *cobra.Command, line string, asJSON bool) error {
+	actor, err := a.actor()
+	if err != nil {
+		return err
+	}
+	c, err := a.client()
+	if err != nil {
+		return err
+	}
+	t, err := c.AddTask(a.ctx, actor, store.AddTaskInput{TaskData: parseCapture(line)})
+	if err != nil {
+		return err
+	}
+	a.refreshSessionView(cmd, c, actor.Session)
+	if asJSON {
+		return a.printJSON(t)
+	}
+	a.say("T%d", t.Number)
+	return nil
+}
+
 // parseCapture splits a captured line: #word sets the thread, @word the project, the rest is the title.
 func parseCapture(line string) model.TaskData {
 	var d model.TaskData
@@ -508,34 +536,27 @@ func (a *app) captureCmd() *cobra.Command {
 		Short: "Add a task from one line on stdin (#thread, @project)",
 		Args:  cobra.NoArgs,
 	}
-	cmd.RunE = a.do(func(_ *cobra.Command, _ []string) error {
-		if a.env.StdinTTY {
-			fmt.Fprint(a.env.Stderr, "capture: ")
+	cmd.RunE = a.do(func(cmd *cobra.Command, _ []string) error {
+		in := bufio.NewReader(a.env.Stdin)
+		// On a terminal the command may run in a pane that closes when it exits, so a refused line is shown and
+		// asked for again. Anywhere else a refusal ends the command, as it does for every other one.
+		for {
+			if a.env.StdinTTY {
+				fmt.Fprint(a.env.Stderr, "capture: ")
+			}
+			line, err := in.ReadString('\n')
+			if err != nil && err != io.EOF {
+				return err
+			}
+			if strings.TrimSpace(line) == "" {
+				return nil
+			}
+			err = a.captureLine(cmd, line, asJSON)
+			if err == nil || !a.env.StdinTTY {
+				return err
+			}
+			fmt.Fprintf(a.env.Stderr, "%s: %s\n", cmd.CommandPath(), err)
 		}
-		line, err := bufio.NewReader(a.env.Stdin).ReadString('\n')
-		if err != nil && err != io.EOF {
-			return err
-		}
-		if strings.TrimSpace(line) == "" {
-			return nil
-		}
-		actor, err := a.actor()
-		if err != nil {
-			return err
-		}
-		c, err := a.client()
-		if err != nil {
-			return err
-		}
-		t, err := c.AddTask(a.ctx, actor, store.AddTaskInput{TaskData: parseCapture(line)})
-		if err != nil {
-			return err
-		}
-		if asJSON {
-			return a.printJSON(t)
-		}
-		a.say("T%d", t.Number)
-		return nil
 	})
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the task as JSON")
 	return cmd

@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/federbenjamin/desk/internal/config"
 )
@@ -172,6 +173,39 @@ func TestSaveReplacesExistingFileSecurelyAndKeepsWarningWithItsField(t *testing.
 	}
 }
 
+func TestSaveLeavesAnUnchangedFileAndItsMtimeAlone(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	c := config.Default()
+	if err := c.Save(path); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	old := time.Now().Add(-time.Hour).Truncate(time.Second)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Save(path); err != nil {
+		t.Fatalf("second Save() error = %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.ModTime().Equal(old) {
+		t.Errorf("Save of the same config moved the mtime to %s; want %s", info.ModTime(), old)
+	}
+
+	c.Runner.Cap = 2
+	if err := c.Save(path); err != nil {
+		t.Fatalf("changed Save() error = %v", err)
+	}
+	if info, err = os.Stat(path); err != nil {
+		t.Fatal(err)
+	}
+	if !info.ModTime().After(old) {
+		t.Error("Save of a changed config left the old mtime; want the file rewritten")
+	}
+}
+
 func TestValidateRefusesWildcardListenAndInvalidEnumValues(t *testing.T) {
 	for _, tt := range []struct {
 		name   string
@@ -299,5 +333,34 @@ func TestTokenOperationsKeepSingleTokenFilePrivate(t *testing.T) {
 	}
 	if got := info.Mode().Perm(); got != 0o600 {
 		t.Errorf("token permissions after RotateToken = %04o; want 0600", got)
+	}
+}
+
+func TestConfigChangedSinceComparesTheFileTimeAndTreatsAMissingFileAsUnchanged(t *testing.T) {
+	t.Parallel()
+
+	p := config.Paths{ConfigDir: filepath.Join(t.TempDir(), "desk")}
+	started := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
+	if p.ConfigChangedSince(started) {
+		t.Error("ConfigChangedSince(no file) = true, want false")
+	}
+	if err := config.Default().Save(p.ConfigFile()); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name  string
+		mtime time.Time
+		want  bool
+	}{
+		{"written after the start", started.Add(time.Second), true},
+		{"written before the start", started.Add(-time.Second), false},
+		{"written at the start", started, false},
+	} {
+		if err := os.Chtimes(p.ConfigFile(), test.mtime, test.mtime); err != nil {
+			t.Fatal(err)
+		}
+		if got := p.ConfigChangedSince(started); got != test.want {
+			t.Errorf("ConfigChangedSince(%s) = %t, want %t", test.name, got, test.want)
+		}
 	}
 }
