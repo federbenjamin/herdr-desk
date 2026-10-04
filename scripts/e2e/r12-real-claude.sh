@@ -15,12 +15,15 @@ REAL_CLAUDE=$(command -v claude) || fail "no claude"
 build
 run 0 on home desk setup --profile claude-code --no-herdr --runner on
 # Each template's first word becomes a wrapper that logs which template ran, then runs the real claude. Its paths are
-# written into it, because a pane under the real herdr does not inherit this script's environment.
+# written into it, because a pane under the real herdr does not inherit this script's environment. It puts this
+# script's desk first on PATH, so the `desk` the worker runs to hand back is the one under test, not an installed one.
 CALLS="$E2E/claude-calls.txt"
 cat >"$E2E/count-claude" <<SH
 #!/bin/sh
 printf '%s\n' "\$1" >>'$CALLS'
 shift
+PATH='$BIN':"\$PATH"
+export PATH
 exec '$REAL_CLAUDE' "\$@"
 SH
 chmod +x "$E2E/count-claude"
@@ -37,7 +40,7 @@ PY
 start_daemon home
 
 run 0 on home desk add -t "desk e2e: hand this task back" \
-  -n "Do nothing else: run the hand-back command from this message with --ref none, then stop." --desk --thread agent
+  -n "Do nothing else: run the hand-back command from this message with --ref none, then stop. Run it with the desk binary at $BIN/desk in place of plain desk: another desk may be installed on this machine." --desk --thread agent
 run 0 on home desk set T1 ready
 wait_run 1 running 120
 track_workspaces
