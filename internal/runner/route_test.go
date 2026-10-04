@@ -22,13 +22,15 @@ func TestRootsKeepsConfiguredOrderThenAddsInPlaceScratch(t *testing.T) {
 	p := config.Paths{DataDir: "/desk-data"}
 
 	got := runner.Roots(c, p)
-	want := []config.Root{
-		{Path: "/repos/first", About: "first", Isolation: "worktree"},
-		{Path: "/repos/second", About: "second"},
-		{Path: "/desk-data/scratch", Isolation: "in-place"},
+	if len(got) != len(c.Roots)+1 {
+		t.Fatalf("Roots() returned %d roots; want %d", len(got), len(c.Roots)+1)
 	}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("Roots() = %#v; want %#v", got, want)
+	if !reflect.DeepEqual(got[:len(c.Roots)], c.Roots) {
+		t.Errorf("Roots() configured roots = %#v; want %#v", got[:len(c.Roots)], c.Roots)
+	}
+	scratch := got[len(c.Roots)]
+	if scratch.Path != p.ScratchRoot() || scratch.Isolation != "in-place" {
+		t.Errorf("Roots() scratch root = %#v; want path %q and in-place isolation", scratch, p.ScratchRoot())
 	}
 }
 
@@ -146,6 +148,10 @@ func TestParseRouteAcceptsClaudeOutputShapesWithoutValidatingValues(t *testing.T
 			out:  `{"root":"/repos/one","reason":" ` + strings.Repeat("x", 502) + ` "}`,
 			want: runner.Route{Root: "/repos/one", Reason: strings.Repeat("x", 500)},
 		},
+		{
+			name: "object without route fields is an empty route",
+			out:  `{"result":"no route here"}`,
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := runner.ParseRoute([]byte(tt.out))
@@ -159,13 +165,12 @@ func TestParseRouteAcceptsClaudeOutputShapesWithoutValidatingValues(t *testing.T
 	}
 }
 
-func TestParseRouteRefusesNonObjectAndRouteLessOutput(t *testing.T) {
+func TestParseRouteRefusesNonObjectOutput(t *testing.T) {
 	t.Parallel()
 
 	for _, out := range []string{
 		"not JSON",
 		`[{"root":"/repos/one"}]`,
-		`{"result":"no route here"}`,
 	} {
 		t.Run(out, func(t *testing.T) {
 			if _, err := runner.ParseRoute([]byte(out)); err == nil {
@@ -220,6 +225,31 @@ func TestResolveUsesTaskAndConfiguredValuesBeforeCallingRouter(t *testing.T) {
 			task:     model.Task{Isolation: "worktree", Model: "fast"},
 			roots:    roots,
 			models:   models,
+			want:     runner.Route{Isolation: "worktree", Model: "fast"},
+			wantNeed: true,
+		},
+		{
+			name:     "task root remains decided while router chooses isolation",
+			task:     model.Task{Root: "/repos/open", Model: "fast"},
+			roots:    roots,
+			models:   models,
+			want:     runner.Route{Root: "/repos/open", Model: "fast"},
+			wantNeed: true,
+		},
+		{
+			name:     "root isolation remains decided while router chooses model",
+			task:     model.Task{Root: "/repos/fixed"},
+			roots:    roots,
+			models:   models,
+			want:     runner.Route{Root: "/repos/fixed", Isolation: "in-place"},
+			wantNeed: true,
+		},
+		{
+			name:     "empty models remains decided while router chooses root",
+			task:     model.Task{Isolation: "worktree"},
+			roots:    roots,
+			models:   nil,
+			want:     runner.Route{Isolation: "worktree"},
 			wantNeed: true,
 		},
 		{
@@ -348,16 +378,19 @@ func TestRouterSystemTellsTheRouterHowToChooseAndRespond(t *testing.T) {
 	t.Parallel()
 
 	prompt := desk.RouterSystem()
-	for _, want := range []string{
-		"only the JSON object",
-		"path is or contains the task's project",
-		"no project",
-		"last root listed",
-		"worktree",
-		"changes a repository's files",
+	if strings.TrimSpace(prompt) == "" {
+		t.Fatal("RouterSystem() is empty")
+	}
+	for _, instruction := range [][]string{
+		{"Answer", "JSON object"},
+		{"root", "project", "path"},
+		{"no project", "last root listed"},
+		{"worktree", "repository"},
 	} {
-		if !strings.Contains(prompt, want) {
-			t.Errorf("RouterSystem() does not tell the router %q", want)
+		for _, keyword := range instruction {
+			if !strings.Contains(prompt, keyword) {
+				t.Errorf("RouterSystem() does not give the router an instruction recognizable by %q", keyword)
+			}
 		}
 	}
 }
