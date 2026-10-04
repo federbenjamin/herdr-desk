@@ -3,6 +3,7 @@ package board_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -24,40 +25,90 @@ var _ board.Home = (*api.Client)(nil)
 type w5Home struct {
 	mu sync.Mutex
 
-	tasks  []model.Task
-	runs   []model.Run
-	detail store.TaskDetail
-	status api.Status
+	tasks      []model.Task
+	runs       []model.Run
+	detail     store.TaskDetail
+	status     api.Status
+	offline    bool
+	snapshotTS *time.Time
+	list       error
+	listErrors []error
+	get        error
+	add        error
+	set        error
+	step       error
+	append     error
+	run        error
+	state      error
+	kill       error
+	pause      error
+	queued     bool
 
 	listCalls    int
+	listFilters  []store.Filter
 	getTaskCalls int
 	statusCalls  int
 	runsCalls    int
 	setActors    []store.Actor
+	setPatches   []model.Patch
+	addActors    []store.Actor
+	addInputs    []store.AddTaskInput
+	stepActors   []store.Actor
+	stepOps      []model.StepOp
+	appendReqs   []api.AppendRequest
+	killActors   []store.Actor
+	killTasks    []int
+	pauseActors  []store.Actor
+	pauseValues  []bool
 }
 
-func (h *w5Home) ListTasks(_ context.Context, _ store.Filter) (api.TaskList, error) {
+func (h *w5Home) ListTasks(_ context.Context, f store.Filter) (api.TaskList, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.listCalls++
-	return api.TaskList{Tasks: append([]model.Task(nil), h.tasks...)}, nil
+	h.listFilters = append(h.listFilters, f)
+	if h.list != nil {
+		return api.TaskList{}, h.list
+	}
+	if len(h.listErrors) > 0 {
+		err := h.listErrors[0]
+		h.listErrors = h.listErrors[1:]
+		if err != nil {
+			return api.TaskList{}, err
+		}
+	}
+	return api.TaskList{Tasks: append([]model.Task(nil), h.tasks...), Offline: h.offline, SnapshotTS: h.snapshotTS}, nil
 }
 
 func (h *w5Home) GetTask(_ context.Context, _ int) (store.TaskDetail, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.getTaskCalls++
+	if h.get != nil {
+		return store.TaskDetail{}, h.get
+	}
 	return h.detail, nil
 }
 
-func (h *w5Home) AddTask(_ context.Context, _ store.Actor, _ store.AddTaskInput) (model.Task, error) {
-	return model.Task{}, nil
+func (h *w5Home) AddTask(_ context.Context, a store.Actor, in store.AddTaskInput) (model.Task, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.addActors = append(h.addActors, a)
+	h.addInputs = append(h.addInputs, in)
+	if h.add != nil {
+		return model.Task{}, h.add
+	}
+	return model.Task{Number: 1}, nil
 }
 
-func (h *w5Home) SetTask(_ context.Context, a store.Actor, number int, _ model.Patch) (model.Task, error) {
+func (h *w5Home) SetTask(_ context.Context, a store.Actor, number int, p model.Patch) (model.Task, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.setActors = append(h.setActors, a)
+	h.setPatches = append(h.setPatches, p)
+	if h.set != nil {
+		return model.Task{}, h.set
+	}
 	for _, task := range h.tasks {
 		if task.Number == number {
 			return task, nil
@@ -66,18 +117,34 @@ func (h *w5Home) SetTask(_ context.Context, a store.Actor, number int, _ model.P
 	return model.Task{Number: number}, nil
 }
 
-func (h *w5Home) Step(_ context.Context, _ store.Actor, number int, _ model.StepOp) (model.Task, error) {
+func (h *w5Home) Step(_ context.Context, a store.Actor, number int, op model.StepOp) (model.Task, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.stepActors = append(h.stepActors, a)
+	h.stepOps = append(h.stepOps, op)
+	if h.step != nil {
+		return model.Task{}, h.step
+	}
 	return model.Task{Number: number}, nil
 }
 
-func (h *w5Home) Append(_ context.Context, _ api.AppendRequest) (model.Event, bool, error) {
-	return model.Event{}, false, nil
+func (h *w5Home) Append(_ context.Context, r api.AppendRequest) (model.Event, bool, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.appendReqs = append(h.appendReqs, r)
+	if h.append != nil {
+		return model.Event{}, false, h.append
+	}
+	return model.Event{}, h.queued, nil
 }
 
 func (h *w5Home) ListRuns(context.Context) ([]model.Run, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.runsCalls++
+	if h.run != nil {
+		return nil, h.run
+	}
 	return append([]model.Run(nil), h.runs...), nil
 }
 
@@ -85,14 +152,31 @@ func (h *w5Home) Status(context.Context) (api.Status, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.statusCalls++
+	if h.state != nil {
+		return api.Status{}, h.state
+	}
 	return h.status, nil
 }
 
-func (h *w5Home) KillRun(_ context.Context, _ store.Actor, task int) (model.Task, error) {
+func (h *w5Home) KillRun(_ context.Context, a store.Actor, task int) (model.Task, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.killActors = append(h.killActors, a)
+	h.killTasks = append(h.killTasks, task)
+	if h.kill != nil {
+		return model.Task{}, h.kill
+	}
 	return model.Task{Number: task}, nil
 }
 
-func (h *w5Home) PauseRunner(context.Context, store.Actor, bool) (api.Status, error) {
+func (h *w5Home) PauseRunner(_ context.Context, a store.Actor, paused bool) (api.Status, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.pauseActors = append(h.pauseActors, a)
+	h.pauseValues = append(h.pauseValues, paused)
+	if h.pause != nil {
+		return api.Status{}, h.pause
+	}
 	return api.Status{}, nil
 }
 
@@ -118,6 +202,42 @@ func (h *w5Home) w5SetActors() []store.Actor {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return append([]store.Actor(nil), h.setActors...)
+}
+
+func (h *w5Home) w5SetPatches() []model.Patch {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]model.Patch(nil), h.setPatches...)
+}
+
+func (h *w5Home) w5ListFilters() []store.Filter {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]store.Filter(nil), h.listFilters...)
+}
+
+func (h *w5Home) w5Add() ([]store.Actor, []store.AddTaskInput) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]store.Actor(nil), h.addActors...), append([]store.AddTaskInput(nil), h.addInputs...)
+}
+
+func (h *w5Home) w5Step() ([]store.Actor, []model.StepOp) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]store.Actor(nil), h.stepActors...), append([]model.StepOp(nil), h.stepOps...)
+}
+
+func (h *w5Home) w5Append() []api.AppendRequest {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]api.AppendRequest(nil), h.appendReqs...)
+}
+
+func (h *w5Home) w5KillPause() ([]store.Actor, []int, []store.Actor, []bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]store.Actor(nil), h.killActors...), append([]int(nil), h.killTasks...), append([]store.Actor(nil), h.pauseActors...), append([]bool(nil), h.pauseValues...)
 }
 
 type w5Output struct {
@@ -147,12 +267,16 @@ type w5Executor struct {
 	mu     sync.Mutex
 	calls  [][]string
 	answer []byte
+	err    error
 }
 
 func (e *w5Executor) w5Exec(_ context.Context, argv []string) ([]byte, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.calls = append(e.calls, append([]string(nil), argv...))
+	if e.err != nil {
+		return append([]byte(nil), e.answer...), e.err
+	}
 	return append([]byte(nil), e.answer...), nil
 }
 
@@ -171,6 +295,10 @@ func w5StartRun(t *testing.T, home board.Home, exec func(context.Context, []stri
 }
 
 func w5StartRunWithRefresh(t *testing.T, home board.Home, exec func(context.Context, []string) ([]byte, error), o *w5Output, refresh time.Duration) (*io.PipeWriter, <-chan error) {
+	return w5StartRunWithRefreshHerdr(t, home, exec, o, "w5-herdr", refresh)
+}
+
+func w5StartRunWithRefreshHerdr(t *testing.T, home board.Home, exec func(context.Context, []string) ([]byte, error), o *w5Output, herdr string, refresh time.Duration) (*io.PipeWriter, <-chan error) {
 	t.Helper()
 	in, writer := io.Pipe()
 	errs := make(chan error, 1)
@@ -178,7 +306,7 @@ func w5StartRunWithRefresh(t *testing.T, home board.Home, exec func(context.Cont
 		errs <- board.Run(context.Background(), board.Options{
 			Home:    home,
 			IsHome:  true,
-			Herdr:   "w5-herdr",
+			Herdr:   herdr,
 			In:      in,
 			Out:     o,
 			Refresh: refresh,
@@ -333,7 +461,7 @@ func TestRunRejectsInvalidTargetsAndAViewerThatIsNotInstalled(t *testing.T) {
 		task := model.Task{Number: 10, Title: "w5 invalid ref", Status: model.StatusOpen, Project: "/w5/project"}
 		home := &w5Home{
 			tasks:  []model.Task{task},
-			detail: store.TaskDetail{Task: task, History: []model.Event{{Kind: model.KindNote, Data: model.MustData(model.NoteData{Ref: "not a ref"})}}},
+			detail: store.TaskDetail{Task: task, History: []model.Event{{Kind: model.KindNote, Data: model.MustData(model.NoteData{Ref: "https://"})}}},
 		}
 		exec := &w5Executor{}
 		out := &w5Output{}
@@ -474,4 +602,290 @@ func TestRunOpensURLAndExistingFileRefsWithArgv(t *testing.T) {
 			t.Errorf("file argv = %#v, want %#v", got, want)
 		}
 	})
+}
+
+func TestRunExecutesEveryBoardWriteWithAnEmptyActor(t *testing.T) {
+	t.Run("adds a parsed task", func(t *testing.T) {
+		home := &w5Home{}
+		out := &w5Output{}
+		in, errs := w5StartRun(t, home, nil, out)
+		w5Eventually(t, "the empty board draw", func() bool { return out.Len() > 0 })
+		if _, err := io.WriteString(in, "+w5 added #ops @alpha\r"); err != nil {
+			t.Fatalf("write add task: %v", err)
+		}
+		w5Eventually(t, "the added task", func() bool { actors, _ := home.w5Add(); return len(actors) == 1 })
+		w5Quit(t, in, errs)
+
+		actors, inputs := home.w5Add()
+		if !reflect.DeepEqual(actors, []store.Actor{{}}) {
+			t.Errorf("AddTask actors = %#v, want one empty actor", actors)
+		}
+		if !reflect.DeepEqual(inputs, []store.AddTaskInput{{TaskData: model.TaskData{Title: "w5 added", Thread: "ops", Project: "alpha"}}}) {
+			t.Errorf("AddTask inputs = %#v", inputs)
+		}
+	})
+
+	t.Run("toggles a step", func(t *testing.T) {
+		task := model.Task{Number: 51, Title: "w5 stepped", Status: model.StatusOpen, Steps: []model.Step{{ShortID: "w5-step", Text: "ship"}}}
+		home := &w5Home{tasks: []model.Task{task}, detail: store.TaskDetail{Task: task}}
+		out := &w5Output{}
+		in, errs := w5StartRun(t, home, nil, out)
+		w5Eventually(t, "the step task draw", func() bool { return strings.Contains(out.String(), task.Title) })
+		if _, err := io.WriteString(in, "\rt\r"); err != nil {
+			t.Fatalf("write toggle step: %v", err)
+		}
+		w5Eventually(t, "the step write", func() bool { actors, _ := home.w5Step(); return len(actors) == 1 })
+		w5Quit(t, in, errs)
+
+		actors, ops := home.w5Step()
+		if !reflect.DeepEqual(actors, []store.Actor{{}}) {
+			t.Errorf("Step actors = %#v, want one empty actor", actors)
+		}
+		if !reflect.DeepEqual(ops, []model.StepOp{{Op: "toggle", ShortID: "w5-step"}}) {
+			t.Errorf("Step operations = %#v", ops)
+		}
+	})
+
+	t.Run("kills the selected live run", func(t *testing.T) {
+		task := model.Task{Number: 52, Title: "w5 running", Status: model.StatusStarted}
+		home := &w5Home{tasks: []model.Task{task}, runs: []model.Run{{Task: task.Number, StartedTS: time.Now()}}}
+		out := &w5Output{}
+		in, errs := w5StartRun(t, home, nil, out)
+		w5Eventually(t, "the live run draw", func() bool { return strings.Contains(out.String(), task.Title) })
+		if _, err := io.WriteString(in, "ky"); err != nil {
+			t.Fatalf("write kill confirmation: %v", err)
+		}
+		w5Eventually(t, "the kill write", func() bool { killed, _, _, _ := home.w5KillPause(); return len(killed) == 1 })
+		w5Quit(t, in, errs)
+
+		killed, tasks, _, _ := home.w5KillPause()
+		if !reflect.DeepEqual(killed, []store.Actor{{}}) {
+			t.Errorf("KillRun actors = %#v, want one empty actor", killed)
+		}
+		if !reflect.DeepEqual(tasks, []int{task.Number}) {
+			t.Errorf("KillRun tasks = %#v, want %#v", tasks, []int{task.Number})
+		}
+	})
+
+	t.Run("pauses the runner", func(t *testing.T) {
+		home := &w5Home{status: api.Status{RunnerState: api.RunnerStateOn}}
+		out := &w5Output{}
+		in, errs := w5StartRun(t, home, nil, out)
+		w5Eventually(t, "the runner draw", func() bool { status, _ := home.w5OnlineCalls(); return status == 1 })
+		if _, err := io.WriteString(in, "P"); err != nil {
+			t.Fatalf("write pause: %v", err)
+		}
+		w5Eventually(t, "the pause write", func() bool { _, _, paused, _ := home.w5KillPause(); return len(paused) == 1 })
+		w5Quit(t, in, errs)
+
+		_, _, paused, values := home.w5KillPause()
+		if !reflect.DeepEqual(paused, []store.Actor{{}}) {
+			t.Errorf("PauseRunner actors = %#v, want one empty actor", paused)
+		}
+		if !reflect.DeepEqual(values, []bool{true}) {
+			t.Errorf("PauseRunner values = %#v, want []bool{true}", values)
+		}
+	})
+}
+
+func TestRunRearmsBlockedTasksBeforeSettingThemReady(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		answer     string
+		queued     bool
+		wantAppend bool
+		wantSet    bool
+		wantStatus string
+	}{
+		{name: "answer appends then readies", answer: "w5 answer", wantAppend: true, wantSet: true},
+		{name: "empty answer readies without a note", wantSet: true},
+		{name: "queued answer leaves the task blocked", answer: "w5 queued", queued: true, wantAppend: true, wantStatus: "the home did not answer"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			task := model.Task{Number: 53, Title: "w5 blocked", Status: model.StatusBlocked}
+			home := &w5Home{tasks: []model.Task{task}, queued: test.queued}
+			out := &w5Output{}
+			in, errs := w5StartRun(t, home, nil, out)
+			w5Eventually(t, "the blocked task draw", func() bool { return strings.Contains(out.String(), task.Title) })
+			if _, err := io.WriteString(in, "n"+test.answer+"\r"); err != nil {
+				t.Fatalf("write rearm answer: %v", err)
+			}
+			w5Eventually(t, "the rearm result", func() bool {
+				return len(home.w5Append()) == boolCount(test.wantAppend) && len(home.w5SetActors()) == boolCount(test.wantSet) && (test.wantStatus == "" || strings.Contains(out.String(), test.wantStatus))
+			})
+			w5Quit(t, in, errs)
+
+			if got := home.w5Append(); test.wantAppend {
+				if len(got) != 1 || got[0].Actor != (store.Actor{}) || got[0].Kind != model.KindNote || got[0].Note == nil || got[0].Note.Task != task.Number || got[0].Note.Text != test.answer {
+					t.Errorf("Append request = %#v", got)
+				}
+			} else if len(got) != 0 {
+				t.Errorf("Append requests = %#v, want none", got)
+			}
+			if got := home.w5SetActors(); len(got) != boolCount(test.wantSet) {
+				t.Errorf("SetTask calls = %#v, want %d", got, boolCount(test.wantSet))
+			}
+			if test.wantSet {
+				ready := model.StatusReady
+				if got := home.w5SetPatches(); !reflect.DeepEqual(got, []model.Patch{{Status: &ready}}) {
+					t.Errorf("SetTask patches = %#v, want ready", got)
+				}
+			}
+		})
+	}
+}
+
+func boolCount(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
+}
+
+func TestRunRefreshesOfflineDoneAndRefusals(t *testing.T) {
+	t.Run("offline does not ask for online data", func(t *testing.T) {
+		timestamp := time.Now()
+		home := &w5Home{tasks: []model.Task{{Number: 54, Title: "w5 offline", Status: model.StatusOpen}}, offline: true, snapshotTS: &timestamp}
+		out := &w5Output{}
+		in, errs := w5StartRun(t, home, nil, out)
+		w5Eventually(t, "the offline draw", func() bool { return strings.Contains(out.String(), "offline (snapshot") })
+		w5Quit(t, in, errs)
+		if status, runs := home.w5OnlineCalls(); status != 0 || runs != 0 {
+			t.Errorf("offline refresh made Status=%d and ListRuns=%d calls, want neither", status, runs)
+		}
+	})
+
+	t.Run("done drawer asks for done tasks", func(t *testing.T) {
+		home := &w5Home{tasks: []model.Task{{Number: 55, Title: "w5 done drawer", Status: model.StatusOpen}}}
+		out := &w5Output{}
+		in, errs := w5StartRun(t, home, nil, out)
+		w5Eventually(t, "the board draw", func() bool { return strings.Contains(out.String(), "w5 done drawer") })
+		if _, err := io.WriteString(in, "d"); err != nil {
+			t.Fatalf("write done drawer: %v", err)
+		}
+		w5Eventually(t, "the done list query", func() bool {
+			for _, f := range home.w5ListFilters() {
+				if reflect.DeepEqual(f, store.Filter{Statuses: []model.Status{model.StatusDone}}) {
+					return true
+				}
+			}
+			return false
+		})
+		w5Quit(t, in, errs)
+	})
+
+	for _, test := range []struct {
+		name string
+		home *w5Home
+		err  string
+	}{
+		{name: "list tasks", home: &w5Home{list: errors.New("w5 list failed")}, err: "w5 list failed"},
+		{name: "status", home: &w5Home{state: errors.New("w5 status failed")}, err: "w5 status failed"},
+		{name: "runs", home: &w5Home{run: errors.New("w5 runs failed")}, err: "w5 runs failed"},
+		{name: "task details", home: &w5Home{tasks: []model.Task{{Number: 56, Status: model.StatusStarted}}, get: errors.New("w5 detail failed")}, err: "w5 detail failed"},
+	} {
+		t.Run(test.name+" refusal reaches the screen", func(t *testing.T) {
+			out := &w5Output{}
+			in, errs := w5StartRun(t, test.home, nil, out)
+			w5Eventually(t, "the refresh refusal", func() bool { return strings.Contains(out.String(), test.err) })
+			w5Quit(t, in, errs)
+		})
+	}
+}
+
+func TestRunShowsEveryEffectRefusal(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		home  *w5Home
+		exec  func(context.Context, []string) ([]byte, error)
+		input string
+		err   string
+		load  bool
+	}{
+		{name: "load task", home: &w5Home{tasks: []model.Task{{Number: 57, Title: "w5 load", Status: model.StatusOpen}}, get: errors.New("w5 load refused")}, input: "\r", err: "w5 load refused"},
+		{name: "set task", home: &w5Home{tasks: []model.Task{{Number: 58, Title: "w5 set", Status: model.StatusOpen}}, set: errors.New("w5 set refused")}, input: "s", err: "w5 set refused"},
+		{name: "step task", home: &w5Home{tasks: []model.Task{{Number: 59, Title: "w5 step", Status: model.StatusOpen, Steps: []model.Step{{ShortID: "w5", Text: "step"}}}}, step: errors.New("w5 step refused")}, input: "\rt\r", err: "w5 step refused"},
+		{name: "kill run", home: &w5Home{tasks: []model.Task{{Number: 60, Title: "w5 kill", Status: model.StatusStarted}}, runs: []model.Run{{Task: 60, StartedTS: time.Now()}}, kill: errors.New("w5 kill refused")}, input: "ky", err: "w5 kill refused"},
+		{name: "pause runner", home: &w5Home{status: api.Status{RunnerState: api.RunnerStateOn}, pause: errors.New("w5 pause refused")}, input: "P", err: "w5 pause refused"},
+		{name: "append rearm note", home: &w5Home{tasks: []model.Task{{Number: 61, Title: "w5 rearm", Status: model.StatusBlocked}}, append: errors.New("w5 append refused")}, input: "nw5 answer\r", err: "w5 append refused"},
+		{name: "focus run", home: &w5Home{tasks: []model.Task{{Number: 62, Title: "w5 focus refusal", Status: model.StatusStarted}}, runs: []model.Run{{Task: 62, Workspace: "w5-workspace", Pane: "w5-pane", StartedTS: time.Now()}}}, exec: (&w5Executor{err: errors.New("w5 focus refused")}).w5Exec, input: "f", err: "w5 focus refused"},
+		{name: "open URL", home: &w5Home{tasks: []model.Task{{Number: 63, Title: "w5 open refusal", Status: model.StatusOpen}}, detail: store.TaskDetail{Task: model.Task{Number: 63, Title: "w5 open refusal", Status: model.StatusOpen}, History: []model.Event{{Kind: model.KindNote, Data: model.MustData(model.NoteData{Ref: "https://example.test/w5-refusal"})}}}}, exec: (&w5Executor{err: errors.New("w5 open refused")}).w5Exec, input: "\r", err: "w5 open refused", load: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			out := &w5Output{}
+			in, errs := w5StartRun(t, test.home, test.exec, out)
+			w5Eventually(t, "the initial draw", func() bool { return out.Len() > 0 })
+			if _, err := io.WriteString(in, test.input); err != nil {
+				t.Fatalf("write %s input: %v", test.name, err)
+			}
+			if test.load {
+				w5Eventually(t, "the task detail", func() bool { return test.home.w5GetTaskCalls() == 1 && strings.Contains(out.String(), "FILES") })
+				if _, err := io.WriteString(in, "o"); err != nil {
+					t.Fatalf("write open ref: %v", err)
+				}
+			}
+			w5Eventually(t, "the effect refusal", func() bool { return strings.Contains(out.String(), test.err) })
+			w5Quit(t, in, errs)
+		})
+	}
+}
+
+func TestRunUsesItsDefaultExecutorAndTreatsCancelledContextAsSuccess(t *testing.T) {
+	t.Run("default executor receives focus argv", func(t *testing.T) {
+		task := model.Task{Number: 64, Title: "w5 default executor", Status: model.StatusStarted}
+		home := &w5Home{tasks: []model.Task{task}, runs: []model.Run{{Task: task.Number, Workspace: "w5-workspace", Pane: "w5-pane", StartedTS: time.Now()}}}
+		out := &w5Output{}
+		in, errs := w5StartRun(t, home, nil, out)
+		w5Eventually(t, "the focus task draw", func() bool { return strings.Contains(out.String(), task.Title) })
+		if _, err := io.WriteString(in, "f"); err != nil {
+			t.Fatalf("write focus: %v", err)
+		}
+		w5Eventually(t, "the default executor failure", func() bool { return strings.Contains(out.String(), "w5-herdr workspace focus") })
+		w5Quit(t, in, errs)
+	})
+
+	t.Run("cancelled context is not a Run error", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		in, writer := io.Pipe()
+		defer writer.Close()
+		errs := make(chan error, 1)
+		go func() {
+			errs <- board.Run(ctx, board.Options{Home: &w5Home{}, IsHome: true, In: in, Out: &w5Output{}})
+		}()
+		cancel()
+		select {
+		case err := <-errs:
+			if err != nil {
+				t.Fatalf("Run() after cancellation = %v, want nil", err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("Run did not stop after context cancellation")
+		}
+	})
+}
+
+func TestRunDoesNotProbeForAViewerWithoutHerdr(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := model.Task{Number: 65, Title: "w5 no viewer", Status: model.StatusOpen, Project: wd}
+	home := &w5Home{tasks: []model.Task{task}, detail: store.TaskDetail{Task: task, History: []model.Event{{Kind: model.KindNote, Data: model.MustData(model.NoteData{Ref: "run_test.go"})}}}}
+	exec := &w5Executor{}
+	out := &w5Output{}
+	in, errs := w5StartRunWithRefreshHerdr(t, home, exec.w5Exec, out, "", time.Hour)
+	w5Eventually(t, "the task draw", func() bool { return strings.Contains(out.String(), task.Title) })
+	if _, err := io.WriteString(in, "\r"); err != nil {
+		t.Fatalf("write task page: %v", err)
+	}
+	w5Eventually(t, "the task detail", func() bool { return home.w5GetTaskCalls() == 1 && strings.Contains(out.String(), "FILES") })
+	if _, err := io.WriteString(in, "o"); err != nil {
+		t.Fatalf("write open file: %v", err)
+	}
+	w5Eventually(t, "the missing-viewer refusal", func() bool { return strings.Contains(out.String(), "no file viewer is installed") })
+	w5Quit(t, in, errs)
+	if got := exec.w5Calls(); len(got) != 0 {
+		t.Errorf("missing herdr ran %#v, want no command", got)
+	}
 }

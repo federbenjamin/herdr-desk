@@ -413,3 +413,145 @@ func TestKeysLayoutWidthsKeepOneOrBothSurfacesAsSpecified(t *testing.T) {
 		})
 	}
 }
+
+func TestKeysMovementStaysAtListEndsAndLeavesAnEmptyBoardUntouched(t *testing.T) {
+	s := w2State(w2Task(1, model.StatusOpen), w2Task(2, model.StatusReady))
+	for _, test := range []struct {
+		name string
+		key  tea.KeyPressMsg
+		want string
+	}{
+		{"down selects the next row", w2Key(tea.KeyDown, ""), "▸ T1"},
+		{"down stays at the last row", w2Key(tea.KeyDown, ""), "▸ T1"},
+		{"j stays at the last row", w2Key('j', "j"), "▸ T1"},
+		{"up selects the previous row", w2Key(tea.KeyUp, ""), "▸ T2"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var effects []board.Effect
+			s, effects = s.Update(test.key)
+			w2Effects(t, effects, nil)
+			if !strings.Contains(s.Text(), test.want) {
+				t.Fatalf("%s = %q, want %q", test.name, s.Text(), test.want)
+			}
+		})
+	}
+
+	empty := w2State()
+	for _, key := range []tea.KeyPressMsg{w2Key('g', "g"), w2Key('G', "G"), w2Key(tea.KeyEnter, ""), w2Key('n', "n")} {
+		var effects []board.Effect
+		empty, effects = empty.Update(key)
+		w2Effects(t, effects, nil)
+	}
+
+	for _, test := range []struct {
+		name    string
+		offline bool
+		want    []board.Effect
+	}{
+		{"wide online loads the new selection", false, []board.Effect{board.LoadTask{Task: 1}}},
+		{"wide offline moves without loading", true, nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			s := board.NewState(board.Config{})
+			s, _ = s.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
+			s, _ = s.Update(board.Loaded{Data: board.Data{Offline: test.offline, Tasks: []model.Task{w2Task(1, model.StatusOpen), w2Task(2, model.StatusReady)}}})
+			_, effects := s.Update(w2Key(tea.KeyDown, ""))
+			w2Effects(t, effects, test.want)
+		})
+	}
+}
+
+func TestKeysAddCancellationSuppressesCaptureQuitAndShowsFailuresExactly(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		key  tea.KeyPressMsg
+	}{
+		{"escape", w2Key(tea.KeyEsc, "")},
+		{"empty line", w2Key(tea.KeyEnter, "")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			s := w2State(w2Task(1, model.StatusOpen))
+			s, _ = s.Update(w2Key('+', "+"))
+			s, effects := s.Update(test.key)
+			w2Effects(t, effects, nil)
+			if strings.Contains(s.Text(), "add: ") {
+				t.Fatalf("%s leaves the add box open: %q", test.name, s.Text())
+			}
+		})
+	}
+
+	s := w2State(w2Task(1, model.StatusOpen))
+	s, _ = s.Update(w2Key('+', "+"))
+	s, effects := s.Update(board.Failed{Err: &model.Refusal{Code: model.CodeNotAllowed, Msg: "runner is paused"}})
+	w2Effects(t, effects, nil)
+	if !strings.Contains(s.Text(), "not-allowed: runner is paused") {
+		t.Fatalf("refused add = %q, want the refusal text", s.Text())
+	}
+
+	s = w2State(w2Task(1, model.StatusOpen))
+	s, effects = s.Update(board.Failed{})
+	w2Effects(t, effects, nil)
+	if !strings.HasSuffix(s.Text(), "an effect failed") {
+		t.Fatalf("missing failure error = %q, want fallback status", s.Text())
+	}
+}
+
+func TestKeysSearchFindsTaskNumbersAndTitlesWithoutCaseSensitivity(t *testing.T) {
+	tasks := []model.Task{
+		{Number: 12, Title: "Fix Runner", Status: model.StatusOpen, UpdatedTS: time.Unix(100, 0)},
+		{Number: 13, Title: "Other work", Status: model.StatusOpen, UpdatedTS: time.Unix(100, 0)},
+	}
+	for _, test := range []struct {
+		name  string
+		query string
+		want  string
+		gone  string
+	}{
+		{"task number", "t12", "T12", "T13"},
+		{"title ignores case", "rUnNeR", "T12", "T13"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			s := w2State(tasks...)
+			s, _ = s.Update(w2Key('/', "/"))
+			for _, r := range test.query {
+				var effects []board.Effect
+				s, effects = s.Update(w2Key(r, string(r)))
+				w2Effects(t, effects, nil)
+			}
+			if !strings.Contains(s.Text(), "search: "+test.query) || !strings.Contains(s.Text(), test.want) || strings.Contains(s.Text(), test.gone) {
+				t.Fatalf("search %q = %q, want %q only", test.query, s.Text(), test.want)
+			}
+			s, _ = s.Update(w2Key(tea.KeyEnter, ""))
+			s, effects := s.Update(w2Key(tea.KeyEsc, ""))
+			w2Effects(t, effects, nil)
+			if strings.Contains(s.Text(), "search: ") {
+				t.Fatalf("escape after keeping search = %q, want search cleared", s.Text())
+			}
+		})
+	}
+
+	filters := w2State(
+		model.Task{Number: 14, Title: "blue local", Status: model.StatusOpen, Thread: "blue", UpdatedTS: time.Unix(100, 0)},
+		model.Task{Number: 15, Title: "red local", Status: model.StatusOpen, Thread: "red", UpdatedTS: time.Unix(100, 0)},
+		model.Task{Number: 16, Title: "project task", Status: model.StatusOpen, Project: "/work/alpha", Thread: "red", UpdatedTS: time.Unix(100, 0)},
+	)
+	for range 2 {
+		filters, _ = filters.Update(w2Key('p', "p"))
+	}
+	if !strings.Contains(filters.Text(), "desk  no project ▾") || !strings.Contains(filters.Text(), "T14") || strings.Contains(filters.Text(), "T16") {
+		t.Fatalf("no project filter = %q, want local tasks only", filters.Text())
+	}
+	filters, _ = filters.Update(w2Key('t', "t"))
+	if !strings.Contains(filters.Text(), "T14") || strings.Contains(filters.Text(), "T15") {
+		t.Fatalf("thread filter = %q, want blue local task only", filters.Text())
+	}
+
+	offline := board.NewState(board.Config{})
+	offline, _ = offline.Update(tea.WindowSizeMsg{Width: 90, Height: 24})
+	offline, _ = offline.Update(board.Loaded{Data: board.Data{Offline: true}})
+	offline, effects := offline.Update(w2Key('d', "d"))
+	w2Effects(t, effects, nil)
+	if !strings.HasSuffix(offline.Text(), "offline: the done drawer needs the home") {
+		t.Fatalf("offline done drawer = %q, want refusal", offline.Text())
+	}
+}
