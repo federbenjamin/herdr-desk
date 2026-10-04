@@ -272,8 +272,8 @@ type State struct{ /* unexported */ }
 func NewState(c Config) State
 
 // Update applies one message and returns the next State and the I/O it asks for. It does no I/O.
-// It takes tea.KeyPressMsg, tea.WindowSizeMsg, Loaded, TaskLoaded, Added, Failed, and Tick; any other message
-// changes nothing.
+// It takes tea.KeyPressMsg, tea.PasteMsg, tea.WindowSizeMsg, Loaded, TaskLoaded, Added, Failed, and Tick; any
+// other message changes nothing.
 func (s State) Update(msg tea.Msg) (State, []Effect)
 
 // Text is the screen as plain text: no escape byte, lines joined by "\n", no line wider than the width.
@@ -354,7 +354,8 @@ type CaptureState struct{ /* unexported */ }
 // NewCapture returns an empty add box whose line starts with prompt ("capture: " in the popup, "add: " on the board).
 func NewCapture(prompt string) CaptureState
 
-// Update takes tea.KeyPressMsg, tea.WindowSizeMsg, Added, and Failed. Its effects are AddTask and Quit.
+// Update takes tea.KeyPressMsg, tea.PasteMsg, tea.WindowSizeMsg, Added, and Failed. Its effects are AddTask
+// and Quit.
 func (c CaptureState) Update(msg tea.Msg) (CaptureState, []Effect)
 
 // Text is the popup as plain text; Render is the same with styles.
@@ -401,7 +402,7 @@ Each section prints its title even when empty. A row is `▸ ` (selected) or two
 - A `ready` task whose thread is `agent`: `#agent · queued` before the detail. Any other task with a thread: `#<thread>` before the detail.
 - A `blocked` task with a last note: a second line `↳ "<note>"`. A `started` task with one: `↳ last note: "<note>"`. One line each, cut with `…`.
 
-The footer is `+ add  n ready  s start  b blocked  r review  x done  a #agent  f focus  k kill  P pause  / search  p project  t thread  d done  ? keys`, cut to `? keys  q quit` under 78 columns. The selection follows its task across refreshes; when the task leaves the list, the row at the same index is selected. The list scrolls so the selected row is always on screen.
+The footer is `+ add  n ready  s start  b blocked  r review  x done  a #agent  f focus  k kill  P pause  / search  p project  t thread  d done  ? keys`. It wraps at its double-space groups when the width is less than its length, and is `? keys  q quit` under 78 columns. The selection follows its task across refreshes; when the task leaves the list, the row at the same index is selected. The list scrolls so the selected row is always on screen.
 
 **Keys, board page** (no prompt open):
 
@@ -416,7 +417,7 @@ The footer is `+ add  n ready  s start  b blocked  r review  x done  a #agent  f
 | `a` | `SetTask{thread}`: `agent` when the task's thread is not `agent`, else `""` |
 | `f` | with `CanFocus` and a live run that has a `Pane`: `FocusRun{run}`. Else the status line: `f works only on the home, with herdr`, `T<n> has no live run`, or `T<n>'s run has no pane yet` |
 | `k` | with a live run: the prompt `kill T<n>'s run? y/n`; `y` emits `KillRun{n}`. Else `T<n> has no live run` |
-| `P` | with `RunnerState` `on`: `PauseRunner{Paused: true}`; with `paused`: `PauseRunner{Paused: false}`; with anything else the status line `the runner is <RunnerState>`, or `the runner is off` when it is empty |
+| `P` | with `RunnerState` `on`, or empty while `RunnerOn` is true (the header's own fallback): `PauseRunner{Paused: true}`; with `paused`: `PauseRunner{Paused: false}`; with anything else the status line `the runner is <RunnerState>`, or `the runner is off` when it is empty and `RunnerOn` is false |
 | `/` | opens the `search: ` prompt; rows are filtered as the line changes to tasks whose title or `T<n>` holds the text, any case. Enter keeps the filter, `esc` clears it |
 | `p` | next project filter: `all`, each project among the tasks by base name, `no project` (only when a task has none), back to `all` |
 | `t` | next thread filter: `all`, each thread among the tasks in order, back to `all` |
@@ -434,7 +435,7 @@ With no row selected (an empty board) a key that needs a task does nothing.
 - `root <r> · isolation <i> · model <m>`, `-` for an unset field.
 - `NOTES`, then the notes, wrapped.
 - `STEPS  <done>/<all>`, then `[x] <text>` or `[ ] <text>` per step. Absent when the task has no step.
-- `HISTORY  across <n> sessions` (distinct non-empty `Session` values; `across 1 session`), then one line per event, oldest first: local `MM-DD HH:MM`, who, text. Who is `runner` when `Run != 0` and `Session == ""`, `agent` when `Who` is `agent`, else `you`. Text by kind: `task` → `created · <status>` plus ` · #<thread>` when set; `set` → the changed fields in the order of `model.Patch` (`<status>`, `title`, `notes`, `thread #<t>`, `root <r>`, `isolation <i>`, `model <m>`, `archived`), joined by ` · `, plus ` · merged` and ` [<ref>]` when set; a `set` to `started` by the runner whose run is in `Data.Runs` → `claimed · routed: <root base>, <isolation>, <model>` plus ` — <reason>` when the run has one; `step` → `step <op> <text or short id>`; `note` → `note "<text>"` plus ` [<ref>]`; `decision` → `decision <text>`; `merged` → `merged <branch>`.
+- `HISTORY  across <n> sessions` (distinct non-empty `Session` values; `across 1 session`), then one line per event, oldest first: local `MM-DD HH:MM`, who, text. Who is `runner` when `Run != 0` and `Session == ""`, `agent` when `Who` is `agent`, else `you`. Text by kind: `task` → `created · <status>` plus ` · #<thread>` when set; `set` → the changed fields in the order of `model.Patch` (`<status>`, `title`, `notes`, `thread #<t>`, `root <r>`, `isolation <i>`, `model <m>`, and `archived` or, for a set to false, `unarchived`), joined by ` · `, plus ` · merged` and ` [<ref>]` when set; a `set` to `started` by the runner whose run is in `Data.Runs` → `claimed · routed: <root base>, <isolation>, <model>` plus ` — <reason>` when the run has one; `step` → `step <op> <text or short id>`; `note` → `note "<text>"` plus ` [<ref>]`; `decision` → `decision <text>`; `merged` → `merged <branch>`.
 - `FILES`, then each distinct ref of the history's notes and sets, in order. Absent when there is none.
 - The footer: `e notes  t steps  n ready  x done  o open  R root  I isolation  M model  f focus  esc back`.
 
@@ -451,7 +452,7 @@ Keys: `↓` `j` and `↑` scroll. `n s b r x a f k P ? q ctrl+c` do what they do
 
 **Layouts.** Under 78 columns: one surface at a time, and board rows carry no right-hand detail. From 78 to 109: one surface, full rows. From 110: the board on the left and the selected task's page on the right, always; a move of the selection emits `LoadTask` for the new task (and nothing else); `enter` gives the keys to the task side and `esc` gives them back.
 
-**Data.** `Tick` emits `Refresh{Done}` with `Done` as the drawer stands, plus `LoadTask` for the task a page shows (the open page, or at 110 columns the selection) unless the data is offline. While a `Refresh` is unanswered (no `Loaded` or `Failed` since), a `Tick` emits nothing and is remembered; the `Loaded` or `Failed` that answers then emits that one refresh. `Loaded` replaces the data. `TaskLoaded` replaces the shown task's detail, and is dropped when its task is not the one shown. `Added` acts as a `Tick`. `Failed` sets the status line to `Err.Error()`; the next key press clears it.
+**Data.** `Tick` emits `Refresh{Done}` with `Done` as the drawer stands, plus `LoadTask` for the task a page shows (the open page, or at 110 columns the selection) unless the data is offline. While a `Refresh` is unanswered (no `Loaded` or `Failed` since), a `Tick` emits nothing and is remembered; the `Loaded` or `Failed` that answers then emits, once, what a `Tick` emits (the `Refresh`, and the shown task's `LoadTask`). A `tea.PasteMsg` goes to the open text input (a prompt, the add box, the notes editor) and changes nothing when none is open. `Loaded` replaces the data. `TaskLoaded` replaces the shown task's detail, and is dropped when its task is not the one shown. `Added` acts as a `Tick`. `Failed` sets the status line to `Err.Error()`; the next key press clears it.
 
 **Colours.** `blocked` red, `review` yellow, `started` green, `ready` cyan, `open` and details bright black, section titles bold yellow, ids blue, `#thread` magenta. `Render()` holds no `38;2;`, `48;2;`, `38;5;`, or `48;5;` sequence.
 
