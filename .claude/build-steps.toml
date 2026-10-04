@@ -1,6 +1,0 @@
-# desk's build steps: the global /build flow names a step, this file names the command.
-checks      = "sh scripts/checks.sh"
-exit_checks = "sh scripts/checks.sh --no-coverage"
-tests       = "go test ./..."
-install     = "go mod download"
-notes       = ".claude/build/notes.md"
