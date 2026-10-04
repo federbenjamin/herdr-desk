@@ -113,7 +113,7 @@ This unit's new artifacts:
 | `board.Age` | generalize | `internal/cli/board.go:74` `snapshotAge` holds the same thresholds with an ` old` suffix; the rule moves to `internal/board` and the static board adds the suffix |
 | `model.ParseCapture` | generalize | `internal/cli/tasks.go:515` `parseCapture`; the board's `+` line and the popup need it and `internal/board` cannot import `internal/cli` |
 | `Client.KillRun`, `Client.PauseRunner` | reuse | the shape of `Client.SetTask` (`internal/api/client.go:243`): one request type, one `c.call` |
-| focus a pane by id | reuse | `scripts/open-pane.sh:38` — herdr has no focus-by-id; `pane zoom <id> --on` then `--off` focuses it |
+| focus a pane by id | reuse | herdr focuses by id only a pane a plugin owns (`plugin pane focus`, which `scripts/open-pane.sh` uses for the board); for a run's pane, `pane zoom <id> --on` then `--off` focuses it |
 | `Options.Exec` | reuse | the shape of `cli.Env.Spawn` (`internal/cli/cli.go:31`): a func the process sets and a test replaces |
 | e2e terminal driver | justified-new | `scripts/e2e/lib.sh` has no terminal; the helpers are added there, beside `run` and `wait_for` |
 
