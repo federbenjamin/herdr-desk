@@ -672,3 +672,20 @@ func TestKeysAnAnswerThatFailsWhileAPromptIsOpenWaitsForItToClose(t *testing.T) 
 	_, effects := s.Update(named(tea.KeyEnter))
 	wantEffects(t, effects, []board.Effect{board.Rearm{Task: 9, Answer: "keep it"}})
 }
+
+func TestKeysAFailedAnswerIsNotLostToALaterAnswer(t *testing.T) {
+	s := w2State(w2Task(9, model.StatusBlocked))
+	s, _ = s.Update(press('n'))
+	s, _ = s.Update(tea.PasteMsg{Content: "keep it"})
+	s, _ = s.Update(named(tea.KeyEnter))
+	s, _ = s.Update(press('n'))
+	s, _ = s.Update(board.Failed{Err: errors.New("dial home: connection refused")})
+	s, _ = s.Update(tea.PasteMsg{Content: "later"})
+	s, effects := s.Update(named(tea.KeyEnter))
+	wantEffects(t, effects, []board.Effect{board.Rearm{Task: 9, Answer: "later"}})
+	if !strings.Contains(s.Text(), "answer: keep it") || !strings.HasSuffix(s.Text(), "dial home: connection refused") {
+		t.Fatalf("after a later answer = %q, want the failed answer's prompt back with the text and the error", s.Text())
+	}
+	_, effects = s.Update(named(tea.KeyEnter))
+	wantEffects(t, effects, []board.Effect{board.Rearm{Task: 9, Answer: "keep it"}})
+}

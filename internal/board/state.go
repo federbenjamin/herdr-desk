@@ -161,12 +161,18 @@ type State struct {
 
 	// The typed text of the last notes save and the last answer, so a failure of its write opens it again.
 	notesOut, answerOut unsaved
+	// back is the typed text whose write failed, oldest first, until giveBack opens it again. A later save or
+	// answer never replaces it.
+	back []unsaved
 }
 
-// unsaved is text the user typed that a write carries, for a task. failed is the write's error once it failed.
+// unsaved is text the user typed that a write carries, for a task. from is the notes the editor started from,
+// for a notes save; failed is the write's error once it failed.
 type unsaved struct {
+	answer bool
 	task   int
 	text   string
+	from   string
 	failed string
 }
 
@@ -262,11 +268,15 @@ func (s State) failed(m Failed) (State, []Effect) {
 		return ok && set.Task == s.notesOut.task && set.Patch.Notes != nil
 	}):
 		s.notesOut.failed = text
+		s.back = append(slices.Clip(s.back), s.notesOut)
+		s.notesOut = unsaved{}
 	case s.answerOut.task != 0 && answers(m, func(e Effect) bool {
 		r, ok := e.(Rearm)
 		return ok && r.Task == s.answerOut.task && r.Answer != ""
 	}):
 		s.answerOut.failed = text
+		s.back = append(slices.Clip(s.back), s.answerOut)
+		s.answerOut = unsaved{}
 	}
 	if !shown {
 		s.status = text
@@ -279,27 +289,23 @@ func (s State) failed(m Failed) (State, []Effect) {
 
 // giveBack opens the notes editor or the answer prompt again, with its typed text and its error on the status
 // line, when its write failed and no other input has the keys. Text whose write failed while another input was
-// open waits for that input to close.
+// open waits for that input to close. The editor keeps the notes it started from, so a save over notes loaded
+// since still warns.
 func (s State) giveBack() State {
-	if s.inputOpen() {
+	if s.inputOpen() || len(s.back) == 0 {
 		return s
 	}
-	switch {
-	case s.notesOut.failed != "":
-		u := s.notesOut
-		s.notesOut = unsaved{}
+	u := s.back[0]
+	s.back = s.back[1:]
+	if u.answer {
+		s.prompt = newPrompt(promptAnswer, "answer: ", u.task, u.text)
+	} else {
 		if s.shown() != u.task {
 			s.page, s.taskNum, s.hasDetail, s.detail, s.taskTop = pageTask, u.task, false, store.TaskDetail{}, 0
 		}
-		s.editing, s.notes, s.notesTop = true, newNotes(u.text), 0
-		s.notesFrom = s.task().Notes
-		s.status = u.failed
-	case s.answerOut.failed != "":
-		u := s.answerOut
-		s.answerOut = unsaved{}
-		s.prompt = newPrompt(promptAnswer, "answer: ", u.task, u.text)
-		s.status = u.failed
+		s.editing, s.notes, s.notesFrom, s.notesTop = true, newNotes(u.text), u.from, 0
 	}
+	s.status = u.failed
 	return s
 }
 
@@ -831,7 +837,7 @@ func (s State) promptKey(m tea.KeyPressMsg) (State, []Effect) {
 		case promptAnswer:
 			s.answerOut = unsaved{}
 			if v != "" {
-				s.answerOut = unsaved{task: p.task, text: v}
+				s.answerOut = unsaved{answer: true, task: p.task, text: v}
 			}
 			return s, []Effect{Rearm{Task: p.task, Answer: v}}
 		case promptRoot:
