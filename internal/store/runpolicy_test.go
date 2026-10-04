@@ -149,6 +149,57 @@ func TestUpdateRunTerminalStatesRecordTheStoreClock(t *testing.T) {
 	}
 }
 
+func TestUpdateRunToRunningRestartsTheRunClock(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, time.October, 4, 12, 0, 0, 0, time.UTC)
+	st := openRunPolicyStore(t, &now, false)
+	task, run := startRunPolicy(t, st, "waits, then runs")
+
+	now = now.Add(3 * time.Hour)
+	if changed, err := st.UpdateRun(ctx, run.ID, model.RunRouting, store.RunUpdate{State: model.RunWaiting}); err != nil || !changed {
+		t.Fatalf("set waiting = (%t, %v)", changed, err)
+	}
+	if got, _, _ := st.CurrentRun(ctx, task.Number); !got.StartedTS.Equal(run.StartedTS) {
+		t.Fatalf("started_ts after waiting = %v, want the creation time %v", got.StartedTS, run.StartedTS)
+	}
+	now = now.Add(time.Hour)
+	if changed, err := st.UpdateRun(ctx, run.ID, model.RunWaiting, store.RunUpdate{State: model.RunRunning}); err != nil || !changed {
+		t.Fatalf("set running = (%t, %v)", changed, err)
+	}
+	spawned := now
+	now = now.Add(time.Minute)
+	if changed, err := st.UpdateRun(ctx, run.ID, model.RunRunning, store.RunUpdate{Pane: "pane-a"}); err != nil || !changed {
+		t.Fatalf("record a pane = (%t, %v)", changed, err)
+	}
+	if got, _, _ := st.CurrentRun(ctx, task.Number); !got.StartedTS.Equal(spawned) {
+		t.Fatalf("started_ts of a running run = %v, want the spawn time %v", got.StartedTS, spawned)
+	}
+}
+
+func TestRunMethodsReturnTheStoreErrorOnceClosed(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(testutil.NewMachine(t).Paths.DB(), store.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for name, call := range map[string]func() error{
+		"Armed":      func() error { _, err := st.Armed(ctx); return err },
+		"StartRun":   func() error { _, err := st.StartRun(ctx, 1); return err },
+		"UpdateRun":  func() error { _, err := st.UpdateRun(ctx, 1, model.RunRouting, store.RunUpdate{}); return err },
+		"ListRuns":   func() error { _, err := st.ListRuns(ctx); return err },
+		"CurrentRun": func() error { _, _, err := st.CurrentRun(ctx, 1); return err },
+		"RunsSince":  func() error { _, err := st.RunsSince(ctx, time.Time{}); return err },
+		"RunWrote":   func() error { _, err := st.RunWrote(ctx, 1); return err },
+	} {
+		if err := call(); err == nil {
+			t.Errorf("%s on a closed store: error = nil, want the store's error", name)
+		}
+	}
+}
+
 func TestLiveRunsReturnsOnlyLiveStatesInIDOrder(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, time.October, 4, 12, 0, 0, 0, time.UTC)

@@ -25,6 +25,7 @@ task_on() {
   OUT=$n
 }
 live_count() { on home desk runs --json | jq 'length'; }
+no_live_run() { [ "$(live_count)" = 0 ]; }
 
 task_on one "$SELF"
 task_on two "$SELF"
@@ -47,7 +48,7 @@ say "fourth starts when one ends ok"
 run 0 on home desk set T2 review
 run 0 on home desk set T3 review
 run 0 on home desk set T4 review
-wait_long 5 "no live run" test "$(live_count)" = 0
+wait_long 5 "no live run" no_live_run
 
 # An in-place root runs one task at a time: the second routes, then waits.
 task_on five "$INPLACE"

@@ -200,6 +200,19 @@ func TestClientErrorsNameTheFailedSubcommand(t *testing.T) {
 		}
 	})
 
+	t.Run("an answer with no panes list", func(t *testing.T) {
+		for _, answer := range []string{`{}`, `{"result":{}}`, `{"error":{"code":"x"}}`, `{"result":{"panes":null}}`} {
+			client := herdr.Client{Bin: writeHerdrStub(t, "printf '%s' '"+answer+"'")}
+			if panes, err := client.Panes(context.Background()); err == nil || !strings.Contains(err.Error(), "pane list") {
+				t.Fatalf("Panes() on %s = (%#v, %v), want an error naming pane list", answer, panes, err)
+			}
+		}
+		client := herdr.Client{Bin: writeHerdrStub(t, `printf '%s' '{"result":{"panes":[]}}'`)}
+		if panes, err := client.Panes(context.Background()); err != nil || len(panes) != 0 {
+			t.Fatalf("Panes() on an empty list = (%#v, %v), want no panes and no error", panes, err)
+		}
+	})
+
 	t.Run("stderr is capped", func(t *testing.T) {
 		bin := writeHerdrStub(t, "head -c 500 /dev/zero | tr '\\0' x >&2\nexit 1")
 		client := herdr.Client{Bin: bin}

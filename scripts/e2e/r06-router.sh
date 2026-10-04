@@ -74,7 +74,9 @@ wait_run 5 running
 [ "$(wc -l <"$STUB/router-calls.txt")" -eq "$CALLS" ] || fail "the router was called for a task whose fields were set"
 say "fields set: router not called ok"
 
-# No router: the state shows in daemon.json and in status, and the owner is told once.
+# No router: the state shows in daemon.json and in status, and the owner is told once. The count is taken once T5's
+# spawn has sent its start notification, its last step, so no spawn still in flight can add to it.
+wait_long 10 "T5's start notification" grep -F "desk: T5 started" "$E2E/herdr/notifications.log"
 run 0 on home desk set T5 review
 NOTIFIED=$(wc -l <"$E2E/herdr/notifications.log")
 RC_ROUTER=none

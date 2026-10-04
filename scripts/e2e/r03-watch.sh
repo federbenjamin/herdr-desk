@@ -31,6 +31,26 @@ start_task 5 busy
 wait_task 1 review
 task_has_note 1 "session ended without reporting" || fail "T1 has no 'session ended without reporting' note"
 wait_run 1 ended
+# Two polls, no more: the fake logs every call in the order it ran them, so the pane lists between T1's idle report
+# and the review the runner wrote are the polls it took.
+REVIEW_TS=$(on home desk show T1 --json | jq -r '[.history[] | select(.kind == "set" and .data.status == "review")][0].ts')
+POLLS=$(python3 - "$E2E/herdr/calls.log" "$(run_field 1 pane)" "$REVIEW_TS" <<'PY'
+import datetime, re, sys
+log, pane, review = sys.argv[1:4]
+m = re.match(r"(.*T\d\d:\d\d:\d\d)(\.\d+)?(Z|[+-]\d\d:\d\d)$", review)
+frac = (m.group(2) or ".0")[:7]
+cut = datetime.datetime.fromisoformat(m.group(1) + frac + m.group(3).replace("Z", "+00:00")).timestamp()
+seen, polls = False, 0
+for line in open(log):
+    ts, args = line.rstrip("\n").split("\t", 1)
+    if args.startswith("pane report-agent " + pane + " ") and "--state idle" in args:
+        seen, polls = True, 0
+    elif seen and args == "pane list" and float(ts) < cut:
+        polls += 1
+print(polls if seen else "no idle report")
+PY
+)
+[ "$POLLS" = 2 ] || fail "T1 went to review after $POLLS polls of its idle pane, not 2"
 say "idle two polls → review ok"
 say "session ended without reporting ok"
 
@@ -55,7 +75,7 @@ wait_file "$STUB/worker-run5.env"
 PANE=$(run_field 5 pane)
 SESSION=$(run_field 5 session)
 report() {
-  herdr pane report-agent "$PANE" --source desk-e2e --agent stub --state "$1" --agent-session-id "$SESSION" >/dev/null
+  herdr_do pane report-agent "$PANE" --source desk-e2e --agent stub --state "$1" --agent-session-id "$SESSION" >/dev/null
 }
 for _ in 1 2 3; do
   report idle

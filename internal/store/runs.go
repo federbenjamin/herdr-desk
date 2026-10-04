@@ -126,11 +126,15 @@ type RunUpdate struct {
 }
 
 // UpdateRun applies u to the run while its state is from, and reports whether it did. A State of ended,
-// failed, or killed also sets ended_ts.
+// failed, or killed also sets ended_ts. A State of running also sets started_ts, so a run's time is counted from
+// its spawn, not from the routing or waiting before it.
 func (s *Store) UpdateRun(ctx context.Context, id int64, from string, u RunUpdate) (bool, error) {
-	var ended any
+	var started, ended any
 	if slices.Contains([]string{model.RunEnded, model.RunFailed, model.RunKilled}, u.State) {
 		ended = formatTS(s.now())
+	}
+	if u.State == model.RunRunning {
+		started = formatTS(s.now())
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -143,9 +147,10 @@ func (s *Store) UpdateRun(ctx context.Context, id int64, from string, u RunUpdat
 		session = COALESCE(NULLIF(?, ''), session),
 		workspace = COALESCE(NULLIF(?, ''), workspace),
 		pane = COALESCE(NULLIF(?, ''), pane),
+		started_ts = COALESCE(?, started_ts),
 		ended_ts = COALESCE(?, ended_ts)
 		WHERE id = ? AND state = ?`,
-		u.State, u.Root, u.Isolation, u.Model, u.Reason, u.Session, u.Workspace, u.Pane, ended, id, from)
+		u.State, u.Root, u.Isolation, u.Model, u.Reason, u.Session, u.Workspace, u.Pane, started, ended, id, from)
 	if err != nil {
 		return false, err
 	}

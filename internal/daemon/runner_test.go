@@ -23,10 +23,10 @@ func TestStartWritesRunnerStateForItsConfiguration(t *testing.T) {
 	}{
 		{name: "disabled", want: "off"},
 		{
+			// The seal internal/testutil sets names a herdr that does not exist.
 			name: "herdr missing",
 			setup: func(t *testing.T, cfg *config.Config) {
 				cfg.Runner.Enabled = true
-				t.Setenv("PATH", t.TempDir())
 			},
 			want: "no-herdr",
 		},

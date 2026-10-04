@@ -30,9 +30,11 @@ type Route struct {
 
 // Roots returns the roots a task may run in: the config's roots in order, then the scratch root with isolation in-place.
 func Roots(c config.Config, p config.Paths) []config.Root {
-	roots := slices.Clone(c.Roots)
+	scratch := p.ScratchRoot()
+	// A configured root at the scratch path is dropped: the scratch root is listed once, last, in-place.
+	roots := slices.DeleteFunc(slices.Clone(c.Roots), func(r config.Root) bool { return samePath(r.Path, scratch) })
 	return append(roots, config.Root{
-		Path:      p.ScratchRoot(),
+		Path:      scratch,
 		About:     "desk's scratch folder: tasks with no project, or with a project under no other root",
 		Isolation: "in-place",
 	})
@@ -110,7 +112,7 @@ func ParseRoute(out []byte) (Route, error) {
 	if err := dec.Decode(&top); err != nil || top == nil {
 		return Route{}, errors.New("the answer is not a JSON object")
 	}
-	if _, err := dec.Token(); err == nil {
+	if len(bytes.TrimSpace(out[dec.InputOffset():])) > 0 {
 		return Route{}, errors.New("the answer holds more than one JSON value")
 	}
 	obj := out
@@ -195,13 +197,43 @@ func findRoot(roots []config.Root, path string) (config.Root, bool) {
 	if path == "" {
 		return config.Root{}, false
 	}
-	path = filepath.Clean(path)
 	for _, r := range roots {
-		if filepath.Clean(r.Path) == path {
+		if samePath(r.Path, path) {
 			return r, true
 		}
 	}
 	return config.Root{}, false
+}
+
+// samePath reports whether a and b name one folder, as written or once their symlinks are resolved.
+func samePath(a, b string) bool {
+	return filepath.Clean(a) == filepath.Clean(b) || resolved(a) == resolved(b)
+}
+
+// resolved is path with its symlinks resolved, or cleaned when it cannot be resolved.
+func resolved(path string) string {
+	if p, err := filepath.EvalSymlinks(path); err == nil {
+		return p
+	}
+	return filepath.Clean(path)
+}
+
+// listedProject returns project under the path of the most specific listed root that holds it, as the config
+// writes that path, so the router sees one folder by one path. A project under no root is returned as it is.
+func listedProject(project string, roots []config.Root) string {
+	if project == "" {
+		return project
+	}
+	in, best, out := resolved(project), -1, project
+	for _, r := range roots {
+		root := resolved(r.Path)
+		rest, ok := strings.CutPrefix(in, root)
+		if !ok || (rest != "" && !strings.HasPrefix(rest, string(filepath.Separator))) || len(root) <= best {
+			continue
+		}
+		best, out = len(root), filepath.Clean(r.Path)+rest
+	}
+	return out
 }
 
 // route decides where the run's task runs, through the router when Resolve says it is needed, and saves the route
@@ -240,7 +272,8 @@ func (r *Runner) route(ctx context.Context, t model.Task, run *model.Run) bool {
 	if _, err := r.o.Store.SetTask(ctx, actor, t.Number, model.Patch{
 		Root: &route.Root, Isolation: &route.Isolation, Model: &route.Model,
 	}); err != nil {
-		r.logErr("T%d: save the route on the task", t.Number, err)
+		r.fail(ctx, *run, model.RunRouting, routerTags, "router: could not save the route on the task: "+clip(err.Error()))
+		return false
 	}
 	if needed {
 		how := route.Isolation
@@ -270,6 +303,7 @@ func (r *Runner) callRouter(ctx context.Context, t model.Task, roots []config.Ro
 		schema = b
 	}
 	argv := config.Expand(r.o.Config.Agent.Router, map[string]string{"system": system, "schema": string(schema)})
+	t.Project = listedProject(t.Project, roots)
 	out, err := runChild(ctx, argv, RouterInput(t, roots, models), r.o.RouterTimeout, []string{"DESK_HOOKS=off"})
 	if err != nil {
 		return Route{}, err

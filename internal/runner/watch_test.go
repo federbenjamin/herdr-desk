@@ -1,128 +1,20 @@
 package runner_test
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/federbenjamin/desk/internal/config"
-	"github.com/federbenjamin/desk/internal/herdr/herdrtest"
 	"github.com/federbenjamin/desk/internal/model"
-	"github.com/federbenjamin/desk/internal/runner"
 	"github.com/federbenjamin/desk/internal/store"
-	"github.com/federbenjamin/desk/internal/testutil"
 )
 
-type watchFixture struct {
-	t     *testing.T
-	ctx   context.Context
-	paths config.Paths
-	store *store.Store
-	cfg   config.Config
-	herdr *herdrtest.Herdr
-	now   time.Time
-	logs  []string
-}
-
-func newWatchFixture(t *testing.T) *watchFixture {
-	t.Helper()
-	machine := testutil.NewMachine(t)
-	now := time.Date(2026, time.October, 4, 15, 0, 0, 0, time.Local)
-	st, err := store.Open(machine.Paths.DB(), store.Options{Now: func() time.Time { return now }})
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	f := &watchFixture{
-		t: t, ctx: context.Background(), paths: machine.Paths, store: st, herdr: herdrtest.NewHerdr(), now: now,
-	}
-	t.Cleanup(func() { _ = st.Close() })
-	f.cfg = config.Default()
-	f.cfg.Runner.Enabled = true
-	f.cfg.Runner.Cap = 3
-	f.cfg.Runner.MaxRunsPerDay = 20
-	f.cfg.Runner.MaxRunMinutes = 10
-	f.cfg.Roots = []config.Root{{Path: t.TempDir(), About: "watch root", Isolation: "in-place"}}
-	f.cfg.Agent.Models = []string{"model-a"}
-	f.cfg.Agent.Router = []string{f.routerScript()}
-	return f
-}
-
-func (f *watchFixture) routerScript() string {
-	f.t.Helper()
-	path := filepath.Join(f.t.TempDir(), "router")
-	text := fmt.Sprintf("#!/bin/sh\nprintf '%s\\n' '%s'\n", "%s", `{"root":"`+f.cfg.Roots[0].Path+`","isolation":"in-place","model":"model-a","reason":"test"}`)
-	if err := os.WriteFile(path, []byte(text), 0o700); err != nil {
-		f.t.Fatalf("write router: %v", err)
-	}
-	return path
-}
-
-func (f *watchFixture) runner() *runner.Runner {
-	return f.runnerWithHerdr(f.herdr)
-}
-
-func (f *watchFixture) runnerWithHerdr(h runner.Herdr) *runner.Runner {
-	f.t.Helper()
-	return runner.New(runner.Options{
-		Store: f.store, Config: f.cfg, Paths: f.paths, Herdr: h, Exe: "/opt/desk/bin/desk",
-		Now: func() time.Time { return f.now }, RouterTimeout: 100 * time.Millisecond, KillGrace: 10 * time.Millisecond,
-		Logf: func(format string, args ...any) { f.logs = append(f.logs, fmt.Sprintf(format, args...)) },
-	})
-}
-
-func (f *watchFixture) start() (model.Task, model.Run, *runner.Runner) {
-	f.t.Helper()
-	task, err := f.store.AddTask(f.ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{Title: "watch me", Thread: "agent"}})
-	if err != nil {
-		f.t.Fatalf("add task: %v", err)
-	}
-	ready := model.StatusReady
-	root, isolation, modelName := f.cfg.Roots[0].Path, "in-place", "model-a"
-	if _, err := f.store.SetTask(f.ctx, store.Actor{}, task.Number, model.Patch{Status: &ready, Root: &root, Isolation: &isolation, Model: &modelName}); err != nil {
-		f.t.Fatalf("arm task: %v", err)
-	}
-	r := f.runner()
-	r.Tick(f.ctx)
-	run := f.run(task.Number)
-	if run.State != model.RunRunning || run.Session == "" || run.Pane == "" {
-		f.t.Fatalf("started run = %#v, want running run with session and pane", run)
-	}
-	return task, run, r
-}
-
-func (f *watchFixture) run(task int) model.Run {
-	f.t.Helper()
-	runs, err := f.store.ListRuns(f.ctx)
-	if err != nil {
-		f.t.Fatalf("list runs: %v", err)
-	}
-	for _, run := range runs {
-		if run.Task == task {
-			return run
-		}
-	}
-	f.t.Fatalf("no run for T%d in %#v", task, runs)
-	return model.Run{}
-}
-
-func (f *watchFixture) task(number int) store.TaskDetail {
-	f.t.Helper()
-	detail, err := f.store.GetTask(f.ctx, number)
-	if err != nil {
-		f.t.Fatalf("get T%d: %v", number, err)
-	}
-	return detail
-}
-
 func TestTickBlocksAReportedBlockedSession(t *testing.T) {
-	f := newWatchFixture(t)
+	f := newFixture(t, "", "in-place")
 	task, run, r := f.start()
 	f.herdr.Set(run.Pane, run.Session, "blocked")
 
@@ -146,7 +38,7 @@ func TestTickReviewsDoneOrIdleSessionsOnlyAfterTwoConsecutiveTicks(t *testing.T)
 		{name: "idle after worker wrote", status: "idle", workerWrote: true, wantNote: "session went idle without handing back"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			f := newWatchFixture(t)
+			f := newFixture(t, "", "in-place")
 			task, run, r := f.start()
 			if tc.workerWrote {
 				if _, err := f.store.Note(f.ctx, store.Actor{Session: run.Session, Run: run.ID}, store.NoteInput{Task: task.Number, NoteData: model.NoteData{Text: "worker progress"}}); err != nil {
@@ -172,7 +64,7 @@ func TestTickReviewsDoneOrIdleSessionsOnlyAfterTwoConsecutiveTicks(t *testing.T)
 func TestTickResetsTheIdleCountWhenTheSessionWorksOrIsUnknown(t *testing.T) {
 	for _, reset := range []string{"working", "unknown"} {
 		t.Run(reset, func(t *testing.T) {
-			f := newWatchFixture(t)
+			f := newFixture(t, "", "in-place")
 			task, run, r := f.start()
 			f.herdr.Set(run.Pane, run.Session, "idle")
 			r.Tick(f.ctx)
@@ -192,7 +84,7 @@ func TestTickResetsTheIdleCountWhenTheSessionWorksOrIsUnknown(t *testing.T) {
 }
 
 func TestTickDoesNotCountIdleForAPaneWithoutTheRunSession(t *testing.T) {
-	f := newWatchFixture(t)
+	f := newFixture(t, "", "in-place")
 	task, run, r := f.start()
 	f.herdr.Set(run.Pane, "", "idle")
 	r.Tick(f.ctx)
@@ -203,20 +95,67 @@ func TestTickDoesNotCountIdleForAPaneWithoutTheRunSession(t *testing.T) {
 }
 
 func TestTickReviewsWhenThePaneClosesWithoutAHandBack(t *testing.T) {
-	f := newWatchFixture(t)
-	task, run, r := f.start()
-	f.herdr.Remove(run.Pane)
-	r.Tick(f.ctx)
-	detail := f.task(task.Number)
-	if detail.Task.Status != model.StatusReview || f.run(task.Number).State != model.RunEnded {
-		t.Fatalf("task = %#v; run = %#v, want review task and ended run", detail.Task, f.run(task.Number))
+	for _, tc := range []struct {
+		name        string
+		workerWrote bool
+		wantNote    string
+	}{
+		{name: "worker wrote", workerWrote: true, wantNote: "the pane closed without a hand-back"},
+		{name: "worker wrote nothing", wantNote: "the pane closed without a hand-back, before the worker wrote anything"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t, "", "in-place")
+			task, run, r := f.start()
+			if tc.workerWrote {
+				if _, err := f.store.Note(f.ctx, store.Actor{Session: run.Session, Run: run.ID}, store.NoteInput{Task: task.Number, NoteData: model.NoteData{Text: "worker progress"}}); err != nil {
+					t.Fatalf("write worker event: %v", err)
+				}
+			}
+			f.herdr.Remove(run.Pane)
+			r.Tick(f.ctx)
+			detail := f.task(task.Number)
+			if detail.Task.Status != model.StatusReview || f.run(task.Number).State != model.RunEnded {
+				t.Fatalf("task = %#v; run = %#v, want review task and ended run", detail.Task, f.run(task.Number))
+			}
+			watchAssertRunnerNote(t, detail.History, run.ID, tc.wantNote)
+			watchAssertRunnerStatus(t, detail.History, run.ID, model.StatusReview)
+		})
 	}
-	watchAssertRunnerNote(t, detail.History, run.ID, "the pane closed without a hand-back")
-	watchAssertRunnerStatus(t, detail.History, run.ID, model.StatusReview)
+}
+
+func TestTickTimesARunFromItsSpawnNotFromTheWaitBeforeIt(t *testing.T) {
+	f := newFixture(t, "", "in-place")
+	first, firstRun, r := f.start()
+	second := f.armRoute("waits for the root", f.root, "in-place")
+	r.Tick(f.ctx)
+	if got := f.run(second.Number).State; got != model.RunWaiting {
+		t.Fatalf("second run = %q, want waiting while the in-place root is busy", got)
+	}
+	f.now = f.now.Add(time.Duration(f.config.Runner.MaxRunMinutes+5) * time.Minute)
+	f.herdr.Set(firstRun.Pane, firstRun.Session, "working")
+	review := model.StatusReview
+	if _, err := f.store.SetTask(f.ctx, store.Actor{}, first.Number, model.Patch{Status: &review}); err != nil {
+		t.Fatalf("end the first run: %v", err)
+	}
+	r.Tick(f.ctx)
+	run := f.run(second.Number)
+	if run.State != model.RunRunning {
+		t.Fatalf("second run after the root freed = %#v, want running", run)
+	}
+	f.herdr.Set(run.Pane, run.Session, "working")
+	r.Tick(f.ctx)
+	if got := f.run(second.Number).State; got != model.RunRunning {
+		t.Fatalf("second run one tick after its spawn = %q, want running: its wait counted against max_run_minutes", got)
+	}
+	f.now = f.now.Add(time.Duration(f.config.Runner.MaxRunMinutes+1) * time.Minute)
+	r.Tick(f.ctx)
+	if got := f.run(second.Number).State; got != model.RunKilled {
+		t.Fatalf("second run past the limit after its spawn = %q, want killed", got)
+	}
 }
 
 func TestTickLeavesRunsAloneAfterPanesFailureAndRecoversOnTheNextTick(t *testing.T) {
-	f := newWatchFixture(t)
+	f := newFixture(t, "", "in-place")
 	task, run, r := f.start()
 	f.herdr.Set(run.Pane, run.Session, "blocked")
 	f.herdr.Fail("Panes", errors.New("list failed"))
@@ -232,7 +171,7 @@ func TestTickLeavesRunsAloneAfterPanesFailureAndRecoversOnTheNextTick(t *testing
 	if got := f.task(task.Number).History; !reflect.DeepEqual(got, before.History) {
 		t.Fatalf("history after Panes failure = %#v, want unchanged %#v", got, before.History)
 	}
-	if got := strings.Join(f.logs, "\n"); !strings.Contains(got, "list failed") {
+	if got := f.logged(); !strings.Contains(got, "list failed") {
 		t.Fatalf("watch logs = %q, want Panes failure", got)
 	}
 	f.herdr.Fail("Panes", nil)
@@ -243,14 +182,14 @@ func TestTickLeavesRunsAloneAfterPanesFailureAndRecoversOnTheNextTick(t *testing
 }
 
 func TestTickDoesNotListPanesWithoutALiveRunAndStillStartsAnArmedTask(t *testing.T) {
-	f := newWatchFixture(t)
+	f := newFixture(t, "", "in-place")
 	f.herdr.Fail("Panes", errors.New("must not be called"))
 	task, err := f.store.AddTask(f.ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{Title: "start without watch", Thread: "agent"}})
 	if err != nil {
 		t.Fatalf("add task: %v", err)
 	}
 	ready := model.StatusReady
-	root, isolation, modelName := f.cfg.Roots[0].Path, "in-place", "model-a"
+	root, isolation, modelName := f.config.Roots[0].Path, "in-place", "model-a"
 	if _, err := f.store.SetTask(f.ctx, store.Actor{}, task.Number, model.Patch{Status: &ready, Root: &root, Isolation: &isolation, Model: &modelName}); err != nil {
 		t.Fatalf("arm task: %v", err)
 	}
@@ -258,16 +197,16 @@ func TestTickDoesNotListPanesWithoutALiveRunAndStillStartsAnArmedTask(t *testing
 	if got := f.run(task.Number).State; got != model.RunRunning {
 		t.Fatalf("run after tick with no prior live runs = %q, want running", got)
 	}
-	if got := strings.Join(f.logs, "\n"); strings.Contains(got, "must not be called") {
+	if got := f.logged(); strings.Contains(got, "must not be called") {
 		t.Fatalf("watch called Panes without a live run: %q", got)
 	}
 }
 
 func TestTickWatchesLiveRunsWhenTheRunnerIsDisabled(t *testing.T) {
-	f := newWatchFixture(t)
+	f := newFixture(t, "", "in-place")
 	task, run, _ := f.start()
 	f.herdr.Set(run.Pane, run.Session, "done")
-	f.cfg.Runner.Enabled = false
+	f.config.Runner.Enabled = false
 	off := f.runner()
 	off.Tick(f.ctx)
 	off.Tick(f.ctx)
@@ -277,7 +216,7 @@ func TestTickWatchesLiveRunsWhenTheRunnerIsDisabled(t *testing.T) {
 }
 
 func TestTickDoesNothingAfterTheWorkerHandsTheTaskBack(t *testing.T) {
-	f := newWatchFixture(t)
+	f := newFixture(t, "", "in-place")
 	task, run, r := f.start()
 	review := model.StatusReview
 	if _, err := f.store.SetTask(f.ctx, store.Actor{Session: run.Session, Run: run.ID}, task.Number, model.Patch{Status: &review}); err != nil {
@@ -292,8 +231,8 @@ func TestTickDoesNothingAfterTheWorkerHandsTheTaskBack(t *testing.T) {
 }
 
 func TestTickStopsRunsPastTheConfiguredTimeLimit(t *testing.T) {
-	f := newWatchFixture(t)
-	f.cfg.Runner.MaxRunMinutes = 1
+	f := newFixture(t, "", "in-place")
+	f.config.Runner.MaxRunMinutes = 1
 	task, run, r := f.start()
 	f.herdr.Set(run.Pane, run.Session, "working")
 	f.now = f.now.Add(2 * time.Minute)
@@ -304,6 +243,46 @@ func TestTickStopsRunsPastTheConfiguredTimeLimit(t *testing.T) {
 	}
 	watchAssertRunnerNote(t, detail.History, run.ID, "stopped after 1 minutes (runner.max_run_minutes)")
 	watchAssertRunnerStatus(t, detail.History, run.ID, model.StatusBlocked)
+}
+
+func TestTickNamesWhatTheTimeLimitStopCouldNotDo(t *testing.T) {
+	f := newFixture(t, "", "in-place")
+	f.config.Runner.MaxRunMinutes = 1
+	task, run, r := f.start()
+	f.herdr.Set(run.Pane, run.Session, "working")
+	f.herdr.Fail("ClosePane", errors.New("close denied"))
+	f.now = f.now.Add(2 * time.Minute)
+	r.Tick(f.ctx)
+	detail := f.task(task.Number)
+	if detail.Task.Status != model.StatusBlocked || f.run(task.Number).State != model.RunKilled {
+		t.Fatalf("task = %#v; run = %#v, want the task blocked and the run killed", detail.Task, f.run(task.Number))
+	}
+	watchAssertRunnerNote(t, detail.History, run.ID, "stopped after 1 minutes (runner.max_run_minutes); pane "+run.Pane+" did not close")
+}
+
+func TestTickBlocksATaskLeftStartedByARunThatEnded(t *testing.T) {
+	f := newFixture(t, "", "in-place")
+	task, run, r := f.start()
+	// A hand-back that claimed the run and then failed to write the task's status leaves this pair.
+	if changed, err := f.store.UpdateRun(f.ctx, run.ID, model.RunRunning, store.RunUpdate{State: model.RunEnded}); err != nil || !changed {
+		t.Fatalf("end the run alone = (%t, %v)", changed, err)
+	}
+	r.Tick(f.ctx)
+	detail := f.task(task.Number)
+	if detail.Task.Status != model.StatusBlocked {
+		t.Fatalf("task = %q, want blocked: its run ended and nothing else would move it", detail.Task.Status)
+	}
+	watchAssertRunnerNote(t, detail.History, run.ID, fmt.Sprintf("run %d is ended, but its task was left started", run.ID))
+	watchAssertRunnerStatus(t, detail.History, run.ID, model.StatusBlocked)
+
+	started := model.StatusStarted
+	if _, err := f.store.SetTask(f.ctx, store.Actor{}, task.Number, model.Patch{Status: &started}); err != nil {
+		t.Fatalf("a person sets the task started: %v", err)
+	}
+	r.Tick(f.ctx)
+	if got := f.task(task.Number).Task.Status; got != model.StatusStarted {
+		t.Fatalf("task a person set started = %q, want it left started", got)
+	}
 }
 
 func watchAssertRunnerNote(t *testing.T, history []model.Event, run int64, want string) {

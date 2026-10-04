@@ -213,6 +213,9 @@ func (c Config) Validate() error {
 		}
 	}
 	for _, r := range c.Roots {
+		if !filepath.IsAbs(r.Path) {
+			return fmt.Errorf("roots: root path %q is not absolute", r.Path)
+		}
 		if !model.ValidIsolation(r.Isolation) {
 			return fmt.Errorf("roots %s: isolation must be self, worktree, or in-place, not %q", r.Path, r.Isolation)
 		}

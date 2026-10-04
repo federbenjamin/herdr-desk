@@ -15,133 +15,20 @@ import (
 	"github.com/federbenjamin/desk"
 	"github.com/federbenjamin/desk/internal/config"
 	"github.com/federbenjamin/desk/internal/herdr"
-	"github.com/federbenjamin/desk/internal/herdr/herdrtest"
 	"github.com/federbenjamin/desk/internal/model"
 	"github.com/federbenjamin/desk/internal/runner"
 	"github.com/federbenjamin/desk/internal/store"
-	"github.com/federbenjamin/desk/internal/testutil"
 )
-
-type fireFixture struct {
-	t       *testing.T
-	ctx     context.Context
-	paths   config.Paths
-	store   *store.Store
-	config  config.Config
-	herdr   *herdrtest.Herdr
-	now     time.Time
-	states  []string
-	logs    []string
-	router  string
-	root    string
-	timeout time.Duration
-}
-
-func newFireFixture(t *testing.T) *fireFixture {
-	t.Helper()
-	m := testutil.NewMachine(t)
-	f := &fireFixture{
-		t:       t,
-		ctx:     context.Background(),
-		paths:   m.Paths,
-		now:     time.Date(2026, time.October, 4, 15, 0, 0, 0, time.Local),
-		herdr:   herdrtest.NewHerdr(),
-		root:    t.TempDir(),
-		states:  []string{},
-		timeout: time.Second,
-	}
-	var err error
-	f.store, err = store.Open(f.paths.DB(), store.Options{Now: func() time.Time { return f.now }})
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	t.Cleanup(func() { _ = f.store.Close() })
-	f.config = config.Default()
-	f.config.Runner.Enabled = true
-	f.config.Runner.Cap = 3
-	f.config.Runner.MaxRunsPerDay = 20
-	f.config.Roots = []config.Root{{Path: f.root, About: "test root", Isolation: "self"}}
-	f.config.Agent.Models = []string{"model-a"}
-	f.router = f.writeRouter(`{"root":%q,"isolation":"self","model":"model-a","reason":"fits"}`)
-	f.config.Agent.Router = []string{f.router, "{system}", "{schema}"}
-	return f
-}
-
-func (f *fireFixture) writeRouter(format string) string {
-	f.t.Helper()
-	path := filepath.Join(f.t.TempDir(), "router")
-	answer := fmt.Sprintf(format, f.root)
-	text := "#!/bin/sh\n" +
-		"if [ -n \"$ROUTER_STDIN\" ]; then cat > \"$ROUTER_STDIN\"; fi\n" +
-		"if [ -n \"$ROUTER_ARGV\" ]; then printf '%s\\n' \"$@\" > \"$ROUTER_ARGV\"; fi\n" +
-		"if [ -n \"$ROUTER_HOOKS\" ]; then printf '%s' \"$DESK_HOOKS\" > \"$ROUTER_HOOKS\"; fi\n" +
-		"printf '%s\\n' '" + answer + "'\n"
-	if err := os.WriteFile(path, []byte(text), 0o700); err != nil {
-		f.t.Fatalf("write router: %v", err)
-	}
-	return path
-}
-
-func (f *fireFixture) runner() *runner.Runner {
-	f.t.Helper()
-	var h runner.Herdr
-	if f.herdr != nil {
-		h = f.herdr
-	}
-	return runner.New(runner.Options{
-		Store:         f.store,
-		Config:        f.config,
-		Paths:         f.paths,
-		Herdr:         h,
-		Exe:           "/opt/desk/bin/desk",
-		Now:           func() time.Time { return f.now },
-		RouterTimeout: f.timeout,
-		KillGrace:     10 * time.Millisecond,
-		OnState:       func(state string) { f.states = append(f.states, state) },
-		Logf:          func(format string, args ...any) { f.logs = append(f.logs, fmt.Sprintf(format, args...)) },
-	})
-}
-
-func (f *fireFixture) arm(title, thread string) model.Task {
-	f.t.Helper()
-	task, err := f.store.AddTask(f.ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{Title: title, Thread: thread}})
-	if err != nil {
-		f.t.Fatalf("add %q: %v", title, err)
-	}
-	ready := model.StatusReady
-	if _, err := f.store.SetTask(f.ctx, store.Actor{}, task.Number, model.Patch{Status: &ready}); err != nil {
-		f.t.Fatalf("arm T%d: %v", task.Number, err)
-	}
-	return task
-}
-
-func (f *fireFixture) runs() []model.Run {
-	f.t.Helper()
-	runs, err := f.store.ListRuns(f.ctx)
-	if err != nil {
-		f.t.Fatalf("list runs: %v", err)
-	}
-	return runs
-}
-
-func (f *fireFixture) task(number int) store.TaskDetail {
-	f.t.Helper()
-	task, err := f.store.GetTask(f.ctx, number)
-	if err != nil {
-		f.t.Fatalf("get T%d: %v", number, err)
-	}
-	return task
-}
 
 func fireString(s string) *string { return &s }
 
 func TestTickStartsArmedTasksInArmingOrderUpToTheCap(t *testing.T) {
-	f := newFireFixture(t)
+	f := newFixture(t, "", "self")
 	f.config.Runner.Cap = 3
-	first := f.arm("first", "agent")
-	second := f.arm("second", "agent")
-	third := f.arm("third", "agent")
-	fourth := f.arm("fourth", "agent")
+	first := f.armThread("first", "agent")
+	second := f.armThread("second", "agent")
+	third := f.armThread("third", "agent")
+	fourth := f.armThread("fourth", "agent")
 
 	f.runner().Tick(f.ctx)
 	runs := f.runs()
@@ -152,7 +39,7 @@ func TestTickStartsArmedTasksInArmingOrderUpToTheCap(t *testing.T) {
 		t.Fatalf("started task order = %v, want %v", got, want)
 	}
 	if got := f.herdr.Workspaces(); len(got) != 3 || got[0].Cwd != f.root || got[0].Command == "" {
-		t.Fatalf("workspaces = %#v, want one started workspace per run rooted at %q", got, f.root)
+		t.Fatalf("workspaces = %#v, want one started workspace per run rooted at %q; runs = %#v; log:\n%s", got, f.root, runs, f.logged())
 	}
 	if got := f.task(fourth.Number).Task.Status; got != model.StatusReady {
 		t.Fatalf("fourth task status = %q, want ready while cap is full", got)
@@ -168,12 +55,12 @@ func TestTickStartsArmedTasksInArmingOrderUpToTheCap(t *testing.T) {
 }
 
 func TestTickDoesNotStartTasksThatAreNotArmed(t *testing.T) {
-	f := newFireFixture(t)
+	f := newFixture(t, "", "self")
 	if _, err := f.store.AddTask(f.ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{Title: "open", Thread: "agent"}}); err != nil {
 		t.Fatal(err)
 	}
-	f.arm("other thread", "user")
-	archived := f.arm("archived", "agent")
+	f.armThread("other thread", "user")
+	archived := f.armThread("archived", "agent")
 	trueValue := true
 	if _, err := f.store.SetTask(f.ctx, store.Actor{}, archived.Number, model.Patch{Archived: &trueValue}); err != nil {
 		t.Fatalf("archive task: %v", err)
@@ -186,9 +73,9 @@ func TestTickDoesNotStartTasksThatAreNotArmed(t *testing.T) {
 }
 
 func TestTickCountsOnlyRunsStartedSinceLocalMidnight(t *testing.T) {
-	f := newFireFixture(t)
+	f := newFixture(t, "", "self")
 	f.config.Runner.MaxRunsPerDay = 1
-	yesterday := f.arm("yesterday", "agent")
+	yesterday := f.armThread("yesterday", "agent")
 	f.runner().Tick(f.ctx)
 	runs := f.runs()
 	if len(runs) != 1 {
@@ -198,7 +85,7 @@ func TestTickCountsOnlyRunsStartedSinceLocalMidnight(t *testing.T) {
 		t.Fatalf("end yesterday run = (%t, %v)", changed, err)
 	}
 	f.now = f.now.AddDate(0, 0, 1)
-	today := f.arm("today", "agent")
+	today := f.armThread("today", "agent")
 	f.runner().Tick(f.ctx)
 	runs = f.runs()
 	if len(runs) != 2 || runs[1].Task != today.Number || runs[0].Task != yesterday.Number {
@@ -207,14 +94,14 @@ func TestTickCountsOnlyRunsStartedSinceLocalMidnight(t *testing.T) {
 }
 
 func TestTickPassesPromptSchemaInputAndHooksToTheRouter(t *testing.T) {
-	f := newFireFixture(t)
+	f := newFixture(t, "", "self")
 	stdin := filepath.Join(t.TempDir(), "stdin")
 	argv := filepath.Join(t.TempDir(), "argv")
 	hooks := filepath.Join(t.TempDir(), "hooks")
 	t.Setenv("ROUTER_STDIN", stdin)
 	t.Setenv("ROUTER_ARGV", argv)
 	t.Setenv("ROUTER_HOOKS", hooks)
-	task := f.arm("route me", "agent")
+	task := f.armThread("route me", "agent")
 
 	f.runner().Tick(f.ctx)
 	input, err := os.ReadFile(stdin)
@@ -272,7 +159,7 @@ func TestTickPassesPromptSchemaInputAndHooksToTheRouter(t *testing.T) {
 }
 
 func TestTickUsesConfiguredRouterPromptAndSchemaFiles(t *testing.T) {
-	f := newFireFixture(t)
+	f := newFixture(t, "", "self")
 	systemFile := filepath.Join(t.TempDir(), "system.md")
 	schemaFile := filepath.Join(t.TempDir(), "schema.json")
 	if err := os.WriteFile(systemFile, []byte("custom system"), 0o600); err != nil {
@@ -284,7 +171,7 @@ func TestTickUsesConfiguredRouterPromptAndSchemaFiles(t *testing.T) {
 	argv := filepath.Join(t.TempDir(), "argv")
 	t.Setenv("ROUTER_ARGV", argv)
 	f.config.Router = config.RouterFiles{System: systemFile, Schema: schemaFile}
-	f.arm("custom prompt", "agent")
+	f.armThread("custom prompt", "agent")
 
 	f.runner().Tick(f.ctx)
 	arguments, err := os.ReadFile(argv)
@@ -310,7 +197,7 @@ func TestTickBlocksTheTaskWhenRoutingFails(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			f := newFireFixture(t)
+			f := newFixture(t, "", "self")
 			path := filepath.Join(t.TempDir(), "router")
 			if err := os.WriteFile(path, []byte(tc.router), 0o700); err != nil {
 				t.Fatal(err)
@@ -320,7 +207,7 @@ func TestTickBlocksTheTaskWhenRoutingFails(t *testing.T) {
 				f.config.Agent.Router = []string{path}
 				f.timeout = 100 * time.Millisecond
 			}
-			task := f.arm("bad route", "agent")
+			task := f.armThread("bad route", "agent")
 			f.runner().Tick(f.ctx)
 			run := f.runs()[0]
 			detail := f.task(task.Number)
@@ -332,10 +219,10 @@ func TestTickBlocksTheTaskWhenRoutingFails(t *testing.T) {
 }
 
 func TestTickBlocksTheTaskWhenItsOwnRouteIsInvalid(t *testing.T) {
-	f := newFireFixture(t)
+	f := newFixture(t, "", "self")
 	trace := filepath.Join(t.TempDir(), "router-trace")
 	t.Setenv("ROUTER_STDIN", trace)
-	task := f.arm("bad decided route", "agent")
+	task := f.armThread("bad decided route", "agent")
 	badRoot, isolation, selectedModel := "/not-listed", "self", "model-a"
 	if _, err := f.store.SetTask(f.ctx, store.Actor{}, task.Number, model.Patch{Root: &badRoot, Isolation: &isolation, Model: &selectedModel}); err != nil {
 		t.Fatalf("set bad root: %v", err)
@@ -352,10 +239,10 @@ func TestTickBlocksTheTaskWhenItsOwnRouteIsInvalid(t *testing.T) {
 }
 
 func TestTickSkipsRouterWhenTaskAlreadyDecidesEveryRouteField(t *testing.T) {
-	f := newFireFixture(t)
+	f := newFixture(t, "", "self")
 	trace := filepath.Join(t.TempDir(), "router-trace")
 	t.Setenv("ROUTER_STDIN", trace)
-	task := f.arm("already routed", "agent")
+	task := f.armThread("already routed", "agent")
 	if _, err := f.store.SetTask(f.ctx, store.Actor{}, task.Number, model.Patch{Root: fireString(f.root), Isolation: fireString("self"), Model: fireString("model-a")}); err != nil {
 		t.Fatalf("set route: %v", err)
 	}
@@ -369,10 +256,10 @@ func TestTickSkipsRouterWhenTaskAlreadyDecidesEveryRouteField(t *testing.T) {
 }
 
 func TestTickWaitsOnlyForConflictingInPlaceRoutes(t *testing.T) {
-	f := newFireFixture(t)
+	f := newFixture(t, "", "self")
 	f.config.Roots[0].Isolation = "in-place"
-	first := f.arm("first", "agent")
-	second := f.arm("second", "agent")
+	first := f.armThread("first", "agent")
+	second := f.armThread("second", "agent")
 	r := f.runner()
 	r.Tick(f.ctx)
 	runs := f.runs()
@@ -391,13 +278,13 @@ func TestTickWaitsOnlyForConflictingInPlaceRoutes(t *testing.T) {
 func TestTickDoesNotWaitForSelfOrWorktreeRoutes(t *testing.T) {
 	for _, isolation := range []string{"self", "worktree"} {
 		t.Run(isolation, func(t *testing.T) {
-			f := newFireFixture(t)
+			f := newFixture(t, "", "self")
 			f.config.Roots[0].Isolation = isolation
 			if isolation == "worktree" {
 				fireGitRoot(t, f.root)
 			}
-			f.arm("first", "agent")
-			f.arm("second", "agent")
+			f.armThread("first", "agent")
+			f.armThread("second", "agent")
 			f.runner().Tick(f.ctx)
 			runs := f.runs()
 			if len(runs) != 2 || runs[0].State != model.RunRunning || runs[1].State != model.RunRunning {
@@ -408,8 +295,8 @@ func TestTickDoesNotWaitForSelfOrWorktreeRoutes(t *testing.T) {
 }
 
 func TestTickFailsRoutingRunsLeftByADaemonRestart(t *testing.T) {
-	f := newFireFixture(t)
-	task := f.arm("interrupted route", "agent")
+	f := newFixture(t, "", "self")
+	task := f.armThread("interrupted route", "agent")
 	if _, err := f.store.StartRun(f.ctx, task.Number); err != nil {
 		t.Fatalf("start routing run: %v", err)
 	}
@@ -424,25 +311,25 @@ func TestTickFailsRoutingRunsLeftByADaemonRestart(t *testing.T) {
 func TestStateUsesTheDocumentedPrecedenceAndPreventsFiring(t *testing.T) {
 	cases := []struct {
 		name   string
-		adjust func(*fireFixture)
+		adjust func(*fixture)
 		want   string
 	}{
-		{"off wins", func(f *fireFixture) { f.config.Runner.Enabled = false }, runner.StateOff},
-		{"paused beats missing herdr", func(f *fireFixture) { f.config.Runner.Enabled = true; f.herdr = nil; firePauseFile(t, f.paths) }, runner.StatePaused},
-		{"no herdr beats no router", func(f *fireFixture) { f.herdr = nil; f.config.Agent.Router = nil; t.Setenv("PATH", t.TempDir()) }, runner.StateNoHerdr},
-		{"no router", func(f *fireFixture) { f.config.Agent.Router = []string{"not-an-executable"} }, runner.StateNoRouter},
-		{"on", func(f *fireFixture) {}, runner.StateOn},
+		{"off wins", func(f *fixture) { f.config.Runner.Enabled = false }, runner.StateOff},
+		{"paused beats missing herdr", func(f *fixture) { f.config.Runner.Enabled = true; f.herdr = nil; firePauseFile(t, f.paths) }, runner.StatePaused},
+		{"no herdr beats no router", func(f *fixture) { f.herdr = nil; f.config.Agent.Router = nil }, runner.StateNoHerdr},
+		{"no router", func(f *fixture) { f.config.Agent.Router = []string{"not-an-executable"} }, runner.StateNoRouter},
+		{"on", func(f *fixture) {}, runner.StateOn},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			f := newFireFixture(t)
+			f := newFixture(t, "", "self")
 			tc.adjust(f)
 			if tc.want == runner.StateNoHerdr {
 				if path, err := herdr.Find(); err == nil {
-					t.Fatalf("herdr found at %q with empty PATH and the seal", path)
+					t.Fatalf("herdr found at %q under the seal", path)
 				}
 			}
-			f.arm("not fired outside on", "agent")
+			f.armThread("not fired outside on", "agent")
 			r := f.runner()
 			if got := r.State(); got != tc.want {
 				t.Fatalf("State() = %q, want %q", got, tc.want)
@@ -456,7 +343,7 @@ func TestStateUsesTheDocumentedPrecedenceAndPreventsFiring(t *testing.T) {
 }
 
 func TestPausePersistsPrivateFileRefusesAgentsAndResumesTicking(t *testing.T) {
-	f := newFireFixture(t)
+	f := newFixture(t, "", "self")
 	r := f.runner()
 	if err := r.Pause(f.ctx, store.Actor{Session: "agent"}, true); err == nil || !strings.Contains(err.Error(), "not-allowed") {
 		t.Fatalf("agent Pause() error = %v, want not-allowed", err)
@@ -470,7 +357,7 @@ func TestPausePersistsPrivateFileRefusesAgentsAndResumesTicking(t *testing.T) {
 	if info, err := os.Stat(f.paths.RunnerPause()); err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("pause file mode = %v (%v), want 0600", info, err)
 	}
-	f.arm("wait while paused", "agent")
+	f.armThread("wait while paused", "agent")
 	r.Tick(f.ctx)
 	if len(f.runs()) != 0 {
 		t.Fatalf("runs while paused = %#v, want none", f.runs())
@@ -488,15 +375,15 @@ func TestPausePersistsPrivateFileRefusesAgentsAndResumesTicking(t *testing.T) {
 }
 
 func TestNotifyRunsForEachSpawnAndOnNoRouterStateTransition(t *testing.T) {
-	f := newFireFixture(t)
+	f := newFixture(t, "", "self")
 	notice := filepath.Join(t.TempDir(), "notice")
 	script := filepath.Join(t.TempDir(), "notify")
 	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '%s|%s\\n' \"$1\" \"$2\" >> "+fmt.Sprintf("%q", notice)+"\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	f.config.Notify.Command = []string{script, "{title}", "{body}"}
-	first := f.arm("first task", "agent")
-	second := f.arm("second task", "agent")
+	first := f.armThread("first task", "agent")
+	second := f.armThread("second task", "agent")
 	r := f.runner()
 	r.Tick(f.ctx)
 	got, err := os.ReadFile(notice)
@@ -529,9 +416,9 @@ func TestNotifyRunsForEachSpawnAndOnNoRouterStateTransition(t *testing.T) {
 }
 
 func TestNotifyFailureDoesNotPreventTheSpawn(t *testing.T) {
-	f := newFireFixture(t)
+	f := newFixture(t, "", "self")
 	f.config.Notify.Command = []string{filepath.Join(t.TempDir(), "missing-notify"), "{title}", "{body}"}
-	f.arm("still starts", "agent")
+	f.armThread("still starts", "agent")
 	f.runner().Tick(f.ctx)
 	if len(f.runs()) != 1 || f.runs()[0].State != model.RunRunning {
 		t.Fatalf("runs after notify failure = %#v, want started run", f.runs())
@@ -539,7 +426,7 @@ func TestNotifyFailureDoesNotPreventTheSpawn(t *testing.T) {
 }
 
 func TestOnStateReceivesInitialStateAndOnlyOrderedChanges(t *testing.T) {
-	f := newFireFixture(t)
+	f := newFixture(t, "", "self")
 	r := f.runner()
 	if got, want := f.states, []string{runner.StateOn}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("initial OnState calls = %v, want %v", got, want)
@@ -561,6 +448,114 @@ func TestOnStateReceivesInitialStateAndOnlyOrderedChanges(t *testing.T) {
 	r.Tick(f.ctx)
 	if got, want := f.states, []string{runner.StateOn, runner.StatePaused, runner.StateOn, runner.StateNoRouter}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("OnState calls = %v, want %v", got, want)
+	}
+}
+
+func TestPauseFileThatCannotBeReadKeepsTheRunnerPaused(t *testing.T) {
+	f := newFixture(t, "", "self")
+	firePauseFile(t, f.paths)
+	dir := filepath.Dir(f.paths.RunnerPause())
+	if err := os.Chmod(dir, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	if _, err := os.Stat(f.paths.RunnerPause()); err == nil || os.IsNotExist(err) {
+		t.Skipf("stat of a file in a mode 0 folder = %v, want a permission error (running as root?)", err)
+	}
+	f.armThread("not while the pause is unreadable", "agent")
+	r := f.runner()
+	if !r.Paused() || r.State() != runner.StatePaused {
+		t.Fatalf("paused = %t; state = %q, want paused when the pause file cannot be read", r.Paused(), r.State())
+	}
+	r.Tick(f.ctx)
+	if got := f.runs(); len(got) != 0 {
+		t.Fatalf("runs = %#v, want none while the pause file cannot be read", got)
+	}
+	if got := f.logged(); strings.Count(got, "pause file cannot be read") != 1 {
+		t.Fatalf("log = %q, want the unreadable pause file logged once", got)
+	}
+}
+
+func TestNoHerdrLogsWhyDeskHerdrCannotBeUsed(t *testing.T) {
+	f := newFixture(t, "", "self")
+	t.Setenv("DESK_HERDR", "herdr")
+	r := f.runnerWith(nil)
+	r.Tick(f.ctx)
+	if got := r.State(); got != runner.StateNoHerdr {
+		t.Fatalf("State() = %q, want no-herdr", got)
+	}
+	if got := f.logged(); strings.Count(got, `DESK_HERDR "herdr" is not an absolute path`) != 1 {
+		t.Fatalf("log = %q, want the DESK_HERDR reason logged once", got)
+	}
+}
+
+func TestTickBlocksTheTaskWhenItsRouteCannotBeSaved(t *testing.T) {
+	f := newFixture(t, "", "self")
+	if err := f.store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var err error
+	f.store, err = store.Open(f.paths.DB(), store.Options{
+		Now: func() time.Time { return f.now },
+		Scanner: func(_ context.Context, text string) (string, error) {
+			if strings.Contains(text, "model-a") {
+				return "test-pattern", nil
+			}
+			return "", nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	t.Cleanup(func() { _ = f.store.Close() })
+	task := f.armThread("route refused by the scanner", "agent")
+	f.runner().Tick(f.ctx)
+	run := f.run(task.Number)
+	detail := f.task(task.Number)
+	if run.State != model.RunFailed || detail.Task.Status != model.StatusBlocked || len(f.herdr.Workspaces()) != 0 || !fireHasRouterFailure(detail.History) {
+		t.Fatalf("run = %#v; task = %#v; workspaces = %#v, want a failed run, a blocked task with a router note, and no spawn", run, detail, f.herdr.Workspaces())
+	}
+}
+
+func TestTickMatchesARootAndAProjectWrittenThroughASymlink(t *testing.T) {
+	real, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	f := newFixture(t, link, "self")
+	stdin := filepath.Join(t.TempDir(), "stdin")
+	t.Setenv("ROUTER_STDIN", stdin)
+	project := filepath.Join(real, "sub")
+	routed, err := f.store.AddTask(f.ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{Title: "under the link", Thread: "agent", Project: project}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready := model.StatusReady
+	if _, err := f.store.SetTask(f.ctx, store.Actor{}, routed.Number, model.Patch{Status: &ready}); err != nil {
+		t.Fatal(err)
+	}
+	f.runner().Tick(f.ctx)
+	input, err := os.ReadFile(stdin)
+	if err != nil {
+		t.Fatalf("read router stdin: %v", err)
+	}
+	var got struct {
+		Task struct {
+			Project string `json:"project"`
+		} `json:"task"`
+	}
+	if err := json.Unmarshal(input, &got); err != nil || got.Task.Project != filepath.Join(link, "sub") {
+		t.Fatalf("router project = %q (%v), want %q: the root's own path", got.Task.Project, err, filepath.Join(link, "sub"))
+	}
+
+	byReal := f.armRoute("root written by its real path", real, "self")
+	f.runner().Tick(f.ctx)
+	if run := f.run(byReal.Number); run.State != model.RunRunning || run.Root != link {
+		t.Fatalf("run = %#v, want it running on the configured root %q", run, link)
 	}
 }
 

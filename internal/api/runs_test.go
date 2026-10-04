@@ -291,6 +291,10 @@ func TestClientPauseRunnerReturnsStatusAndStatusShowsThePause(t *testing.T) {
 func TestClientKillRunReturnsTheTaskTheRunnerKilled(t *testing.T) {
 	home := startRunnerHome(t)
 	ctx := context.Background()
+	// Paused, the daemon's own tick cannot start the task while this test starts its run from a second store.
+	if _, err := home.Client().PauseRunner(ctx, store.Actor{}, true); err != nil {
+		t.Fatalf("pause the runner: %v", err)
+	}
 	task, err := home.Client().AddTask(ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{
 		Title: "live run to kill", Status: model.StatusReady, Thread: "agent",
 	}})

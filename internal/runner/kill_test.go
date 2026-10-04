@@ -1,24 +1,28 @@
 package runner_test
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/federbenjamin/desk/internal/herdr"
+	"github.com/federbenjamin/desk/internal/herdr/herdrtest"
 	"github.com/federbenjamin/desk/internal/model"
 	"github.com/federbenjamin/desk/internal/runner"
 	"github.com/federbenjamin/desk/internal/store"
 )
 
 func TestKillStopsReportedPaneProcessesClosesThePaneAndBlocksTheTask(t *testing.T) {
-	f := newWatchFixture(t)
+	f := newFixture(t, "", "in-place")
 	task, run, r := f.start()
 	cmd, waited := killStartProcess(t, "sleep", "60")
 	extra, extraWaited := killStartProcess(t, "sleep", "60")
@@ -38,7 +42,7 @@ func TestKillStopsReportedPaneProcessesClosesThePaneAndBlocksTheTask(t *testing.
 }
 
 func TestKillEscalatesToKILLWhenAChildIgnoresTERM(t *testing.T) {
-	f := newWatchFixture(t)
+	f := newFixture(t, "", "in-place")
 	task, run, r := f.start()
 	ready := filepath.Join(t.TempDir(), "term-ignored")
 	cmd, waited := killStartProcess(t, "sh", "-c", `trap "" TERM; : > "$1"; while :; do sleep 60; done`, "--", ready)
@@ -55,7 +59,7 @@ func TestKillEscalatesToKILLWhenAChildIgnoresTERM(t *testing.T) {
 }
 
 func TestKillNeverSignalsTheRunnerOrProtectedPIDs(t *testing.T) {
-	f := newWatchFixture(t)
+	f := newFixture(t, "", "in-place")
 	task, run, r := f.start()
 	f.herdr.SetProcesses(run.Pane, herdr.Processes{Group: syscall.Getpgrp(), PIDs: []int{0, 1, os.Getpid()}})
 
@@ -68,7 +72,7 @@ func TestKillNeverSignalsTheRunnerOrProtectedPIDs(t *testing.T) {
 }
 
 func TestKillRefusesAgentActorsAndTasksWithoutLiveRuns(t *testing.T) {
-	f := newWatchFixture(t)
+	f := newFixture(t, "", "in-place")
 	task, run, r := f.start()
 	if _, err := r.Kill(f.ctx, store.Actor{Session: run.Session}, task.Number); err == nil || !strings.Contains(err.Error(), model.CodeNotAllowed) {
 		t.Fatalf("agent Kill error = %v, want not-allowed", err)
@@ -89,7 +93,7 @@ func TestKillRefusesAgentActorsAndTasksWithoutLiveRuns(t *testing.T) {
 func TestKillStopsRoutingAndWaitingRunsWithoutCallingHerdr(t *testing.T) {
 	for _, state := range []string{model.RunRouting, model.RunWaiting} {
 		t.Run(state, func(t *testing.T) {
-			f := newWatchFixture(t)
+			f := newFixture(t, "", "in-place")
 			task, run, r := f.start()
 			if changed, err := f.store.UpdateRun(f.ctx, run.ID, model.RunRunning, store.RunUpdate{State: state}); err != nil || !changed {
 				t.Fatalf("make %s run = (%t, %v)", state, changed, err)
@@ -109,7 +113,7 @@ func TestKillStopsRoutingAndWaitingRunsWithoutCallingHerdr(t *testing.T) {
 }
 
 func TestKillClosesAndBlocksWhenReadingPaneProcessesFails(t *testing.T) {
-	f := newWatchFixture(t)
+	f := newFixture(t, "", "in-place")
 	task, run, r := f.start()
 	f.herdr.Fail("Processes", errors.New("process list failed"))
 
@@ -120,38 +124,208 @@ func TestKillClosesAndBlocksWhenReadingPaneProcessesFails(t *testing.T) {
 	if got.Status != model.StatusBlocked || f.run(task.Number).State != model.RunKilled || !reflect.DeepEqual(f.herdr.Closed(), []string{run.Pane}) {
 		t.Fatalf("returned task = %#v; run = %#v; closed = %#v, want blocked killed task and closed pane", got, f.run(task.Number), f.herdr.Closed())
 	}
-	watchAssertRunnerNote(t, f.task(task.Number).History, run.ID, "")
+	watchAssertRunnerNote(t, f.task(task.Number).History, run.ID, fmt.Sprintf("run %d killed: pane %s closed; its processes could not be read", run.ID, run.Pane))
 	watchAssertRunnerStatus(t, f.task(task.Number).History, run.ID, model.StatusBlocked)
+}
+
+func TestKillReportsAPaneThatDidNotCloseAndTheWatchClosesItAgain(t *testing.T) {
+	f := newFixture(t, "", "in-place")
+	task, run, r := f.start()
+	f.herdr.Fail("ClosePane", errors.New("close denied"))
+
+	got, err := r.Kill(f.ctx, store.Actor{}, task.Number)
+	if err == nil || !strings.Contains(err.Error(), "pane "+run.Pane+" did not close") {
+		t.Fatalf("Kill with a pane that does not close: error = %v, want one naming the open pane", err)
+	}
+	if got.Status != model.StatusBlocked || f.run(task.Number).State != model.RunKilled {
+		t.Fatalf("returned task = %#v; run = %#v, want the task blocked and the run killed", got, f.run(task.Number))
+	}
+	watchAssertRunnerNote(t, f.task(task.Number).History, run.ID, fmt.Sprintf("run %d killed: pane %s did not close", run.ID, run.Pane))
+
+	r.Tick(f.ctx)
+	if got := f.herdr.Closed(); len(got) != 0 {
+		t.Fatalf("closed panes while close still fails = %#v, want none", got)
+	}
+	f.herdr.Fail("ClosePane", nil)
+	r.Tick(f.ctx)
+	r.Tick(f.ctx)
+	if got := f.herdr.Closed(); !reflect.DeepEqual(got, []string{run.Pane}) {
+		t.Fatalf("closed panes once close works = %#v, want the left pane closed once", got)
+	}
+}
+
+func TestKillCountsAPaneThatClosedWithItsProcessesAsClosed(t *testing.T) {
+	f := newFixture(t, "", "in-place")
+	h := &hookedHerdr{Herdr: f.herdr}
+	task, run, _ := f.start()
+	r := f.runnerWith(h)
+	// The killed worker was the pane's last process, so herdr dropped the pane before the close reached it.
+	h.before("ClosePane", func() { f.herdr.Remove(run.Pane) })
+
+	if _, err := r.Kill(f.ctx, store.Actor{}, task.Number); err != nil {
+		t.Fatalf("Kill of a pane that went away with its processes: %v", err)
+	}
+	watchAssertRunnerNote(t, f.task(task.Number).History, run.ID, fmt.Sprintf("run %d killed: pane %s closed", run.ID, run.Pane))
+}
+
+func TestKillReportsAProcessThatSurvivesTheKill(t *testing.T) {
+	f := newFixture(t, "", "in-place")
+	task, run, r := f.start()
+	// An exited child that is not reaped yet answers kill(pid, 0) like a live one, whatever it is sent.
+	zombie := exec.Command("true")
+	if err := zombie.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = zombie.Wait() })
+	f.herdr.SetProcesses(run.Pane, herdr.Processes{PIDs: []int{zombie.Process.Pid}})
+
+	_, err := r.Kill(f.ctx, store.Actor{}, task.Number)
+	want := fmt.Sprintf("pid %d survived the kill", zombie.Process.Pid)
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("Kill error = %v, want one holding %q", err, want)
+	}
+	watchAssertRunnerNote(t, f.task(task.Number).History, run.ID, fmt.Sprintf("run %d killed: pane %s closed; %s", run.ID, run.Pane, want))
+}
+
+func TestKillClaimsTheRunBeforeItTouchesThePane(t *testing.T) {
+	f := newFixture(t, "", "in-place")
+	h := &hookedHerdr{Herdr: f.herdr}
+	task, run, _ := f.start()
+	r := f.runnerWith(h)
+	cmd, _ := killStartProcess(t, "sleep", "60")
+	f.herdr.SetProcesses(run.Pane, herdr.Processes{Group: cmd.Process.Pid, PIDs: []int{cmd.Process.Pid}})
+	review := model.StatusReview
+	h.before("Panes", func() {
+		if _, err := f.store.SetTask(f.ctx, store.Actor{}, task.Number, model.Patch{Status: &review}); err != nil {
+			t.Errorf("hand back during the kill: %v", err)
+		}
+	})
+
+	if _, err := r.Kill(f.ctx, store.Actor{}, task.Number); err == nil || !strings.Contains(err.Error(), model.CodeNoRun) {
+		t.Fatalf("Kill that lost the run: error = %v, want no-run", err)
+	}
+	if got := f.herdr.Closed(); len(got) != 0 {
+		t.Fatalf("closed panes = %#v, want none: the kill lost the run to the hand-back", got)
+	}
+	if err := syscall.Kill(cmd.Process.Pid, 0); err != nil {
+		t.Fatalf("the pane's process after a lost kill: %v, want it alive", err)
+	}
+	if got := f.task(task.Number).Task.Status; got != model.StatusReview {
+		t.Fatalf("task = %q, want the person's review", got)
+	}
+}
+
+func TestKillFinishesItsWritesWhenItsContextEndsAfterTheClaim(t *testing.T) {
+	f := newFixture(t, "", "in-place")
+	h := &hookedHerdr{Herdr: f.herdr}
+	task, run, _ := f.start()
+	r := f.runnerWith(h)
+	ctx, cancel := context.WithCancel(f.ctx)
+	defer cancel()
+	h.before("ClosePane", cancel)
+
+	if _, err := r.Kill(ctx, store.Actor{}, task.Number); err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+	if got := f.task(task.Number).Task.Status; got != model.StatusBlocked || f.run(task.Number).State != model.RunKilled {
+		t.Fatalf("task = %q; run = %#v, want the task blocked once the run is killed", got, f.run(task.Number))
+	}
+	watchAssertRunnerStatus(t, f.task(task.Number).History, run.ID, model.StatusBlocked)
+}
+
+// hookedHerdr is the in-memory herdr with one-shot hooks before or after a method's call.
+type hookedHerdr struct {
+	*herdrtest.Herdr
+	mu    sync.Mutex
+	hooks map[string]func()
+}
+
+// before runs fn once, before the next call of method.
+func (h *hookedHerdr) before(method string, fn func()) { h.set("before "+method, fn) }
+
+// after runs fn once, after the next call of method.
+func (h *hookedHerdr) after(method string, fn func()) { h.set("after "+method, fn) }
+
+func (h *hookedHerdr) set(key string, fn func()) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.hooks == nil {
+		h.hooks = map[string]func(){}
+	}
+	h.hooks[key] = fn
+}
+
+func (h *hookedHerdr) fire(key string) {
+	h.mu.Lock()
+	fn := h.hooks[key]
+	delete(h.hooks, key)
+	h.mu.Unlock()
+	if fn != nil {
+		fn()
+	}
+}
+
+func (h *hookedHerdr) CreateWorkspace(ctx context.Context, cwd, label string, env []string) (herdr.Created, error) {
+	h.fire("before CreateWorkspace")
+	defer h.fire("after CreateWorkspace")
+	return h.Herdr.CreateWorkspace(ctx, cwd, label, env)
+}
+
+func (h *hookedHerdr) Run(ctx context.Context, pane, command string) error {
+	h.fire("before Run")
+	defer h.fire("after Run")
+	return h.Herdr.Run(ctx, pane, command)
+}
+
+func (h *hookedHerdr) Panes(ctx context.Context) ([]herdr.Pane, error) {
+	h.fire("before Panes")
+	defer h.fire("after Panes")
+	return h.Herdr.Panes(ctx)
+}
+
+func (h *hookedHerdr) Processes(ctx context.Context, pane string) (herdr.Processes, error) {
+	h.fire("before Processes")
+	defer h.fire("after Processes")
+	return h.Herdr.Processes(ctx, pane)
+}
+
+func (h *hookedHerdr) ClosePane(ctx context.Context, pane string) error {
+	h.fire("before ClosePane")
+	defer h.fire("after ClosePane")
+	return h.Herdr.ClosePane(ctx, pane)
 }
 
 func TestKillReturnsAnErrorAndWritesNothingWhenHerdrCannotBeAsked(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
-		runner func(*testing.T, *watchFixture) *runner.Runner
+		want   string
+		runner func(*testing.T, *fixture) *runner.Runner
 	}{
 		{
 			name: "Panes fails",
-			runner: func(_ *testing.T, f *watchFixture) *runner.Runner {
+			want: "pane list failed",
+			runner: func(_ *testing.T, f *fixture) *runner.Runner {
 				f.herdr.Fail("Panes", errors.New("pane list failed"))
 				return f.runner()
 			},
 		},
 		{
-			name: "herdr is absent from PATH",
-			runner: func(t *testing.T, f *watchFixture) *runner.Runner {
-				t.Setenv("PATH", t.TempDir())
-				return f.runnerWithHerdr(nil)
+			name: "DESK_HERDR names no usable herdr",
+			want: `DESK_HERDR "herdr" is not an absolute path`,
+			runner: func(t *testing.T, f *fixture) *runner.Runner {
+				t.Setenv("DESK_HERDR", "herdr")
+				return f.runnerWith(nil)
 			},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			f := newWatchFixture(t)
+			f := newFixture(t, "", "in-place")
 			task, run, _ := f.start()
 			before := f.task(task.Number)
 			r := tc.runner(t, f)
 
-			if _, err := r.Kill(f.ctx, store.Actor{}, task.Number); err == nil {
-				t.Fatal("Kill without reachable herdr error = nil, want error")
+			if _, err := r.Kill(f.ctx, store.Actor{}, task.Number); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Kill without reachable herdr error = %v, want an error holding %q", err, tc.want)
 			}
 			if got := f.run(task.Number); !reflect.DeepEqual(got, run) {
 				t.Fatalf("run after unreachable herdr = %#v, want unchanged %#v", got, run)

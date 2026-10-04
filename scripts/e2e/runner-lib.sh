@@ -14,13 +14,18 @@ mkdir -p "$E2E/work"
 # shellcheck disable=SC2034 # read by the scripts that source this file
 WORK=$(cd "$E2E/work" && pwd -P)
 
-# use_fake_herdr: point DESK_HERDR at scripts/e2e/fake-herdr.py, and put it first on PATH as `herdr` for the stub
-# worker's pane, with its state in $E2E/herdr. Call it before any daemon starts: the daemon and every pane inherit
-# DESK_HERDR, PATH and FAKE_HERDR_DIR. A shim named sh in front of the real
-# one records the command each fake pane is given, in $E2E/herdr/pane-commands.log.
+# use_fake_herdr: point DESK_HERDR at scripts/e2e/fake-herdr.py, with its state in $E2E/herdr. Call it before any
+# daemon starts: the daemon and every pane inherit DESK_HERDR, PATH and FAKE_HERDR_DIR. Every call names herdr through
+# DESK_HERDR; a bare `herdr` finds the guard in $E2E/fakebin, which fails, never a real herdr. A shim named sh in front
+# of the real one records the command each fake pane is given, in $E2E/herdr/pane-commands.log.
 use_fake_herdr() {
   mkdir -p "$E2E/fakebin" "$E2E/herdr"
-  ln -s "$RUNNER_DIR/fake-herdr.py" "$E2E/fakebin/herdr"
+  cat >"$E2E/fakebin/herdr" <<'GUARD'
+#!/bin/sh
+printf 'E2E FAIL: a bare herdr call (herdr %s); name it through DESK_HERDR\n' "$*" >&2
+exit 97
+GUARD
+  chmod +x "$E2E/fakebin/herdr"
   cat >"$E2E/fakebin/sh" <<'SH'
 #!/bin/bash
 if [ "${1-}" = "-c" ] && [ -n "${HERDR_PANE_ID-}" ] && [ -n "${FAKE_HERDR_DIR-}" ]; then
@@ -34,16 +39,19 @@ SH
   export PATH="$E2E/fakebin:$PATH"
 }
 
+# herdr_do <args...>: run herdr as DESK_HERDR names it: the fake under use_fake_herdr, `herdr` on PATH in r11 and r12.
+herdr_do() { "${DESK_HERDR:-herdr}" "$@"; }
+
 # need_real_herdr: refuse to run unless a real herdr is on PATH and its server answers.
 need_real_herdr() {
   command -v herdr >/dev/null 2>&1 || fail "no herdr"
-  herdr workspace list >/dev/null 2>&1 || fail "no herdr"
+  herdr_do workspace list >/dev/null 2>&1 || fail "no herdr"
   HERDR_REAL=1
 }
 
 # focused_workspace: the id of the workspace herdr has focused.
 focused_workspace() {
-  herdr workspace list | jq -r '[.result.workspaces[] | select(.focused)][0].workspace_id // ""'
+  herdr_do workspace list | jq -r '[.result.workspaces[] | select(.focused)][0].workspace_id // ""'
 }
 
 # track_workspaces: add the workspace of every run row to $E2E/workspaces.txt. Only a daemon that is up is asked.
@@ -58,13 +66,13 @@ close_tracked_workspaces() {
   local id
   [ -f "$E2E/workspaces.txt" ] || return 0
   while read -r id; do
-    herdr workspace close "$id" >/dev/null 2>&1 || true
+    herdr_do workspace close "$id" >/dev/null 2>&1 || true
   done < <(sort -u "$E2E/workspaces.txt")
 }
 
 # workspace_open <id>: herdr lists the workspace.
 workspace_open() {
-  herdr workspace list | jq -e --arg id "$1" '[.result.workspaces[].workspace_id] | index($id) != null' >/dev/null
+  herdr_do workspace list | jq -e --arg id "$1" '[.result.workspaces[].workspace_id] | index($id) != null' >/dev/null
 }
 
 workspace_closed() { ! workspace_open "$1"; }
@@ -81,8 +89,8 @@ runner_cleanup() {
   done
   if [ "$HERDR_REAL" = 0 ] && [ -f "$E2E/herdr/state.json" ]; then
     while read -r id; do
-      herdr pane close "$id" >/dev/null 2>&1 || true
-    done < <(herdr pane list 2>/dev/null | jq -r '.result.panes[].pane_id' 2>/dev/null)
+      herdr_do pane close "$id" >/dev/null 2>&1 || true
+    done < <(herdr_do pane list 2>/dev/null | jq -r '.result.panes[].pane_id' 2>/dev/null)
   fi
   if [ "$HERDR_REAL" = 1 ]; then close_tracked_workspaces; fi
   cleanup
@@ -108,7 +116,7 @@ runner_config() {
     router="router = [\"$RUNNER_DIR/stub-router.sh\", \"$STUB\", \"{system}\", \"{schema}\"]"
   fi
   if [ "${RC_NOTIFY-herdr}" != none ]; then
-    notify=$'[notify]\ncommand = ["herdr", "notification", "show", "{title}", "--body", "{body}"]'
+    notify="[notify]"$'\n'"command = [\"${DESK_HERDR:-herdr}\", \"notification\", \"show\", \"{title}\", \"--body\", \"{body}\"]"
   fi
   write_config "$m" <<TOML
 [runner]
@@ -186,18 +194,6 @@ task_notes() {
 }
 task_has_note() { task_notes "$1" | grep -F -- "$2" >/dev/null; }
 
-# wait_long <seconds> <what> <command...>: poll until the command succeeds, every 0.2 s.
-wait_long() {
-  local secs=$1 what=$2 end
-  shift 2
-  end=$((SECONDS + secs + 1))
-  while [ "$SECONDS" -lt "$end" ]; do
-    if "$@" >/dev/null 2>&1; then return 0; fi
-    sleep 0.2
-  done
-  fail "timed out after ${secs}s waiting for $what"
-}
-
 # wait_run <run id> <state> [seconds]: until the run is in that state (default 15 s).
 wait_run() { wait_long "${3-15}" "run $1 to be $2" run_is "$1" "$2"; }
 # wait_task <task number> <status> [seconds]: until the task has that status (default 15 s).
@@ -220,10 +216,10 @@ pids_dead() {
 }
 
 # pane_ids: the pane ids herdr lists.
-pane_ids() { herdr pane list | jq -r '.result.panes[].pane_id'; }
+pane_ids() { herdr_do pane list | jq -r '.result.panes[].pane_id'; }
 
 # pane_of_session <session>: the id of the pane herdr shows for that agent session; empty when it shows none.
 pane_of_session() {
-  herdr pane list | jq -r --arg s "$1" '[.result.panes[] | select(.agent_session.value? == $s)][0].pane_id // ""'
+  herdr_do pane list | jq -r --arg s "$1" '[.result.panes[] | select(.agent_session.value? == $s)][0].pane_id // ""'
 }
 pane_has_session() { [ -n "$(pane_of_session "$1")" ]; }

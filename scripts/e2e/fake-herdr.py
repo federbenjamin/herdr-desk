@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """A stand-in for herdr, for tests. Standard library only.
 
-State lives under $FAKE_HERDR_DIR: state.json, one <pane>.log per pane, and notifications.log.
+State lives under $FAKE_HERDR_DIR: state.json, one <pane>.log per pane, notifications.log, and calls.log, one
+line per call: the time it began and its arguments.
 FAKE_HERDR_FAIL=<subcommand words joined by ->, for example pane-run, makes that subcommand exit 1.
-Run it through a symlink or a copy named herdr.
+DESK_HERDR names it, by its absolute path.
 """
 import argparse
 import fcntl
@@ -12,6 +13,7 @@ import os
 import signal
 import subprocess
 import sys
+import time
 
 def fail(msg):
     print("fake-herdr: " + msg, file=sys.stderr)
@@ -267,6 +269,9 @@ def main(argv):
     d = state_dir()
     with open(os.path.join(d, "lock"), "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
+        # Each call, in the order the lock gives them, with the time it began: a script counts polls with it.
+        with open(os.path.join(d, "calls.log"), "a") as calls:
+            calls.write("%.6f\t%s\n" % (time.time(), " ".join(argv)))
         st = load(d)
         reap(st)
         HANDLERS[key](d, st, argv[2:])

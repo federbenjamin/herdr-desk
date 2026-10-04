@@ -92,6 +92,7 @@ func TestLoadMissingFileReturnsDefaultAndRejectsUnknownOrInvalidConfig(t *testin
 	for name, contents := range map[string]string{
 		"unknown key":   "[runner]\nunknown = true\n",
 		"invalid value": "[runner]\non_merged = \"later\"\n",
+		"relative root": "[[roots]]\npath = \".\"\nisolation = \"self\"\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "config.toml")
@@ -217,6 +218,7 @@ func TestValidateRefusesWildcardListenAndInvalidEnumValues(t *testing.T) {
 		{"IPv6 wildcard listen host", func(c *config.Config) { c.Home.Listen = "[::]:8080" }},
 		{"bad on merged value", func(c *config.Config) { c.Runner.OnMerged = "start" }},
 		{"bad root isolation", func(c *config.Config) { c.Roots = []config.Root{{Path: "/repo", Isolation: "container"}} }},
+		{"relative root path", func(c *config.Config) { c.Roots = []config.Root{{Path: "repo", Isolation: "self"}} }},
 		{"bad client home", func(c *config.Config) { c.Client.Home = "not-a-host-port" }},
 		{"bad port", func(c *config.Config) { c.Client.Home = "localhost:0" }},
 	} {

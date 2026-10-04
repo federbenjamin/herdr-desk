@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/federbenjamin/desk/internal/gitcmd"
+	"github.com/federbenjamin/desk/internal/herdr"
 	"github.com/federbenjamin/desk/internal/model"
 	"github.com/federbenjamin/desk/internal/store"
 )
@@ -43,28 +44,22 @@ func Slug(title string) string {
 // spawn starts the run's worker in a new herdr workspace. from is the run's state now (routing or waiting). It
 // reports whether the worker was started; a failure sets the run failed and the task blocked.
 func (r *Runner) spawn(ctx context.Context, h Herdr, t model.Task, run model.Run, from string) bool {
-	failSpawn := func(state string, reason string) bool {
-		r.fail(ctx, run, state, []string{model.TagRunner}, "spawn: "+clip(reason))
+	// failSpawn fails the run while it is in state; extra follows the clipped reason, so it is never cut.
+	failSpawn := func(state, reason, extra string) bool {
+		r.fail(ctx, run, state, []string{model.TagRunner}, "spawn: "+clip(reason)+extra)
 		return false
 	}
 	command, err := r.paneCommand()
 	if err != nil {
-		return failSpawn(from, err.Error())
+		return failSpawn(from, err.Error(), "")
 	}
 	dir, err := r.workdir(ctx, t, run)
 	if err != nil {
-		return failSpawn(from, err.Error())
+		return failSpawn(from, err.Error(), "")
 	}
 	session, err := newUUID()
 	if err != nil {
-		return failSpawn(from, err.Error())
-	}
-	ok, err := r.o.Store.UpdateRun(ctx, run.ID, from, store.RunUpdate{State: model.RunRunning, Session: session})
-	if err != nil {
-		r.logErr("T%d run %d: set running", t.Number, run.ID, err)
-	}
-	if err != nil || !ok {
-		return false
+		return failSpawn(from, err.Error(), "")
 	}
 	env := append([]string{
 		fmt.Sprintf("DESK_TASK=T%d", t.Number),
@@ -73,22 +68,42 @@ func (r *Runner) spawn(ctx context.Context, h Herdr, t model.Task, run model.Run
 	}, r.o.Paths.Env()...)
 	created, err := h.CreateWorkspace(ctx, dir, fmt.Sprintf("desk T%d", t.Number), env)
 	if err != nil {
-		return failSpawn(model.RunRunning, err.Error())
+		return failSpawn(from, err.Error(), "")
 	}
-	// Recorded before the command runs, so a kill that comes now finds the pane by its id.
-	if _, err := r.o.Store.UpdateRun(ctx, run.ID, model.RunRunning, store.RunUpdate{Workspace: created.Workspace, Pane: created.Pane}); err != nil {
-		r.logErr("T%d run %d: record the pane", t.Number, run.ID, err)
+	pane := herdr.Pane{ID: created.Pane, Workspace: created.Workspace}
+	// The run becomes running with its pane in one write, so a running run's pane is always known to a kill; a
+	// kill that took the run while the workspace was made leaves this claim unapplied.
+	ok, err := r.o.Store.UpdateRun(ctx, run.ID, from, store.RunUpdate{
+		State: model.RunRunning, Session: session, Workspace: created.Workspace, Pane: created.Pane,
+	})
+	if err != nil {
+		return failSpawn(from, "could not record the pane: "+err.Error(), r.closeSpawned(ctx, h, t, pane))
+	}
+	if !ok {
+		r.closeSpawned(ctx, h, t, pane)
+		return false
 	}
 	if err := h.Run(ctx, created.Pane, command); err != nil {
-		if cerr := h.ClosePane(ctx, created.Pane); cerr != nil {
-			r.logErr("T%d: close pane %s", t.Number, created.Pane, cerr)
-		}
-		return failSpawn(model.RunRunning, err.Error())
+		return failSpawn(model.RunRunning, err.Error(), r.closeSpawned(ctx, h, t, pane))
+	}
+	if cur, ok, err := r.o.Store.CurrentRun(ctx, t.Number); err == nil && (!ok || cur.ID != run.ID || cur.State != model.RunRunning) {
+		// A kill took the run while its command was typed: no worker stays, and nothing says it started.
+		r.closeSpawned(ctx, h, t, pane)
+		return false
 	}
 	r.note(ctx, store.Actor{Run: run.ID}, t.Number, []string{model.TagRunner},
 		fmt.Sprintf("run %d: workspace %s, pane %s", run.ID, created.Workspace, created.Pane))
 	r.notify(ctx, fmt.Sprintf("desk: T%d started", t.Number), t.Title)
 	return true
+}
+
+// closeSpawned closes a pane spawn opened and will not use. It returns "" when the pane closed, else the clause a
+// failure note ends with; the watch closes that pane again.
+func (r *Runner) closeSpawned(ctx context.Context, h Herdr, t model.Task, pane herdr.Pane) string {
+	if !r.close(ctx, h, t.Number, pane) {
+		return fmt.Sprintf("; pane %s was left open", pane.ID)
+	}
+	return ""
 }
 
 // paneCommand is the one text typed into a pane: exec of this desk binary's worker command.

@@ -34,6 +34,20 @@ func TestRootsKeepsConfiguredOrderThenAddsInPlaceScratch(t *testing.T) {
 	}
 }
 
+func TestRootsListsTheScratchRootOnceLastAndInPlace(t *testing.T) {
+	t.Parallel()
+
+	p := config.Paths{DataDir: "/desk-data"}
+	c := config.Config{Roots: []config.Root{
+		{Path: p.ScratchRoot() + "/", About: "scratch as a repo", Isolation: "worktree"},
+		{Path: "/repos/one", About: "one", Isolation: "self"},
+	}}
+	got := runner.Roots(c, p)
+	if len(got) != 2 || got[0] != c.Roots[1] || got[1].Path != p.ScratchRoot() || got[1].Isolation != "in-place" {
+		t.Fatalf("Roots() = %#v; want /repos/one, then the scratch root once with in-place isolation", got)
+	}
+}
+
 func TestSchemaConstrainsEveryRouteFieldAndRefusesExtraFields(t *testing.T) {
 	t.Parallel()
 
@@ -171,6 +185,9 @@ func TestParseRouteRefusesNonObjectOutput(t *testing.T) {
 	for _, out := range []string{
 		"not JSON",
 		`[{"root":"/repos/one"}]`,
+		`{"structured_output":{"root":"/repos/one","isolation":"worktree","model":"fast","reason":"r"}} diagnostic`,
+		`{"root":"/repos/one"} {"root":"/repos/two"}`,
+		`{"root":"/repos/one"} ]`,
 	} {
 		t.Run(out, func(t *testing.T) {
 			if _, err := runner.ParseRoute([]byte(out)); err == nil {

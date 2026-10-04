@@ -25,7 +25,7 @@ say "XDG variables in the pane ok"
 # The daemon restarts; the run goes on and is still watched: an idle pane hands the task back.
 restart_daemon
 run_is 1 running || fail "run 1 is $(run_field 1 state) after the restart"
-herdr pane report-agent "$(run_field 1 pane)" --source desk-e2e --agent stub --state idle \
+herdr_do pane report-agent "$(run_field 1 pane)" --source desk-e2e --agent stub --state idle \
   --agent-session-id "$(run_field 1 session)" >/dev/null
 wait_task 1 review 10
 run_is 1 ended || fail "run 1 is $(run_field 1 state)"

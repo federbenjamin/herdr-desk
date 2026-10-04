@@ -99,7 +99,7 @@ func (c *Client) Run(ctx context.Context, pane, command string) error {
 func (c *Client) Panes(ctx context.Context) ([]Pane, error) {
 	var res struct {
 		Result struct {
-			Panes []struct {
+			Panes *[]struct {
 				ID           string `json:"pane_id"`
 				Workspace    string `json:"workspace_id"`
 				Status       string `json:"agent_status"`
@@ -112,8 +112,12 @@ func (c *Client) Panes(ctx context.Context) ([]Pane, error) {
 	if err := c.json(ctx, "pane list", []string{"pane", "list"}, &res); err != nil {
 		return nil, err
 	}
-	panes := make([]Pane, 0, len(res.Result.Panes))
-	for _, p := range res.Result.Panes {
+	// An answer with no panes list is not "every pane is gone": the watch would hand back every live run.
+	if res.Result.Panes == nil {
+		return nil, errors.New("herdr pane list: the answer holds no panes list")
+	}
+	panes := make([]Pane, 0, len(*res.Result.Panes))
+	for _, p := range *res.Result.Panes {
 		pane := Pane{ID: p.ID, Workspace: p.Workspace, Status: p.Status}
 		if p.AgentSession != nil {
 			pane.Session = p.AgentSession.Value

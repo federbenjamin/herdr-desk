@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/federbenjamin/desk/internal/api"
 	"github.com/federbenjamin/desk/internal/model"
 )
 
@@ -21,18 +22,13 @@ func (a *app) runsCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		runs, err := c.ListRuns(a.ctx)
+		list := a.liveRuns
+		if all {
+			list = func(c *api.Client) ([]model.Run, error) { return c.ListRuns(a.ctx) }
+		}
+		runs, err := list(c)
 		if err != nil {
 			return err
-		}
-		if !all {
-			var live []model.Run
-			for _, r := range runs {
-				if model.RunLive(r.State) {
-					live = append(live, r)
-				}
-			}
-			runs = live
 		}
 		if asJSON {
 			if runs == nil {
@@ -143,18 +139,28 @@ func (a *app) sayRunner(state string, cap int) error {
 	if err != nil {
 		return err
 	}
-	runs, err := c.ListRuns(a.ctx)
+	live, err := a.liveRuns(c)
 	if err != nil {
 		return err
 	}
-	live := 0
+	a.say("runner %s · %d/%d live", state, len(live), cap)
+	return nil
+}
+
+// liveRuns returns the home's runs in a live state, by id: the one filter desk runs, desk runner, and desk worker
+// read runs through.
+func (a *app) liveRuns(c *api.Client) ([]model.Run, error) {
+	runs, err := c.ListRuns(a.ctx)
+	if err != nil {
+		return nil, err
+	}
+	live := []model.Run{}
 	for _, r := range runs {
 		if model.RunLive(r.State) {
-			live++
+			live = append(live, r)
 		}
 	}
-	a.say("runner %s · %d/%d live", state, live, cap)
-	return nil
+	return live, nil
 }
 
 func dash(s string) string {

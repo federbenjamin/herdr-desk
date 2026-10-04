@@ -69,7 +69,7 @@ func (a *app) workerCmd() *cobra.Command {
 
 // workerRun returns the run with this id when it is running on the task under the session; anything else is no-run.
 func (a *app) workerRun(c *api.Client, id int64, task int, session string) (model.Run, error) {
-	runs, err := c.ListRuns(a.ctx)
+	runs, err := a.liveRuns(c)
 	if err != nil {
 		return model.Run{}, err
 	}
@@ -87,7 +87,7 @@ func (a *app) workerRun(c *api.Client, id int64, task int, session string) (mode
 // workerBinary returns the path of the template's first word, or why there is none.
 func workerBinary(argv []string) (string, error) {
 	if len(argv) == 0 || argv[0] == "" {
-		return "", fmt.Errorf("worker: no [agent] worker template is set")
+		return "", fmt.Errorf("worker: cannot start: no [agent] worker template is set")
 	}
 	bin, err := exec.LookPath(argv[0])
 	if err != nil {

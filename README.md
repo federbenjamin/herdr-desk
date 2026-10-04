@@ -163,7 +163,7 @@ daemon answers, so a script can ask whether one runs.
 | `desk capture` | reads one line on stdin: words starting `#` set the thread, `@` the project, the rest is the title. On a terminal (the herdr popup) a refused line prints its error and asks again, so the pane does not close on it; an empty line or end of input exits 0. Off a terminal it takes one line and exits with the code of its refusal, as every command does |
 | `desk daemon [run]` · `stop` · `restart` · `status` | runs or controls the daemon. A second `run` prints `already running` and exits 0; on a client it prints that there is nothing to run and exits 0. `status` never starts a daemon and exits 1 when none answers; its JSON carries `backup_ts`, the last successful backup (`null` when none), `backup_error`, the error of a failed attempt since, so a failing nightly backup shows there, and `config_changed`, true when the config file now holds a different config from the one the daemon started with |
 | `desk runs [--all] [--json]` | one line per live run, oldest first: `run <id>  T<n>  <state>  <root>  <isolation>  <model>  <elapsed>` (`-` for a field not decided yet); `no live runs` when none. `--all` lists every run; `--json` prints the array |
-| `desk runs kill <task>` | kills the processes in the task's pane, closes the pane, ends the run `killed`, and blocks the task; prints `T<n> blocked`. `no-run` when the task has no live run; an agent gets `not-allowed` |
+| `desk runs kill <task>` | kills the processes in the task's pane, closes the pane, ends the run `killed`, and blocks the task; prints `T<n> blocked`. `no-run` when the task has no live run; an agent gets `not-allowed`. When the pane did not close or a process outlived the kill, the task is still blocked, the note on it says what is left, and the command exits 3; the runner closes that pane again on each poll |
 | `desk runner [status]` · `pause` · `resume` | prints `runner <state>`, and ` · <live>/<cap> live` when the state is `on` or `paused`. `pause` starts no new runs, live runs go on, and the pause survives a restart; an agent gets `not-allowed` |
 | `desk worker` | what the runner types in the pane: loads the run in `$DESK_RUN` and becomes the `[agent] worker` command. Exit 2 when `$DESK_RUN` or `$DESK_TASK` is unset or malformed, 1 `no-run` when the run is not running for that task and session, 3 when the worker cannot be started (the task is then blocked with a note) |
 | `desk token [show]` · `rotate` | prints or rotates the token |
@@ -242,7 +242,7 @@ the store is one SQLite file under `$XDG_DATA_HOME/desk`; the offline snapshot i
 
 The runner lives in the home's daemon: one runner per desk. Two machines that should each run their
 own tasks are two desks. Turn it on with `desk setup --runner on` (or `[runner] enabled = true`) and
-restart the daemon. The runner needs herdr: `DESK_HERDR` names the herdr binary when it is not on the daemon's PATH, and a set value is used as is.
+restart the daemon. The runner needs herdr: `DESK_HERDR` names the herdr binary when it is not on the daemon's PATH; a set value must be the absolute path of an executable file, else the runner is `no-herdr`, and PATH is then not searched.
 
 **Arming.** A task runs only when you arm it: status `ready` and thread `agent`, set by a person. An
 agent may add a task and set its thread to `agent` (a proposal), never `ready` or `done`, and may not
@@ -287,13 +287,15 @@ the first message. No task text ever reaches a shell. A note records the workspa
 
 **The watch.** Every poll, for each running run, the runner finds its pane in `herdr pane list` by
 the run's agent session. A worker `blocked` in herdr sets the task `blocked`; `done` or `idle` on two
-polls in a row sets it `review`; a pane that is gone sets it `review`; a run past
-`max_run_minutes` is killed like `desk runs kill` does and the task set `blocked`. Every write a
+polls in a row sets it `review`; a pane that is gone sets it `review`; a run running for more than
+`max_run_minutes`, counted from its spawn and not from a wait before it, is killed like `desk runs kill` does and
+the task set `blocked`. Every write a
 worker makes carries its run id, and a write from a run that is not the task's newest is refused
 with `stale-run`.
 
 **States.** `desk runner` and `desk daemon status` show one of `off` (`runner.enabled` is false),
-`paused`, `no-herdr` (no `herdr` on PATH), `no-router` (`[agent] router` is empty or its first word
+`paused` (also when the pause file cannot be read), `no-herdr` (`DESK_HERDR` is set and is not the absolute path
+of an executable file, or it is unset and no `herdr` is on PATH; the daemon log says which), `no-router` (`[agent] router` is empty or its first word
 is not an executable; notified once), and `on`. Only starting runs is gated by the state; the watch
 runs in every state but `no-herdr`, so a run that was live when the runner was switched off is still
 handed back. `desk runner pause` and `resume` are a person's acts; so is `desk runs kill`.

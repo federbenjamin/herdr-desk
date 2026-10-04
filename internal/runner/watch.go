@@ -10,7 +10,7 @@ import (
 )
 
 // watch looks at the pane of every running run once and hands the task back when its worker stopped, asked, or
-// ran past runner.max_run_minutes.
+// ran past runner.max_run_minutes. It also closes again each pane the runner failed to close.
 func (r *Runner) watch(ctx context.Context, h Herdr) {
 	live, err := r.o.Store.LiveRuns(ctx)
 	if err != nil {
@@ -30,7 +30,8 @@ func (r *Runner) watch(ctx context.Context, h Herdr) {
 			delete(r.idle, id)
 		}
 	}
-	if len(running) == 0 {
+	left := r.leftOpen()
+	if len(running) == 0 && len(left) == 0 {
 		return
 	}
 	panes, err := h.Panes(ctx)
@@ -38,8 +39,10 @@ func (r *Runner) watch(ctx context.Context, h Herdr) {
 		r.logErr("list herdr panes", err)
 		return
 	}
+	r.closeAgain(ctx, h, panes, left)
 	limit := time.Duration(r.o.Config.Runner.MaxRunMinutes) * time.Minute
 	tags := []string{model.TagRunner}
+	toReview := flip{from: model.RunRunning, to: model.RunEnded, status: model.StatusReview, tags: tags}
 	for _, run := range running {
 		if r.o.Now().Sub(run.StartedTS) > limit {
 			r.stop(ctx, h, run, panes, fmt.Sprintf("stopped after %d minutes (runner.max_run_minutes)", r.o.Config.Runner.MaxRunMinutes))
@@ -48,29 +51,51 @@ func (r *Runner) watch(ctx context.Context, h Herdr) {
 		pane, bySession := findPane(panes, run)
 		switch {
 		case pane == nil:
-			r.handBack(ctx, run, model.RunRunning, model.RunEnded, model.StatusReview, tags, "the pane closed without a hand-back")
+			toReview.note = "the pane closed without a hand-back"
+			if !r.wrote(ctx, run) {
+				toReview.note += ", before the worker wrote anything"
+			}
+			r.handBack(ctx, run, toReview)
 		case !bySession:
 			// The pane has not started its agent yet; only the time limit stops it.
 		case pane.Status == "blocked":
-			r.handBack(ctx, run, model.RunRunning, model.RunEnded, model.StatusBlocked, tags,
-				fmt.Sprintf("the worker is blocked waiting for an answer in pane %s", pane.ID))
+			r.handBack(ctx, run, flip{from: model.RunRunning, to: model.RunEnded, status: model.StatusBlocked, tags: tags,
+				note: fmt.Sprintf("the worker is blocked waiting for an answer in pane %s", pane.ID)})
 		case pane.Status == "done" || pane.Status == "idle":
 			r.idle[run.ID]++
 			if r.idle[run.ID] < 2 {
 				continue
 			}
-			msg := "session went idle without handing back"
-			wrote, err := r.o.Store.RunWrote(ctx, run.ID)
-			if err != nil {
-				r.logErr("T%d run %d: read what the worker wrote", run.Task, run.ID, err)
+			toReview.note = "session went idle without handing back"
+			if !r.wrote(ctx, run) {
+				toReview.note = "session ended without reporting"
 			}
-			if err == nil && !wrote {
-				msg = "session ended without reporting"
-			}
-			r.handBack(ctx, run, model.RunRunning, model.RunEnded, model.StatusReview, tags, msg)
+			r.handBack(ctx, run, toReview)
 		default:
 			delete(r.idle, run.ID)
 		}
+	}
+}
+
+// wrote reports whether the run's worker wrote anything; a store error reads as true, the note that claims less.
+func (r *Runner) wrote(ctx context.Context, run model.Run) bool {
+	wrote, err := r.o.Store.RunWrote(ctx, run.ID)
+	if err != nil {
+		r.logErr("T%d run %d: read what the worker wrote", run.Task, run.ID, err)
+		return true
+	}
+	return wrote
+}
+
+// closeAgain closes each pane left open that herdr still lists, and forgets the ones it no longer lists.
+func (r *Runner) closeAgain(ctx context.Context, h Herdr, panes []herdr.Pane, left []openPane) {
+	for _, o := range left {
+		if !listed(panes, o.pane) {
+			r.forgetOpen(o.pane.ID)
+			continue
+		}
+		k := r.closePane(ctx, h, o.task, o.pane)
+		r.o.Logf("desk runner: T%d: closing pane %s again: %s", o.task, o.pane.ID, k)
 	}
 }
 

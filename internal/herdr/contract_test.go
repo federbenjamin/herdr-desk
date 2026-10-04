@@ -6,30 +6,23 @@ import (
 
 	"github.com/federbenjamin/desk/internal/herdr"
 	"github.com/federbenjamin/desk/internal/herdr/herdrtest"
+	"github.com/federbenjamin/desk/internal/runner"
 )
-
-type herdrContract interface {
-	CreateWorkspace(context.Context, string, string, []string) (herdr.Created, error)
-	Run(context.Context, string, string) error
-	Panes(context.Context) ([]herdr.Pane, error)
-	Processes(context.Context, string) (herdr.Processes, error)
-	ClosePane(context.Context, string) error
-}
 
 func TestHerdrImplementationsSharePaneContract(t *testing.T) {
 	implementations := []struct {
 		name string
-		new  func(*testing.T) herdrContract
+		new  func(*testing.T) runner.Herdr
 	}{
 		{
 			name: "memory",
-			new: func(t *testing.T) herdrContract {
+			new: func(t *testing.T) runner.Herdr {
 				return herdrtest.NewHerdr()
 			},
 		},
 		{
 			name: "fake command",
-			new: func(t *testing.T) herdrContract {
+			new: func(t *testing.T) runner.Herdr {
 				client := newFakeClient(t)
 				return &client
 			},
@@ -37,11 +30,11 @@ func TestHerdrImplementationsSharePaneContract(t *testing.T) {
 	}
 	cases := []struct {
 		name  string
-		check func(*testing.T, herdrContract)
+		check func(*testing.T, runner.Herdr)
 	}{
 		{
 			name: "new pane is unknown without a session",
-			check: func(t *testing.T, h herdrContract) {
+			check: func(t *testing.T, h runner.Herdr) {
 				created := contractWorkspace(t, h)
 				panes, err := h.Panes(context.Background())
 				if err != nil {
@@ -55,7 +48,7 @@ func TestHerdrImplementationsSharePaneContract(t *testing.T) {
 		},
 		{
 			name: "closing a pane removes it",
-			check: func(t *testing.T, h herdrContract) {
+			check: func(t *testing.T, h runner.Herdr) {
 				created := contractWorkspace(t, h)
 				if err := h.ClosePane(context.Background(), created.Pane); err != nil {
 					t.Fatalf("ClosePane() error = %v", err)
@@ -71,7 +64,7 @@ func TestHerdrImplementationsSharePaneContract(t *testing.T) {
 		},
 		{
 			name: "running an unknown pane is refused",
-			check: func(t *testing.T, h herdrContract) {
+			check: func(t *testing.T, h runner.Herdr) {
 				if err := h.Run(context.Background(), "unknown", "exit 0"); err == nil {
 					t.Fatal("Run(unknown pane) error = nil, want an error")
 				}
@@ -79,7 +72,7 @@ func TestHerdrImplementationsSharePaneContract(t *testing.T) {
 		},
 		{
 			name: "reading processes from an unknown pane is refused",
-			check: func(t *testing.T, h herdrContract) {
+			check: func(t *testing.T, h runner.Herdr) {
 				if _, err := h.Processes(context.Background(), "unknown"); err == nil {
 					t.Fatal("Processes(unknown pane) error = nil, want an error")
 				}
@@ -87,7 +80,7 @@ func TestHerdrImplementationsSharePaneContract(t *testing.T) {
 		},
 		{
 			name: "closing an unknown pane is refused",
-			check: func(t *testing.T, h herdrContract) {
+			check: func(t *testing.T, h runner.Herdr) {
 				if err := h.ClosePane(context.Background(), "unknown"); err == nil {
 					t.Fatal("ClosePane(unknown pane) error = nil, want an error")
 				}
@@ -104,7 +97,7 @@ func TestHerdrImplementationsSharePaneContract(t *testing.T) {
 	}
 }
 
-func contractWorkspace(t *testing.T, h herdrContract) herdr.Created {
+func contractWorkspace(t *testing.T, h runner.Herdr) herdr.Created {
 	t.Helper()
 	created, err := h.CreateWorkspace(context.Background(), t.TempDir(), "contract workspace", nil)
 	if err != nil {
@@ -113,5 +106,5 @@ func contractWorkspace(t *testing.T, h herdrContract) herdr.Created {
 	return created
 }
 
-var _ herdrContract = (*herdr.Client)(nil)
-var _ herdrContract = (*herdrtest.Herdr)(nil)
+var _ runner.Herdr = (*herdr.Client)(nil)
+var _ runner.Herdr = (*herdrtest.Herdr)(nil)
