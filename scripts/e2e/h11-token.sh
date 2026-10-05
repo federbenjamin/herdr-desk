@@ -7,9 +7,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 build
 PORT=$(free_port)
 home_with_listen home "$PORT"
-TOKEN=$(on home desk token show)
+TOKEN=$(on home herdr-desk token show)
 [ "${#TOKEN}" = 64 ] || fail "the token is ${#TOKEN} characters, want 64"
-[ "$(mode "$E2E/home/config/desk/token")" = 600 ] || fail "the token file's mode is $(mode "$E2E/home/config/desk/token")"
+[ "$(mode "$E2E/home/config/herdr-desk/token")" = 600 ] || fail "the token file's mode is $(mode "$E2E/home/config/herdr-desk/token")"
 
 # code <method> [token]: the HTTP status of one call.
 code() {
@@ -39,18 +39,18 @@ fi
 say "backup.run not served on tcp (HTTP $got)"
 
 make_client cli home "$PORT"
-NEW=$(on home desk token rotate)
+NEW=$(on home herdr-desk token rotate)
 [ "$NEW" != "$TOKEN" ] || fail "rotate returned the same token"
 expect "old token 401 after rotate" 401 "$(code status "$TOKEN")"
 expect "new token 200 after rotate" 200 "$(code status "$NEW")"
 
-run 3 on cli desk list
+run 3 on cli herdr-desk list
 err_has "bad-token"
-run 0 as_agent cli s-h11 desk note "written while the token is refused"
+run 0 as_agent cli s-h11 herdr-desk note "written while the token is refused"
 [ "$OUT" = queued ] || fail "a note with a refused token printed '$OUT', want queued"
 err_has "refused the token"
-run_in 0 "$NEW" on cli desk client add "127.0.0.1:$PORT"
-run 0 on cli desk session s-h11
+run_in 0 "$NEW" on cli herdr-desk client add "127.0.0.1:$PORT"
+run 0 on cli herdr-desk session s-h11
 out_has "written while the token is refused"
 say "refused token queued ok"
 
@@ -59,7 +59,7 @@ big=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:$PORT/v1/
   -H 'Content-Type: application/json' -H "Authorization: Bearer $NEW" --data-binary "@$E2E/big.txt")
 expect "oversized body 413" 413 "$big"
 
-run 2 on wild desk setup --no-herdr --listen "0.0.0.0:$PORT"
-[ ! -e "$E2E/wild/config/desk/config.toml" ] || fail "a refused setup wrote a config"
+run 2 on wild herdr-desk setup --no-herdr --listen "0.0.0.0:$PORT"
+[ ! -e "$E2E/wild/config/herdr-desk/config.toml" ] || fail "a refused setup wrote a config"
 say "wildcard listen refused"
 pass

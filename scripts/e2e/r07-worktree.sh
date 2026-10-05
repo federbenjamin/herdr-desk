@@ -15,9 +15,9 @@ add_root "$PLAIN" worktree "not a git repository"
 RC_CAP=2
 runner_up home
 
-run 0 on home desk add -t "Fix the login page" --desk --thread agent
-run 0 on home desk set T1 --root "$APP" --model sonnet
-run 0 on home desk set T1 ready
+run 0 on home herdr-desk add -t "Fix the login page" --desk --thread agent
+run 0 on home herdr-desk set T1 --root "$APP" --model sonnet
+run 0 on home herdr-desk set T1 ready
 wait_run 1 running
 wait_file "$STUB/worker-run1.env"
 TREE="$WORK/login-app-T1"
@@ -32,9 +32,9 @@ say "branch $BRANCH ok"
 say "worker cwd is the worktree ok"
 
 # End the run and arm the task again: the worktree and the branch are used as they are.
-run 0 on home desk set T1 review
+run 0 on home herdr-desk set T1 review
 run_is 1 ended || fail "run 1 is $(run_field 1 state)"
-run 0 on home desk set T1 ready
+run 0 on home herdr-desk set T1 ready
 wait_run 2 running
 wait_file "$STUB/worker-run2.env"
 [ "$(env_value "$STUB/worker-run2.env" PWD)" = "$TREE" ] || fail "run 2's cwd is $(env_value "$STUB/worker-run2.env" PWD)"
@@ -43,9 +43,9 @@ wait_file "$STUB/worker-run2.env"
 say "re-arm reused the worktree ok"
 
 # A worktree root that is not a git repository cannot be cut from.
-run 0 on home desk add -t "Nowhere to cut" --desk --thread agent
-run 0 on home desk set T2 --root "$PLAIN" --model sonnet
-run 0 on home desk set T2 ready
+run 0 on home herdr-desk add -t "Nowhere to cut" --desk --thread agent
+run 0 on home herdr-desk set T2 --root "$PLAIN" --model sonnet
+run 0 on home herdr-desk set T2 ready
 wait_task 2 blocked
 task_has_note 2 "spawn: " || fail "T2 has no 'spawn: ' note: $(task_notes 2)"
 run_is 3 failed || fail "run 3 is $(run_field 3 state)"

@@ -6,7 +6,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/federbenjamin/desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/model"
 )
 
 // NoteInput is a note event's payload plus the event's task and tags.

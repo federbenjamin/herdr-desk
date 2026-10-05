@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/federbenjamin/desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/model"
 )
 
 // AddTaskInput is a task event's payload plus the event's tags.

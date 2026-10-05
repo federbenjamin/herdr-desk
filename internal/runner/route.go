@@ -12,10 +12,10 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/federbenjamin/desk"
-	"github.com/federbenjamin/desk/internal/config"
-	"github.com/federbenjamin/desk/internal/model"
-	"github.com/federbenjamin/desk/internal/store"
+	"github.com/federbenjamin/herdr-desk"
+	"github.com/federbenjamin/herdr-desk/internal/config"
+	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/store"
 )
 
 const maxReason = 500
@@ -35,7 +35,7 @@ func Roots(c config.Config, p config.Paths) []config.Root {
 	roots := slices.DeleteFunc(slices.Clone(c.Roots), func(r config.Root) bool { return samePath(r.Path, scratch) })
 	return append(roots, config.Root{
 		Path:      scratch,
-		About:     "desk's scratch folder: tasks with no project, or with a project under no other root",
+		About:     "herdr-desk's scratch folder: tasks with no project, or with a project under no other root",
 		Isolation: "in-place",
 	})
 }
@@ -296,7 +296,7 @@ func (r *Runner) callRouter(ctx context.Context, t model.Task, roots []config.Ro
 	system := r.o.Config.Router.System
 	if system == "" {
 		system = r.o.Paths.RouterSystemFile()
-		if err := config.WriteFileAtomic(system, []byte(desk.RouterSystem())); err != nil {
+		if err := config.WriteFileAtomic(system, []byte(herdrdesk.RouterSystem())); err != nil {
 			return Route{}, fmt.Errorf("write the system prompt: %w", err)
 		}
 	}

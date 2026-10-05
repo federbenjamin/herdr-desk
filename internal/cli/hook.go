@@ -6,9 +6,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/federbenjamin/desk/internal/api"
-	"github.com/federbenjamin/desk/internal/model"
-	"github.com/federbenjamin/desk/internal/store"
+	"github.com/federbenjamin/herdr-desk/internal/api"
+	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/store"
 )
 
 // hookInput is the part of Claude Code's SessionStart JSON the hook reads.
@@ -53,7 +53,7 @@ func (a *app) hookCmd() *cobra.Command {
 		}
 		data, err := c.SessionView(a.ctx, in.SessionID)
 		if r, ok := model.AsRefusal(err); ok && (r.Code == model.CodeHomeUnreachable || r.Code == model.CodeBadToken) {
-			a.say("desk: this session's journal is not loaded: %s", r.Msg)
+			a.say("herdr-desk: this session's journal is not loaded: %s", r.Msg)
 			return nil
 		}
 		if err != nil {
@@ -63,9 +63,9 @@ func (a *app) hookCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		a.say("desk journal for this session: %s", path)
-		a.say("Record facts with `desk note \"<text>\"` (add `--branch <b>` for branch work) and choices with `desk decide \"<text>\"`.")
-		a.say("Read the journal again with `desk session %s --md`.", in.SessionID)
+		a.say("herdr-desk journal for this session: %s", path)
+		a.say("Record facts with `herdr-desk note \"<text>\"` (add `--branch <b>` for branch work) and choices with `herdr-desk decide \"<text>\"`.")
+		a.say("Read the journal again with `herdr-desk session %s --md`.", in.SessionID)
 		return nil
 	})
 	start.Flags().StringVar(&format, "format", "", "the hook input's format: claude-code")

@@ -5,13 +5,13 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/federbenjamin/desk/internal/api"
-	"github.com/federbenjamin/desk/internal/board"
-	"github.com/federbenjamin/desk/internal/herdr"
-	"github.com/federbenjamin/desk/internal/store"
+	"github.com/federbenjamin/herdr-desk/internal/api"
+	"github.com/federbenjamin/herdr-desk/internal/board"
+	"github.com/federbenjamin/herdr-desk/internal/herdr"
+	"github.com/federbenjamin/herdr-desk/internal/store"
 )
 
-// boardFlags makes bare `desk` run the interactive board on a terminal and print the static board anywhere else.
+// boardFlags makes bare `herdr-desk` run the interactive board on a terminal and print the static board anywhere else.
 func (a *app) boardFlags(root *cobra.Command) {
 	var asJSON bool
 	root.Flags().BoolVar(&asJSON, "json", false, "print the board's TaskList as JSON")
@@ -37,13 +37,13 @@ func (a *app) boardFlags(root *cobra.Command) {
 		if asJSON {
 			return a.printJSON(tl)
 		}
-		head := "desk · offline (snapshot " + snapshotAge(tl.SnapshotTS) + ")"
+		head := "herdr-desk · offline (snapshot " + snapshotAge(tl.SnapshotTS) + ")"
 		if !tl.Offline {
 			st, err := c.Status(a.ctx)
 			if err != nil {
 				return err
 			}
-			head = "desk · home · runner " + onOff(st.RunnerOn)
+			head = "herdr-desk · home · runner " + onOff(st.RunnerOn)
 		}
 		a.say("%s", head)
 		for _, s := range board.Sections() {

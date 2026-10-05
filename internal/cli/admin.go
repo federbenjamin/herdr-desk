@@ -13,11 +13,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/federbenjamin/desk/internal/config"
-	"github.com/federbenjamin/desk/internal/daemon"
-	"github.com/federbenjamin/desk/internal/model"
-	"github.com/federbenjamin/desk/internal/setup"
-	"github.com/federbenjamin/desk/internal/version"
+	"github.com/federbenjamin/herdr-desk/internal/config"
+	"github.com/federbenjamin/herdr-desk/internal/daemon"
+	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/setup"
+	"github.com/federbenjamin/herdr-desk/internal/version"
 )
 
 const stopTimeout = 10 * time.Second
@@ -38,7 +38,7 @@ func (a *app) daemonCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("another daemon holds %s, but no info file names the daemon on its socket: %w", a.paths.LockFile(), err)
 			}
-			a.say("desk daemon: already running (pid %d)", info.PID)
+			a.say("herdr-desk daemon: already running (pid %d)", info.PID)
 			return nil
 		}
 		return err
@@ -76,7 +76,7 @@ func (a *app) daemonCmd() *cobra.Command {
 			return err
 		}
 		if a.env.Spawn == nil {
-			return errors.New("this desk cannot start a daemon; run `desk daemon run`")
+			return errors.New("this desk cannot start a daemon; run `herdr-desk daemon run`")
 		}
 		return a.env.Spawn(a.paths)
 	})
@@ -106,7 +106,7 @@ func (a *app) daemonCmd() *cobra.Command {
 	return cmd
 }
 
-// infoWait is how long `desk daemon run` waits for the running daemon's info file.
+// infoWait is how long `herdr-desk daemon run` waits for the running daemon's info file.
 var infoWait = 5 * time.Second
 
 // runningInfo reads the info file of the daemon that holds the lock. A daemon that took the lock a moment ago
@@ -141,14 +141,14 @@ func (a *app) runningInfo() (daemon.Info, error) {
 }
 
 func (a *app) sayClient(c config.Config) {
-	a.say("desk daemon: this machine is a client of %s; nothing to run", c.Client.Home)
+	a.say("herdr-desk daemon: this machine is a client of %s; nothing to run", c.Client.Home)
 }
 
 func (a *app) tokenCmd() *cobra.Command {
 	show := func(_ *cobra.Command, _ []string) error {
 		t, err := config.ReadToken(a.paths)
 		if err != nil {
-			return fmt.Errorf("no token (`desk setup --listen <host:port>` mints one on a home): %w", err)
+			return fmt.Errorf("no token (`herdr-desk setup --listen <host:port>` mints one on a home): %w", err)
 		}
 		a.say("%s", t)
 		return nil
@@ -169,7 +169,7 @@ func (a *app) tokenCmd() *cobra.Command {
 				return err
 			}
 			if c.IsClient() {
-				return usage("this machine is a client of %s; rotate the token on the home, then run `desk client add` here", c.Client.Home)
+				return usage("this machine is a client of %s; rotate the token on the home, then run `herdr-desk client add` here", c.Client.Home)
 			}
 			t, err := config.RotateToken(a.paths)
 			if err != nil {
@@ -202,7 +202,7 @@ func (a *app) clientCmd() *cobra.Command {
 			defer f.Close()
 			src = f
 		} else if a.env.StdinTTY {
-			fmt.Fprint(a.env.Stderr, "token (from `desk token` on the home): ")
+			fmt.Fprint(a.env.Stderr, "token (from `herdr-desk token` on the home): ")
 		}
 		line, err := bufio.NewReader(src).ReadString('\n')
 		if err != nil && err != io.EOF {
@@ -348,7 +348,7 @@ func (a *app) setupCmd() *cobra.Command {
 	f.StringVar(&profile, "profile", "", "an agent profile: claude-code")
 	f.StringVar(&listen, "listen", "", "serve clients on this host:port (a tailnet address)")
 	f.StringVar(&runner, "runner", "", "on or off")
-	f.StringVar(&skillDir, "skill-dir", "", "write the agent skill to <dir>/desk/SKILL.md")
+	f.StringVar(&skillDir, "skill-dir", "", "write the agent skill to <dir>/herdr-desk/SKILL.md")
 	f.BoolVar(&force, "force", false, "replace another program's prefix+t and prefix+a bindings in herdr")
 	f.BoolVar(&noHerdr, "no-herdr", false, "leave herdr's config alone")
 	return cmd
@@ -386,10 +386,10 @@ func (a *app) backupCmd() *cobra.Command {
 func (a *app) versionCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
-		Short: "Print desk's version",
+		Short: "Print herdr-desk's version",
 		Args:  cobra.NoArgs,
 		RunE: a.do(func(_ *cobra.Command, _ []string) error {
-			a.say("desk %s", version.Version)
+			a.say("herdr-desk %s", version.Version)
 			return nil
 		}),
 	}

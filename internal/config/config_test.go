@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/federbenjamin/desk/internal/config"
+	"github.com/federbenjamin/herdr-desk/internal/config"
 )
 
 func TestResolvePathsUsesEachXDGVariableAndConstructsNamedFiles(t *testing.T) {
@@ -24,24 +24,24 @@ func TestResolvePathsUsesEachXDGVariableAndConstructsNamedFiles(t *testing.T) {
 		"XDG_CACHE_HOME":  "/cache",
 	}
 	p := config.ResolvePaths(func(name string) string { return env[name] })
-	if p.ConfigDir != "/cfg/desk" || p.StateDir != "/state/desk" || p.DataDir != "/data/desk" || p.CacheDir != "/cache/desk" {
+	if p.ConfigDir != "/cfg/herdr-desk" || p.StateDir != "/state/herdr-desk" || p.DataDir != "/data/herdr-desk" || p.CacheDir != "/cache/herdr-desk" {
 		t.Fatalf("ResolvePaths(XDG) = %#v", p)
 	}
 
 	files := map[string]struct{ got, want string }{
-		"ConfigFile":  {p.ConfigFile(), "/cfg/desk/config.toml"},
-		"TokenFile":   {p.TokenFile(), "/cfg/desk/token"},
-		"Socket":      {p.Socket(), "/state/desk/desk.sock"},
-		"LockFile":    {p.LockFile(), "/state/desk/daemon.lock"},
-		"DaemonInfo":  {p.DaemonInfo(), "/state/desk/daemon.json"},
-		"DaemonLog":   {p.DaemonLog(), "/state/desk/daemon.log"},
-		"Outbox":      {p.Outbox(), "/state/desk/outbox.jsonl"},
-		"SessionsDir": {p.SessionsDir(), "/state/desk/sessions"},
-		"BackupState": {p.BackupState(), "/state/desk/backup.json"},
-		"DB":          {p.DB(), "/data/desk/desk.db"},
-		"ScratchRoot": {p.ScratchRoot(), "/data/desk/scratch"},
-		"BackupDir":   {p.BackupDir(), "/data/desk/backup"},
-		"Snapshot":    {p.Snapshot(), "/cache/desk/snapshot.json"},
+		"ConfigFile":  {p.ConfigFile(), "/cfg/herdr-desk/config.toml"},
+		"TokenFile":   {p.TokenFile(), "/cfg/herdr-desk/token"},
+		"Socket":      {p.Socket(), "/state/herdr-desk/desk.sock"},
+		"LockFile":    {p.LockFile(), "/state/herdr-desk/daemon.lock"},
+		"DaemonInfo":  {p.DaemonInfo(), "/state/herdr-desk/daemon.json"},
+		"DaemonLog":   {p.DaemonLog(), "/state/herdr-desk/daemon.log"},
+		"Outbox":      {p.Outbox(), "/state/herdr-desk/outbox.jsonl"},
+		"SessionsDir": {p.SessionsDir(), "/state/herdr-desk/sessions"},
+		"BackupState": {p.BackupState(), "/state/herdr-desk/backup.json"},
+		"DB":          {p.DB(), "/data/herdr-desk/desk.db"},
+		"ScratchRoot": {p.ScratchRoot(), "/data/herdr-desk/scratch"},
+		"BackupDir":   {p.BackupDir(), "/data/herdr-desk/backup"},
+		"Snapshot":    {p.Snapshot(), "/cache/herdr-desk/snapshot.json"},
 	}
 	for name, path := range files {
 		if path.got != path.want {
@@ -60,10 +60,10 @@ func TestResolvePathsFallsBackToHomeWhenXDGVariablesAreAbsent(t *testing.T) {
 		return ""
 	})
 	want := config.Paths{
-		ConfigDir: "/home/desk/.config/desk",
-		StateDir:  "/home/desk/.local/state/desk",
-		DataDir:   "/home/desk/.local/share/desk",
-		CacheDir:  "/home/desk/.cache/desk",
+		ConfigDir: "/home/desk/.config/herdr-desk",
+		StateDir:  "/home/desk/.local/state/herdr-desk",
+		DataDir:   "/home/desk/.local/share/herdr-desk",
+		CacheDir:  "/home/desk/.cache/herdr-desk",
 	}
 	if p != want {
 		t.Errorf("ResolvePaths(HOME fallback) = %#v; want %#v", p, want)
@@ -383,7 +383,7 @@ func TestConfigChangedComparesWhatTheFileHoldsWithWhatTheDaemonStartedWith(t *te
 		{"no longer valid", func(t *testing.T, p config.Paths) { write(t, p, "no = [such key") }, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			p := config.Paths{ConfigDir: filepath.Join(t.TempDir(), "desk")}
+			p := config.Paths{ConfigDir: filepath.Join(t.TempDir(), "herdr-desk")}
 			test.write(t, p)
 			if got := p.ConfigChanged(digest); got != test.want {
 				t.Errorf("ConfigChanged = %t, want %t", got, test.want)
@@ -391,7 +391,7 @@ func TestConfigChangedComparesWhatTheFileHoldsWithWhatTheDaemonStartedWith(t *te
 		})
 	}
 
-	p := config.Paths{ConfigDir: filepath.Join(t.TempDir(), "desk")}
+	p := config.Paths{ConfigDir: filepath.Join(t.TempDir(), "herdr-desk")}
 	if p.ConfigChanged(config.Default().Digest()) {
 		t.Error("ConfigChanged(no file, daemon started on the defaults) = true, want false")
 	}

@@ -7,13 +7,13 @@ import (
 	"slices"
 	"time"
 
-	"github.com/federbenjamin/desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/model"
 )
 
 // ErrNotArmed is StartRun's answer when the task is no longer armed.
 var ErrNotArmed = errors.New("the task is not armed")
 
-// runCols leaves out exit: the column has no writer, since herdr owns the pane and desk never sees a worker exit.
+// runCols leaves out exit: the column has no writer, since herdr owns the pane and herdr-desk never sees a worker exit.
 const runCols = `id, task, state, root, isolation, model, reason, session, workspace, pane, started_ts, ended_ts`
 
 const liveRunStates = `('` + model.RunRouting + `', '` + model.RunWaiting + `', '` + model.RunRunning + `')`

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/federbenjamin/desk/internal/config"
+	"github.com/federbenjamin/herdr-desk/internal/config"
 )
 
 func TestLoadReadsAgentModelsAndRouterFiles(t *testing.T) {
@@ -140,10 +140,10 @@ func TestPathsEnvRoundTripsThroughResolvePathsInXDGOrder(t *testing.T) {
 	t.Parallel()
 
 	want := config.Paths{
-		ConfigDir: "/config/desk",
-		StateDir:  "/state/desk",
-		DataDir:   "/data/desk",
-		CacheDir:  "/cache/desk",
+		ConfigDir: "/config/herdr-desk",
+		StateDir:  "/state/herdr-desk",
+		DataDir:   "/data/herdr-desk",
+		CacheDir:  "/cache/herdr-desk",
 	}
 	gotEnv := want.Env()
 	wantEnv := []string{
@@ -172,11 +172,11 @@ func TestPathsEnvRoundTripsThroughResolvePathsInXDGOrder(t *testing.T) {
 func TestRouterAndRunnerPathsStayInTheStateDirectory(t *testing.T) {
 	t.Parallel()
 
-	p := config.Paths{StateDir: "/state/desk"}
-	if got, want := p.RouterSystemFile(), "/state/desk/router-system.md"; got != want {
+	p := config.Paths{StateDir: "/state/herdr-desk"}
+	if got, want := p.RouterSystemFile(), "/state/herdr-desk/router-system.md"; got != want {
 		t.Errorf("RouterSystemFile() = %q; want %q", got, want)
 	}
-	if got, want := p.RunnerPause(), "/state/desk/runner-paused"; got != want {
+	if got, want := p.RunnerPause(), "/state/herdr-desk/runner-paused"; got != want {
 		t.Errorf("RunnerPause() = %q; want %q", got, want)
 	}
 }

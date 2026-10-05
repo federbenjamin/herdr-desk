@@ -14,9 +14,9 @@ runner_up home
 
 # A good answer: the root, in-place, a model.
 route_to "$REPO_ROOT" in-place opus "the task is about the shop app"
-run 0 on home desk add -t "Fix the cart total" -n "It adds the tax twice." -p "$REPO_ROOT" --thread agent
-run 0 on home desk steps T1 add "reproduce it"
-run 0 on home desk set T1 ready
+run 0 on home herdr-desk add -t "Fix the cart total" -n "It adds the tax twice." -p "$REPO_ROOT" --thread agent
+run 0 on home herdr-desk steps T1 add "reproduce it"
+run 0 on home herdr-desk set T1 ready
 wait_run 1 running
 wait_file "$STUB/router-stdin.json"
 jq -e --arg root "$REPO_ROOT" --arg scratch "$SCRATCH" '
@@ -37,11 +37,11 @@ say "schema holds the root and model enums ok"
 say "DESK_HOOKS=off ok"
 
 if [ "$(task_field 1 root)" != "$REPO_ROOT" ] || [ "$(task_field 1 isolation)" != in-place ] || [ "$(task_field 1 model)" != opus ]; then
-  fail "the route is not on the task: $(on home desk show T1 --json | jq -c .task)"
+  fail "the route is not on the task: $(on home herdr-desk show T1 --json | jq -c .task)"
 fi
 task_has_note 1 "routed to $REPO_ROOT (in-place, opus): the task is about the shop app" || fail "no 'routed to' note"
 say "route saved on the task ok"
-run 0 on home desk set T1 review
+run 0 on home herdr-desk set T1 review
 
 # Answers the runner must refuse. Each one blocks its task and fails its run.
 refused() {
@@ -68,25 +68,25 @@ say "run failed ok"
 
 # Fields set on the task: the router is not called.
 CALLS=$(wc -l <"$STUB/router-calls.txt")
-run 0 on home desk add -t "decided by hand" --desk --thread agent
-run 0 on home desk set T5 --root "$REPO_ROOT" --isolation in-place --model sonnet
-run 0 on home desk set T5 ready
+run 0 on home herdr-desk add -t "decided by hand" --desk --thread agent
+run 0 on home herdr-desk set T5 --root "$REPO_ROOT" --isolation in-place --model sonnet
+run 0 on home herdr-desk set T5 ready
 wait_run 5 running
 [ "$(wc -l <"$STUB/router-calls.txt")" -eq "$CALLS" ] || fail "the router was called for a task whose fields were set"
 say "fields set: router not called ok"
 
 # No router: the state shows in daemon.json and in status, and the owner is told once. The count is taken once T5's
 # spawn has sent its start notification, its last step, so no spawn still in flight can add to it.
-wait_long 10 "T5's start notification" grep -F "desk: T5 started" "$E2E/herdr/notifications.log"
-run 0 on home desk set T5 review
+wait_long 10 "T5's start notification" grep -F "herdr-desk: T5 started" "$E2E/herdr/notifications.log"
+run 0 on home herdr-desk set T5 review
 NOTIFIED=$(wc -l <"$E2E/herdr/notifications.log")
 RC_ROUTER=none
 runner_config home
 restart_daemon
-wait_long 5 "daemon.json to say no-router" test "$(jq -r .runner "$E2E/home/state/desk/daemon.json")" = no-router
-run 0 on home desk daemon status
+wait_long 5 "daemon.json to say no-router" test "$(jq -r .runner "$E2E/home/state/herdr-desk/daemon.json")" = no-router
+run 0 on home herdr-desk daemon status
 jq -e '.runner_state == "no-router"' <<<"$OUT" >/dev/null || fail "status says $(jq -r .runner_state <<<"$OUT")"
-run 0 on home desk runner
+run 0 on home herdr-desk runner
 out_has "runner no-router"
 say "no-router in daemon.json and status ok"
 sleep 3

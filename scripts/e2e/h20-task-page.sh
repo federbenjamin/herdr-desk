@@ -3,14 +3,14 @@
 # shellcheck source=scripts/e2e/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 build
-run 0 on home desk add -t "page under test" -n "the first notes" --desk
-run 0 on home desk steps 1 add "find every writer"
-run 0 on home desk steps 1 add "switch the writers"
-run 0 on home desk steps 1 toggle s1
-run 0 as_agent home sess-a desk note "nine writers found" --task 1 --ref docs/writers.md
-run 0 as_agent home sess-a desk decide "one worktree per group" --task 1
+run 0 on home herdr-desk add -t "page under test" -n "the first notes" --desk
+run 0 on home herdr-desk steps 1 add "find every writer"
+run 0 on home herdr-desk steps 1 add "switch the writers"
+run 0 on home herdr-desk steps 1 toggle s1
+run 0 as_agent home sess-a herdr-desk note "nine writers found" --task 1 --ref docs/writers.md
+run 0 as_agent home sess-a herdr-desk decide "one worktree per group" --task 1
 
-term_start board 100 40 home "$BIN/desk"
+term_start board 100 40 home "$BIN/herdr-desk"
 term_wait board "page under test"
 term_keys board Enter
 term_wait board "NOTES"

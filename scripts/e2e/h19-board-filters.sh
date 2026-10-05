@@ -4,13 +4,13 @@
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 build
 mkdir -p "$E2E/work/alpha" "$E2E/work/beta"
-run 0 on home desk add -t "apple in alpha" -p "$E2E/work/alpha" --thread red
-run 0 on home desk add -t "banana in beta" -p "$E2E/work/beta" --thread blue
-run 0 on home desk add -t "cherry without a project" --desk --thread red
-run 0 on home desk add -t "durian is finished" --desk
-run 0 on home desk set 4 "done"
+run 0 on home herdr-desk add -t "apple in alpha" -p "$E2E/work/alpha" --thread red
+run 0 on home herdr-desk add -t "banana in beta" -p "$E2E/work/beta" --thread blue
+run 0 on home herdr-desk add -t "cherry without a project" --desk --thread red
+run 0 on home herdr-desk add -t "durian is finished" --desk
+run 0 on home herdr-desk set 4 "done"
 
-term_start board 100 30 home "$BIN/desk"
+term_start board 100 30 home "$BIN/herdr-desk"
 term_wait board "apple in alpha"
 term_has board "banana in beta" || fail "the board lacks banana at the start"
 term_has board "durian is finished" && fail "the done task shows before d"
@@ -44,19 +44,19 @@ only() {
 }
 
 term_keys board p
-term_wait_gone board "desk  all"
+term_wait_gone board "herdr-desk  all"
 case "$(header board)" in
-  *"desk  alpha ▾"*) only board "apple in alpha" "banana in beta" "cherry without a project" ;;
-  *"desk  beta ▾"*) only board "banana in beta" "apple in alpha" "cherry without a project" ;;
+  *"herdr-desk  alpha ▾"*) only board "apple in alpha" "banana in beta" "cherry without a project" ;;
+  *"herdr-desk  beta ▾"*) only board "banana in beta" "apple in alpha" "cherry without a project" ;;
   *) fail "p left the header as '$(header board)'" ;;
 esac
 ok "p shows one project's tasks"
 for _ in 1 2 3 4; do
-  case "$(header board)" in *"desk  all ▾"*) break ;; esac
+  case "$(header board)" in *"herdr-desk  all ▾"*) break ;; esac
   term_keys board p
   sleep 0.3
 done
-case "$(header board)" in *"desk  all ▾"*) ;; *) fail "p did not come back to all: '$(header board)'" ;; esac
+case "$(header board)" in *"herdr-desk  all ▾"*) ;; *) fail "p did not come back to all: '$(header board)'" ;; esac
 
 term_keys board t
 term_wait_gone board "thread: all"

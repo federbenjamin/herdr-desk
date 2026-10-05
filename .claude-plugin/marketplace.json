@@ -1,14 +1,14 @@
 {
-  "name": "desk",
-  "description": "desk: a task board and session journal for people who work with coding agents.",
+  "name": "herdr-desk",
+  "description": "herdr-desk: a task board and session journal for people who work with coding agents.",
   "owner": {
     "name": "federbenjamin"
   },
   "plugins": [
     {
-      "name": "desk",
+      "name": "herdr-desk",
       "source": "./profiles/claude-code",
-      "description": "Records this session in desk's journal and teaches the agent how to use desk.",
+      "description": "Records this session in herdr-desk's journal and teaches the agent how to use herdr-desk.",
       "category": "productivity"
     }
   ]

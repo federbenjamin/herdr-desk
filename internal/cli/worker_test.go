@@ -12,11 +12,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/federbenjamin/desk/internal/cli"
-	"github.com/federbenjamin/desk/internal/config"
-	"github.com/federbenjamin/desk/internal/model"
-	"github.com/federbenjamin/desk/internal/testutil"
-	"github.com/federbenjamin/desk/internal/worker"
+	"github.com/federbenjamin/herdr-desk/internal/cli"
+	"github.com/federbenjamin/herdr-desk/internal/config"
+	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/testutil"
+	"github.com/federbenjamin/herdr-desk/internal/worker"
 )
 
 func runDeskWithExec(t *testing.T, machine *testutil.Machine, args []string, extra map[string]string, run func(string, []string) error) commandResult {

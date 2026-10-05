@@ -7,7 +7,7 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/federbenjamin/desk/internal/herdr"
+	"github.com/federbenjamin/herdr-desk/internal/herdr"
 )
 
 // Workspace is one workspace created through the stand-in.

@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/federbenjamin/desk/internal/api"
-	"github.com/federbenjamin/desk/internal/cli"
-	"github.com/federbenjamin/desk/internal/model"
-	"github.com/federbenjamin/desk/internal/store"
-	"github.com/federbenjamin/desk/internal/testutil"
+	"github.com/federbenjamin/herdr-desk/internal/api"
+	"github.com/federbenjamin/herdr-desk/internal/cli"
+	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/store"
+	"github.com/federbenjamin/herdr-desk/internal/testutil"
 )
 
 func w7Run(t *testing.T, home *testutil.Home, args []string, stdin io.Reader, stdinTTY, stdoutTTY bool) (int, string, string) {
@@ -57,16 +57,16 @@ func TestW7TerminalBareDeskUsesTheAlternateScreenUntilQuit(t *testing.T) {
 
 	exit, stdout, stderr := w7Run(t, home, nil, w7TypedInput(t, "q"), true, true)
 	if exit != 0 {
-		t.Fatalf("terminal desk exit = %d, want 0; stdout=%q stderr=%q", exit, stdout, stderr)
+		t.Fatalf("terminal herdr-desk exit = %d, want 0; stdout=%q stderr=%q", exit, stdout, stderr)
 	}
 	if !strings.Contains(stdout, "\x1b[?1049h") {
-		t.Errorf("terminal desk stdout = %q, want the alternate-screen sequence", stdout)
+		t.Errorf("terminal herdr-desk stdout = %q, want the alternate-screen sequence", stdout)
 	}
-	if strings.Contains(stdout, "desk · home · runner") {
-		t.Errorf("terminal desk stdout = %q, want the interactive board instead of the static board", stdout)
+	if strings.Contains(stdout, "herdr-desk · home · runner") {
+		t.Errorf("terminal herdr-desk stdout = %q, want the interactive board instead of the static board", stdout)
 	}
 	if stderr != "" {
-		t.Errorf("terminal desk stderr = %q, want no offline warning", stderr)
+		t.Errorf("terminal herdr-desk stderr = %q, want no offline warning", stderr)
 	}
 }
 
@@ -87,15 +87,15 @@ func TestW7BareDeskKeepsTheStaticBoardWhenEitherStreamIsNotATerminal(t *testing.
 		t.Run(test.name, func(t *testing.T) {
 			exit, stdout, stderr := w7Run(t, home, nil, strings.NewReader("q"), test.stdinTTY, test.stdoutTTY)
 			if exit != 0 {
-				t.Fatalf("static desk exit = %d, want 0; stdout=%q stderr=%q", exit, stdout, stderr)
+				t.Fatalf("static herdr-desk exit = %d, want 0; stdout=%q stderr=%q", exit, stdout, stderr)
 			}
-			for _, want := range []string{"desk · home · runner", "NEEDS YOU", "IN MOTION", "ON DECK", "T1  open  static task"} {
+			for _, want := range []string{"herdr-desk · home · runner", "NEEDS YOU", "IN MOTION", "ON DECK", "T1  open  static task"} {
 				if !strings.Contains(stdout, want) {
-					t.Errorf("static desk stdout = %q, want %q", stdout, want)
+					t.Errorf("static herdr-desk stdout = %q, want %q", stdout, want)
 				}
 			}
 			if strings.Contains(stdout, "\x1b[?1049h") {
-				t.Errorf("static desk stdout = %q, must not enter the alternate screen", stdout)
+				t.Errorf("static herdr-desk stdout = %q, must not enter the alternate screen", stdout)
 			}
 		})
 	}
@@ -109,17 +109,17 @@ func TestW7JSONBareDeskStaysStaticEvenWithTwoTerminalStreams(t *testing.T) {
 
 	exit, stdout, stderr := w7Run(t, home, []string{"--json"}, strings.NewReader("q"), true, true)
 	if exit != 0 {
-		t.Fatalf("desk --json exit = %d, want 0; stdout=%q stderr=%q", exit, stdout, stderr)
+		t.Fatalf("herdr-desk --json exit = %d, want 0; stdout=%q stderr=%q", exit, stdout, stderr)
 	}
 	if strings.Contains(stdout, "\x1b[?1049h") {
-		t.Errorf("desk --json stdout = %q, must not enter the alternate screen", stdout)
+		t.Errorf("herdr-desk --json stdout = %q, must not enter the alternate screen", stdout)
 	}
 	var list api.TaskList
 	if err := json.Unmarshal([]byte(stdout), &list); err != nil {
-		t.Fatalf("desk --json stdout = %q, want TaskList JSON: %v", stdout, err)
+		t.Fatalf("herdr-desk --json stdout = %q, want TaskList JSON: %v", stdout, err)
 	}
 	if len(list.Tasks) != 1 || list.Tasks[0].Title != "JSON task" {
-		t.Errorf("desk --json tasks = %#v, want the static board task list", list.Tasks)
+		t.Errorf("herdr-desk --json tasks = %#v, want the static board task list", list.Tasks)
 	}
 }
 

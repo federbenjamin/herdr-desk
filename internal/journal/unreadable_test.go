@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/federbenjamin/desk/internal/journal"
-	"github.com/federbenjamin/desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/journal"
+	"github.com/federbenjamin/herdr-desk/internal/model"
 )
 
 func corrupt(id int64, kind model.Kind, data string, session string) model.Event {

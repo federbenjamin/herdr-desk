@@ -1,4 +1,4 @@
-// Package model holds the types desk passes between its store, API, and commands. It does no I/O.
+// Package model holds the types herdr-desk passes between its store, API, and commands. It does no I/O.
 package model
 
 import (

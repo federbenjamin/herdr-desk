@@ -13,11 +13,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/federbenjamin/desk/internal/api"
-	"github.com/federbenjamin/desk/internal/backup"
-	"github.com/federbenjamin/desk/internal/config"
-	"github.com/federbenjamin/desk/internal/model"
-	"github.com/federbenjamin/desk/internal/store"
+	"github.com/federbenjamin/herdr-desk/internal/api"
+	"github.com/federbenjamin/herdr-desk/internal/backup"
+	"github.com/federbenjamin/herdr-desk/internal/config"
+	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/store"
 )
 
 const (
@@ -42,8 +42,8 @@ func newAPIHarness(t *testing.T, backupFn func(context.Context) (backup.Result, 
 
 	root := t.TempDir()
 	paths := config.Paths{
-		ConfigDir: filepath.Join(root, "config", "desk"),
-		DataDir:   filepath.Join(root, "data", "desk"),
+		ConfigDir: filepath.Join(root, "config", "herdr-desk"),
+		DataDir:   filepath.Join(root, "data", "herdr-desk"),
 	}
 	if err := os.MkdirAll(paths.ConfigDir, 0o700); err != nil {
 		t.Fatalf("create config directory: %v", err)

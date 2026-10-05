@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/federbenjamin/desk/internal/herdr"
+	"github.com/federbenjamin/herdr-desk/internal/herdr"
 )
 
 func TestCreateWorkspaceReturnsIDs(t *testing.T) {

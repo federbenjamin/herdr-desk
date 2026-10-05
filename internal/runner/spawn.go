@@ -10,10 +10,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/federbenjamin/desk/internal/gitcmd"
-	"github.com/federbenjamin/desk/internal/herdr"
-	"github.com/federbenjamin/desk/internal/model"
-	"github.com/federbenjamin/desk/internal/store"
+	"github.com/federbenjamin/herdr-desk/internal/gitcmd"
+	"github.com/federbenjamin/herdr-desk/internal/herdr"
+	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/store"
 )
 
 const maxSlug = 40
@@ -71,7 +71,7 @@ func (r *Runner) spawn(ctx context.Context, h Herdr, t model.Task, run model.Run
 		return failSpawn(ctx, from, err.Error(), "")
 	}
 	pane := herdr.Pane{ID: created.Pane, Workspace: created.Workspace}
-	// The pane exists outside desk now: undoing the spawn goes on even when ctx ends, so a stopping daemon leaves
+	// The pane exists outside herdr-desk now: undoing the spawn goes on even when ctx ends, so a stopping daemon leaves
 	// no worker and no live run behind.
 	undo := context.WithoutCancel(ctx)
 	// The run becomes running with its pane in one write, so a running run's pane is always known to a kill; a
@@ -101,7 +101,7 @@ func (r *Runner) spawn(ctx context.Context, h Herdr, t model.Task, run model.Run
 	}
 	r.note(ctx, store.Actor{Run: run.ID}, t.Number, []string{model.TagRunner},
 		fmt.Sprintf("run %d: workspace %s, pane %s", run.ID, created.Workspace, created.Pane))
-	r.notify(ctx, fmt.Sprintf("desk: T%d started", t.Number), t.Title)
+	r.notify(ctx, fmt.Sprintf("herdr-desk: T%d started", t.Number), t.Title)
 	return true
 }
 
@@ -114,13 +114,13 @@ func (r *Runner) closeSpawned(ctx context.Context, h Herdr, t model.Task, pane h
 	return ""
 }
 
-// paneCommand is the one text typed into a pane: exec of this desk binary's worker command.
+// paneCommand is the one text typed into a pane: exec of this herdr-desk binary's worker command.
 func (r *Runner) paneCommand() (string, error) {
 	exe := r.o.Exe
 	if exe == "" {
 		var err error
 		if exe, err = os.Executable(); err != nil {
-			return "", fmt.Errorf("find the desk binary: %w", err)
+			return "", fmt.Errorf("find the herdr-desk binary: %w", err)
 		}
 	}
 	quoted, err := shellQuote(exe)
@@ -134,13 +134,13 @@ func (r *Runner) paneCommand() (string, error) {
 // single quote or a control character is refused.
 func shellQuote(path string) (string, error) {
 	if path == "" {
-		return "", errors.New("the desk binary's path is empty")
+		return "", errors.New("the herdr-desk binary's path is empty")
 	}
 	plain := true
 	for _, c := range path {
 		switch {
 		case c == '\'' || c < 0x20 || c == 0x7f || (c >= 0x80 && c < 0xa0):
-			return "", fmt.Errorf("the desk binary's path %q holds a quote or a control character", path)
+			return "", fmt.Errorf("the herdr-desk binary's path %q holds a quote or a control character", path)
 		case (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || strings.ContainsRune("_./-", c):
 		default:
 			plain = false

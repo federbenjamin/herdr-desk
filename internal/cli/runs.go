@@ -6,8 +6,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/federbenjamin/desk/internal/api"
-	"github.com/federbenjamin/desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/api"
+	"github.com/federbenjamin/herdr-desk/internal/model"
 )
 
 func (a *app) runsCmd() *cobra.Command {
@@ -147,7 +147,7 @@ func (a *app) sayRunner(state string, cap int) error {
 	return nil
 }
 
-// liveRuns returns the home's runs in a live state, by id: the one filter desk runs, desk runner, and desk worker
+// liveRuns returns the home's runs in a live state, by id: the one filter herdr-desk runs, herdr-desk runner, and herdr-desk worker
 // read runs through.
 func (a *app) liveRuns(c *api.Client) ([]model.Run, error) {
 	runs, err := c.ListRuns(a.ctx)

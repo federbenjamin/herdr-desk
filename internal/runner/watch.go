@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/federbenjamin/desk/internal/herdr"
-	"github.com/federbenjamin/desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/herdr"
+	"github.com/federbenjamin/herdr-desk/internal/model"
 )
 
 // watch looks at the pane of every running run once and hands the task back when its worker stopped, asked, or
@@ -97,7 +97,7 @@ func (r *Runner) closeAgain(ctx context.Context, h Herdr, panes []herdr.Pane, le
 			continue
 		}
 		k := r.closePane(ctx, h, o.task, o.pane)
-		r.o.Logf("desk runner: T%d: closing pane %s again: %s", o.task, o.pane.ID, k)
+		r.o.Logf("herdr-desk runner: T%d: closing pane %s again: %s", o.task, o.pane.ID, k)
 	}
 }
 

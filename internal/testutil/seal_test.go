@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/federbenjamin/desk/internal/herdr"
-	_ "github.com/federbenjamin/desk/internal/testutil"
+	"github.com/federbenjamin/herdr-desk/internal/herdr"
+	_ "github.com/federbenjamin/herdr-desk/internal/testutil"
 )
 
 func TestLinkingTestutilSealsHerdrAgainstAHerdrOnPath(t *testing.T) {

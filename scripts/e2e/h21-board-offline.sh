@@ -5,14 +5,14 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 build
 PORT=$(free_port)
 home_with_listen home "$PORT"
-run 0 on home desk add -t "seen before the outage" --desk
+run 0 on home herdr-desk add -t "seen before the outage" --desk
 make_client cli home "$PORT"
-run 0 on cli desk list
+run 0 on cli herdr-desk list
 out_has "seen before the outage"
 
 stop_daemon home
 
-term_start board 100 30 cli "$BIN/desk"
+term_start board 100 30 cli "$BIN/herdr-desk"
 term_wait board "offline (snapshot"
 term_wait board "seen before the outage"
 ok "the header shows offline (snapshot"

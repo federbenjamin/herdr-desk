@@ -8,8 +8,8 @@ STUB="$E2E/stub"
 mkdir -p "$STUB"
 HERDR_REAL=0
 # shellcheck disable=SC2034 # read by the scripts that source this file
-SCRATCH="$E2E/home/data/desk/scratch"
-# WORK holds the folders a script makes for its roots. It is the physical path: desk resolves a task's project to one.
+SCRATCH="$E2E/home/data/herdr-desk/scratch"
+# WORK holds the folders a script makes for its roots. It is the physical path: herdr-desk resolves a task's project to one.
 mkdir -p "$E2E/work"
 # shellcheck disable=SC2034 # read by the scripts that source this file
 WORK=$(cd "$E2E/work" && pwd -P)
@@ -57,7 +57,7 @@ focused_workspace() {
 # track_workspaces: add the workspace of every run row to $E2E/workspaces.txt. Only a daemon that is up is asked.
 track_workspaces() {
   [ -S "$(sock home)" ] || return 0
-  on home desk runs --all --json 2>/dev/null | jq -r '.[].workspace | select(. != "")' >>"$E2E/workspaces.txt" || true
+  on home herdr-desk runs --all --json 2>/dev/null | jq -r '.[].workspace | select(. != "")' >>"$E2E/workspaces.txt" || true
 }
 
 # close_tracked_workspaces: close each workspace in $E2E/workspaces.txt, which a run row named. On the real herdr
@@ -117,10 +117,10 @@ runner_cleanup() {
   local d m id
   if [ "$rc" != 0 ]; then show_pane; fi
   if [ "$HERDR_REAL" = 1 ]; then track_workspaces; fi
-  for d in "$E2E"/*/state/desk; do
+  for d in "$E2E"/*/state/herdr-desk; do
     [ -f "$d/daemon.json" ] || continue
     m=$(basename "$(dirname "$(dirname "$d")")")
-    on "$m" desk daemon stop >/dev/null 2>&1 || true
+    on "$m" herdr-desk daemon stop >/dev/null 2>&1 || true
   done
   if [ "$HERDR_REAL" = 0 ] && [ -f "$E2E/herdr/state.json" ]; then
     while read -r id; do
@@ -173,7 +173,7 @@ TOML
 
 # runner_up <machine>: set the machine up, write its runner config, and start its daemon.
 runner_up() {
-  run 0 on "$1" desk setup --no-herdr
+  run 0 on "$1" herdr-desk setup --no-herdr
   runner_config "$1"
   start_daemon "$1"
 }
@@ -201,31 +201,31 @@ route_to() {
 set_mode() { printf '%s' "$2" >"$STUB/mode-T$1"; }
 
 # arm_task <machine> <title> <add flags...>: add a task on thread agent and set it ready, as a person. The task
-# number is left in OUT. Pass --desk or -p <dir>: without one `desk add` takes the project of the current folder.
+# number is left in OUT. Pass --desk or -p <dir>: without one `herdr-desk add` takes the project of the current folder.
 arm_task() {
   local m=$1 title=$2 n
   shift 2
-  run 0 on "$m" desk add -t "$title" --thread agent "$@"
+  run 0 on "$m" herdr-desk add -t "$title" --thread agent "$@"
   n=$OUT
-  run 0 on "$m" desk set "$n" ready
+  run 0 on "$m" herdr-desk set "$n" ready
   OUT=$n
 }
 
 # run_field <run id> <field>: a field of a run row.
 run_field() {
-  on home desk runs --all --json | jq -r --argjson id "$1" --arg f "$2" '.[] | select(.id == $id) | .[$f]'
+  on home herdr-desk runs --all --json | jq -r --argjson id "$1" --arg f "$2" '.[] | select(.id == $id) | .[$f]'
 }
 run_is() { [ "$(run_field "$1" state)" = "$2" ]; }
 
 # task_field <task number> <field>: a field of the task.
 task_field() {
-  on home desk show "T$1" --json | jq -r --arg f "$2" '.task[$f]'
+  on home herdr-desk show "T$1" --json | jq -r --arg f "$2" '.task[$f]'
 }
 task_is() { [ "$(task_field "$1" status)" = "$2" ]; }
 
 # task_notes <task number>: the text of each note on the task, one per line.
 task_notes() {
-  on home desk show "T$1" --json | jq -r '.history[] | select(.kind == "note") | .data.text'
+  on home herdr-desk show "T$1" --json | jq -r '.history[] | select(.kind == "note") | .data.text'
 }
 task_has_note() { task_notes "$1" | grep -F -- "$2" >/dev/null; }
 

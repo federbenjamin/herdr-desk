@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/federbenjamin/desk/internal/config"
-	"github.com/federbenjamin/desk/internal/testutil"
-	"github.com/federbenjamin/desk/internal/version"
+	"github.com/federbenjamin/herdr-desk/internal/config"
+	"github.com/federbenjamin/herdr-desk/internal/testutil"
+	"github.com/federbenjamin/herdr-desk/internal/version"
 )
 
 func TestDaemonStatusReportsTheRunningHomeAndNeverSpawns(t *testing.T) {
@@ -71,13 +71,13 @@ func TestDaemonStatusPrintsTheLastBackupOutcome(t *testing.T) {
 func TestDaemonRunTreatsAnExistingDaemonAndAClientAsSuccessfulNoops(t *testing.T) {
 	home := testutil.StartHome(t, testutil.HomeOptions{Listen: true})
 	running := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"daemon", "run"}, "", nil, nil)
-	if running.exit != 0 || !strings.Contains(running.stdout, "desk daemon: already running") {
+	if running.exit != 0 || !strings.Contains(running.stdout, "herdr-desk daemon: already running") {
 		t.Fatalf("daemon run while running = (%d, %q, %q)", running.exit, running.stdout, running.stderr)
 	}
 
 	client := testutil.NewClientMachine(t, home)
 	remote := runDeskWithEnv(t, client, t.TempDir(), []string{"daemon", "run"}, "", nil, nil)
-	want := "desk daemon: this machine is a client of " + home.Addr + "; nothing to run"
+	want := "herdr-desk daemon: this machine is a client of " + home.Addr + "; nothing to run"
 	if remote.exit != 0 || strings.TrimSpace(remote.stdout) != want {
 		t.Fatalf("daemon run on client = (%d, %q, %q), want %q", remote.exit, remote.stdout, remote.stderr, want)
 	}
@@ -204,7 +204,7 @@ func TestSetupRejectsWildcardListenWithoutWritingConfigAndVersionNeedsNoHome(t *
 	versionResult := runDeskWithEnv(t, machine, t.TempDir(), []string{"version"}, "", nil, func(config.Paths) error {
 		return errors.New("version must not spawn")
 	})
-	want := "desk " + version.Version
+	want := "herdr-desk " + version.Version
 	if versionResult.exit != 0 || strings.TrimSpace(versionResult.stdout) != want {
 		t.Fatalf("version = (%d, %q, %q), want %q", versionResult.exit, versionResult.stdout, versionResult.stderr, want)
 	}

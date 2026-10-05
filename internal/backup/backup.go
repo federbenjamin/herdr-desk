@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/federbenjamin/desk/internal/config"
-	"github.com/federbenjamin/desk/internal/gitcmd"
-	"github.com/federbenjamin/desk/internal/store"
+	"github.com/federbenjamin/herdr-desk/internal/config"
+	"github.com/federbenjamin/herdr-desk/internal/gitcmd"
+	"github.com/federbenjamin/herdr-desk/internal/store"
 )
 
 // Result is what one backup run did.
@@ -79,7 +79,7 @@ func run(ctx context.Context, st *store.Store, p config.Paths, remote string) (R
 		if _, err := git(ctx, dir, "add", "--", exportFile); err != nil {
 			return res, err
 		}
-		if _, err := git(ctx, dir, "commit", "--quiet", "-m", fmt.Sprintf("desk backup: %d events", n)); err != nil {
+		if _, err := git(ctx, dir, "commit", "--quiet", "-m", fmt.Sprintf("herdr-desk backup: %d events", n)); err != nil {
 			return res, err
 		}
 		res.Committed = true

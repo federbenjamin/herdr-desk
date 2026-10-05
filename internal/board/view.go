@@ -12,8 +12,8 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/federbenjamin/desk/internal/api"
-	"github.com/federbenjamin/desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/api"
+	"github.com/federbenjamin/herdr-desk/internal/model"
 )
 
 // Section is one board section: its title and the statuses it lists, in order.
@@ -281,7 +281,7 @@ func (s State) boardColumn(p palette, w, body int) []string {
 }
 
 func (s State) header(p palette, w int) string {
-	left := p.bold("desk") + "  " + s.projectLabel() + " ▾  thread: " + s.threadLabel() + " ▾"
+	left := p.bold("herdr-desk") + "  " + s.projectLabel() + " ▾  thread: " + s.threadLabel() + " ▾"
 	return spread(left, s.runnerLabel(), w)
 }
 

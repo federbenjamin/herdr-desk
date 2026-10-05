@@ -10,12 +10,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/federbenjamin/desk/internal/config"
-	"github.com/federbenjamin/desk/internal/herdr/herdrtest"
-	"github.com/federbenjamin/desk/internal/model"
-	"github.com/federbenjamin/desk/internal/runner"
-	"github.com/federbenjamin/desk/internal/store"
-	"github.com/federbenjamin/desk/internal/testutil"
+	"github.com/federbenjamin/herdr-desk/internal/config"
+	"github.com/federbenjamin/herdr-desk/internal/herdr/herdrtest"
+	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/runner"
+	"github.com/federbenjamin/herdr-desk/internal/store"
+	"github.com/federbenjamin/herdr-desk/internal/testutil"
 )
 
 // fixture is the one runner test setup: a store whose clock is now, a runner config, the in-memory herdr, and a
@@ -52,7 +52,7 @@ func newFixture(t *testing.T, root, isolation string) *fixture {
 		paths: m.Paths,
 		now:   time.Date(2026, time.October, 4, 15, 0, 0, 0, time.Local),
 		herdr: herdrtest.NewHerdr(),
-		exe:   "/opt/desk/bin/desk",
+		exe:   "/opt/desk/bin/herdr-desk",
 		root:  root,
 		// Long enough for a loaded machine; a test of the router's timeout sets its own.
 		timeout: 10 * time.Second,

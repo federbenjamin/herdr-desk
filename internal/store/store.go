@@ -1,4 +1,4 @@
-// Package store is desk's SQLite store. The daemon is its one user; every event goes through one private
+// Package store is herdr-desk's SQLite store. The daemon is its one user; every event goes through one private
 // append that scans for secrets, inserts the event, and updates the state tables in one transaction. Run rows
 // are runner state, outside the event log: UpdateRun writes them directly.
 package store
@@ -16,8 +16,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/federbenjamin/desk/internal/model"
-	"github.com/federbenjamin/desk/internal/secretscan"
+	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/secretscan"
 
 	_ "modernc.org/sqlite"
 )

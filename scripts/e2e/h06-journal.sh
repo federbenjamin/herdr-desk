@@ -3,26 +3,26 @@
 # shellcheck source=scripts/e2e/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 build
-run 0 on home desk setup --no-herdr
+run 0 on home herdr-desk setup --no-herdr
 start_daemon home
 S="s-h6"
 
 compact() {
   run_in 0 "{\"session_id\":\"$S\",\"source\":\"compact\",\"hook_event_name\":\"SessionStart\",\"cwd\":\"/\"}" \
-    on home desk hook start --format claude-code
+    on home herdr-desk hook start --format claude-code
 }
-view() { run 0 on home desk session "$S" --md "$@"; }
+view() { run 0 on home herdr-desk session "$S" --md "$@"; }
 
-run 0 as_agent home "$S" desk note "alpha fact"
-run 0 as_agent home "$S" desk note "built the x branch" --branch quick/x
-run 0 as_agent home "$S" desk note "is the cache safe" --tag question
-run 0 as_agent home "$S" desk add -t "session todo" --desk
-run 0 as_agent home "$S" desk add -t "branch todo" --desk --branch quick/x
-run 0 as_agent home "$S" desk add -t "still open todo" --desk
-run 0 as_agent home "$S" desk decide "pick jsonl files"
+run 0 as_agent home "$S" herdr-desk note "alpha fact"
+run 0 as_agent home "$S" herdr-desk note "built the x branch" --branch quick/x
+run 0 as_agent home "$S" herdr-desk note "is the cache safe" --tag question
+run 0 as_agent home "$S" herdr-desk add -t "session todo" --desk
+run 0 as_agent home "$S" herdr-desk add -t "branch todo" --desk --branch quick/x
+run 0 as_agent home "$S" herdr-desk add -t "still open todo" --desk
+run 0 as_agent home "$S" herdr-desk decide "pick jsonl files"
 OLD=$OUT
-run 0 as_agent home "$S" desk decide "pick one sqlite file" --replaces "$OLD" --tag principle:9
-run 0 on home desk set T1 "done"
+run 0 as_agent home "$S" herdr-desk decide "pick one sqlite file" --replaces "$OLD" --tag principle:9
+run 0 on home herdr-desk set T1 "done"
 
 view
 out_has "alpha fact"
@@ -42,7 +42,7 @@ out_has "still open todo"
 out_has "[session] compacted"
 say "view after one compaction ok"
 
-run 0 as_agent home "$S" desk note "gamma fact"
+run 0 as_agent home "$S" herdr-desk note "gamma fact"
 compact
 view
 out_lacks "alpha fact"
@@ -52,8 +52,8 @@ out_has "built the x branch"
 out_has "branch todo"
 say "view after two compactions ok"
 
-run 0 on home desk set T2 "done"
-run 0 as_agent home "$S" desk note --merged --branch quick/x --pr 7 --sha abc1234
+run 0 on home herdr-desk set T2 "done"
+run 0 as_agent home "$S" herdr-desk note --merged --branch quick/x --pr 7 --sha abc1234
 view
 out_lacks "built the x branch"
 out_lacks "branch todo"

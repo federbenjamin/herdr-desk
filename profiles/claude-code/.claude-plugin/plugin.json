@@ -1,11 +1,11 @@
 {
-  "name": "desk",
+  "name": "herdr-desk",
   "version": "0.1.0",
-  "description": "Records this session in desk's journal and teaches the agent how to use desk.",
+  "description": "Records this session in herdr-desk's journal and teaches the agent how to use herdr-desk.",
   "author": {
     "name": "federbenjamin"
   },
   "license": "MIT",
-  "homepage": "https://github.com/federbenjamin/desk",
-  "repository": "https://github.com/federbenjamin/desk"
+  "homepage": "https://github.com/federbenjamin/herdr-desk",
+  "repository": "https://github.com/federbenjamin/herdr-desk"
 }

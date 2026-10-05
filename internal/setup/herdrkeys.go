@@ -6,14 +6,14 @@ import (
 )
 
 const (
-	keysOpen  = "# >>> desk keys"
-	keysClose = "# <<< desk keys"
+	keysOpen  = "# >>> herdr-desk keys"
+	keysClose = "# <<< herdr-desk keys"
 )
 
-// deskKeys are the bindings desk writes, in order.
+// deskKeys are the bindings herdr-desk writes, in order.
 var deskKeys = []struct{ key, command string }{
-	{"prefix+t", "desk.open-board"},
-	{"prefix+a", "desk.capture"},
+	{"prefix+t", "herdr-desk.open-board"},
+	{"prefix+a", "herdr-desk.capture"},
 }
 
 var keyLine = regexp.MustCompile(`^\s*key\s*=\s*["']([^"']*)["']`)
@@ -21,7 +21,7 @@ var keyLine = regexp.MustCompile(`^\s*key\s*=\s*["']([^"']*)["']`)
 // WriteHerdrKeys edits herdr's config text. It returns the new text, the keys it bound, and the keys it left
 // because another binding holds them. force replaces those bindings.
 //
-// Our bindings sit in one block fenced by "# >>> desk keys" and "# <<< desk keys". A block already there is
+// Our bindings sit in one block fenced by "# >>> herdr-desk keys" and "# <<< herdr-desk keys". A block already there is
 // rewritten in place, so a second run returns the text unchanged.
 func WriteHerdrKeys(configText string, force bool) (out string, bound []string, skipped []string) {
 	lines := strings.SplitAfter(configText, "\n")

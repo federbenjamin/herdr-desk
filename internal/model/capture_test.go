@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/federbenjamin/desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/model"
 )
 
 func TestW1ParseCaptureSeparatesTagsAndKeepsBareMarkersInTheTitle(t *testing.T) {

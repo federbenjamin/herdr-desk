@@ -18,10 +18,10 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/federbenjamin/desk/internal/config"
-	"github.com/federbenjamin/desk/internal/herdr"
-	"github.com/federbenjamin/desk/internal/model"
-	"github.com/federbenjamin/desk/internal/store"
+	"github.com/federbenjamin/herdr-desk/internal/config"
+	"github.com/federbenjamin/herdr-desk/internal/herdr"
+	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/store"
 )
 
 // Herdr is what the runner needs from herdr. *herdr.Client satisfies it.
@@ -56,7 +56,7 @@ type Options struct {
 	Config        config.Config
 	Paths         config.Paths
 	Herdr         Herdr                            // nil → a *herdr.Client when herdr.Find succeeds, checked at each tick
-	Exe           string                           // the desk binary a pane runs; "" → os.Executable()
+	Exe           string                           // the herdr-desk binary a pane runs; "" → os.Executable()
 	Now           func() time.Time                 // nil → time.Now
 	OnState       func(state string)               // called from New, and from Tick or Pause when the state changed; calls never overlap and arrive in order
 	Logf          func(format string, args ...any) // nil → log.Printf
@@ -228,7 +228,7 @@ func (r *Runner) publish(ctx context.Context) (string, Herdr) {
 	}
 	r.stateMu.Unlock()
 	if changed && state == StateNoRouter {
-		r.notify(ctx, "desk: runner stopped", "no router: [agent] router is empty or its first word is not an executable")
+		r.notify(ctx, "herdr-desk: runner stopped", "no router: [agent] router is empty or its first word is not an executable")
 	}
 	return state, h
 }
@@ -430,7 +430,7 @@ func (r *Runner) note(ctx context.Context, a store.Actor, task int, tags []strin
 
 // logErr logs format with args, then ": " and err, the last argument.
 func (r *Runner) logErr(format string, args ...any) {
-	r.o.Logf("desk runner: "+format+": %v", args...)
+	r.o.Logf("herdr-desk runner: "+format+": %v", args...)
 }
 
 // notify runs [notify] command with title and body. A failure is logged and nothing else.

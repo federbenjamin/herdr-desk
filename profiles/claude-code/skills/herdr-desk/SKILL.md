@@ -1,27 +1,27 @@
 ---
-name: desk
-description: Use the desk CLI to read, add, and update the user's tasks, and to record notes and decisions in the session journal. Use it when the user mentions a task (T12), asks what is on their desk, or when you finish, get blocked on, or want to propose work.
+name: herdr-desk
+description: Use the herdr-desk CLI to read, add, and update the user's tasks, and to record notes and decisions in the session journal. Use it when the user mentions a task (T12), asks what is on their desk, or when you finish, get blocked on, or want to propose work.
 ---
 
-# desk
+# herdr-desk
 
-`desk` is the user's task board and session journal. One home machine owns the data; every command talks to it. You act on it through the `desk` command only.
+`herdr-desk` is the user's task board and session journal. One home machine owns the data; every command talks to it. You act on it through the `herdr-desk` command only.
 
 ## What you may do
 
 - Set a task's status to `review` (work is done and waits for the user) or `blocked` (you cannot go on without the user).
 - Never set `ready` or `done`. The user arms a task with `ready` and closes it with `done`. A refusal `not-allowed` means you tried; stop and report it.
 - Propose new work with `--thread agent`. It lands in the user's inbox. It does not start anything. Do not set the thread `agent` on a task that is already `ready`: that is `not-allowed`.
-- Never kill a run (`desk runs kill`) and never pause or resume the runner (`desk runner pause`, `desk runner resume`). They are the user's acts; an agent gets `not-allowed`.
+- Never kill a run (`herdr-desk runs kill`) and never pause or resume the runner (`herdr-desk runner pause`, `herdr-desk runner resume`). They are the user's acts; an agent gets `not-allowed`.
 - Never edit a task's title or notes to answer a question. Write a note instead.
-- Never run bare `desk` or `desk capture` on a terminal. The board and the capture popup are the user's: they take the terminal until a key ends them. Read tasks with `desk list --json`.
+- Never run bare `herdr-desk` or `herdr-desk capture` on a terminal. The board and the capture popup are the user's: they take the terminal until a key ends them. Read tasks with `herdr-desk list --json`.
 
 ## When the runner started you
 
 A task the runner started has `DESK_TASK`, `DESK_RUN`, and `DESK_SESSION` set in your pane, and your first message says what to do. Hand the task back when you stop:
 
-- Finished: `desk set T12 review --ref <a file or PR that shows the work>`; add `--merged` when that PR is merged.
-- You need an answer: `desk note --task T12 "<what you need>"`, then `desk set T12 blocked`. The user adds a note with the answer and arms the task again; the next run's first message holds the history.
+- Finished: `herdr-desk set T12 review --ref <a file or PR that shows the work>`; add `--merged` when that PR is merged.
+- You need an answer: `herdr-desk note --task T12 "<what you need>"`, then `herdr-desk set T12 blocked`. The user adds a note with the answer and arms the task again; the next run's first message holds the history.
 - Every write you make carries your run id. A refusal `stale-run` means a newer run owns the task: stop and do nothing more to it.
 
 ## Commands
@@ -30,15 +30,15 @@ Task ids: `T12`, `t12`, and `12` name the same task.
 
 | goal | command |
 |---|---|
-| list live tasks | `desk list --json` (also `--ready`, `--open`, `--done`, `--archived`, `--all`, `-p <project>`) |
-| read one task and its history | `desk show T12 --json` |
-| propose a task | `desk add -t "<title>" -n "<notes>" --thread agent` |
-| hand a task back | `desk set T12 review` or `desk set T12 blocked` |
-| hand back with the PR | `desk set T12 review --ref <pr-url>`; add `--merged` once the PR is merged |
-| tick steps | `desk steps T12 add "<text>"`, `toggle s1`, `rename s1 "<text>"`, `remove s1` |
-| record a fact | `desk note "<text>" --task T12 --ref <path-or-url>` |
-| record a decision | `desk decide "<text>" --tag k:v` (`--replaces e<id>` when it replaces one) |
-| read the session journal | `desk session <id> --md` (no id: the current session); the file the session-start hook named is rewritten after each write of yours, so reading that path is current too |
+| list live tasks | `herdr-desk list --json` (also `--ready`, `--open`, `--done`, `--archived`, `--all`, `-p <project>`) |
+| read one task and its history | `herdr-desk show T12 --json` |
+| propose a task | `herdr-desk add -t "<title>" -n "<notes>" --thread agent` |
+| hand a task back | `herdr-desk set T12 review` or `herdr-desk set T12 blocked` |
+| hand back with the PR | `herdr-desk set T12 review --ref <pr-url>`; add `--merged` once the PR is merged |
+| tick steps | `herdr-desk steps T12 add "<text>"`, `toggle s1`, `rename s1 "<text>"`, `remove s1` |
+| record a fact | `herdr-desk note "<text>" --task T12 --ref <path-or-url>` |
+| record a decision | `herdr-desk decide "<text>" --tag k:v` (`--replaces e<id>` when it replaces one) |
+| read the session journal | `herdr-desk session <id> --md` (no id: the current session); the file the session-start hook named is rewritten after each write of yours, so reading that path is current too |
 
 Rules:
 
@@ -55,7 +55,7 @@ Never retry blind. Read the code first.
 | exit | meaning | what to do |
 |---|---|---|
 | 0 | done, or already true | go on |
-| 1 | refused, with a stable code first on stderr: `desk <command>: <code>: <message>` | fix the cause; do not repeat the same call |
+| 1 | refused, with a stable code first on stderr: `herdr-desk <command>: <code>: <message>` | fix the cause; do not repeat the same call |
 | 2 | usage error, or the refusal `bad-input` | fix the arguments |
 | 3 | the store or the home could not be reached or read (`home-unreachable`, `bad-token`, `scan-failed`) | do not retry in a loop; tell the user. `note` and `decide` are queued and sent later (stdout says `queued`); for `bad-token` the user must fix the client's token first |
 

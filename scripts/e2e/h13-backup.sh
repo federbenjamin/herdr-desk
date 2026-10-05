@@ -3,10 +3,10 @@
 # shellcheck source=scripts/e2e/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 build
-run 0 on home desk setup --no-herdr
+run 0 on home herdr-desk setup --no-herdr
 start_daemon home
 
-run 1 on home desk backup
+run 1 on home herdr-desk backup
 err_has "backup-off"
 say "backup-off refused ok"
 
@@ -19,11 +19,11 @@ git_remote = "$REMOTE"
 TOML
 start_daemon home
 
-run 0 on home desk add -t "first" --desk
-run 0 on home desk add -t "second" --desk
-run 0 as_agent home s-h13 desk note "a fact worth keeping"
+run 0 on home herdr-desk add -t "first" --desk
+run 0 on home herdr-desk add -t "second" --desk
+run 0 as_agent home s-h13 herdr-desk note "a fact worth keeping"
 
-run 0 on home desk backup
+run 0 on home herdr-desk backup
 out_has "backup: 3 events"
 out_has "committed"
 out_has "pushed"
@@ -32,7 +32,7 @@ LINES=$(git --git-dir="$REMOTE" show main:events.jsonl | wc -l | tr -d ' ')
 git --git-dir="$REMOTE" show main:events.jsonl | grep -q "a fact worth keeping" || fail "the note is not in the remote's export"
 say "pushed ok: the remote's events.jsonl has $LINES lines for 3 events"
 
-run 0 on home desk backup
+run 0 on home herdr-desk backup
 out_has "unchanged"
 [ "$(git --git-dir="$REMOTE" rev-list --count main)" = 1 ] || fail "an unchanged backup made a second commit"
 say "second run unchanged ok"

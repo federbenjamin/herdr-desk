@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/federbenjamin/desk/internal/runner"
+	"github.com/federbenjamin/herdr-desk/internal/runner"
 )
 
 func TestSlugMakesBoundedASCIIBranchNameParts(t *testing.T) {

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/federbenjamin/desk/internal/secretscan"
+	"github.com/federbenjamin/herdr-desk/internal/secretscan"
 )
 
 func TestBuiltinFindsEveryPublishedPatternWithoutReturningSecret(t *testing.T) {

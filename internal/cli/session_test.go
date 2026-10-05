@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/federbenjamin/desk/internal/config"
-	"github.com/federbenjamin/desk/internal/model"
-	"github.com/federbenjamin/desk/internal/testutil"
+	"github.com/federbenjamin/herdr-desk/internal/config"
+	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/testutil"
 )
 
 func TestSessionContinuesRecordsTheLinkInTheNewSessionThenRendersTheChain(t *testing.T) {
@@ -107,7 +107,7 @@ func sortedKeys(m map[string]json.RawMessage) string {
 func TestQueuedWritesAndTheHookNameWhyTheDaemonDidNotStart(t *testing.T) {
 	home := testutil.StartHome(t, testutil.HomeOptions{})
 	home.Stop()
-	cause := errors.New("the daemon exited before its socket answered (exit status 3); see /state/desk/daemon.log")
+	cause := errors.New("the daemon exited before its socket answered (exit status 3); see /state/herdr-desk/daemon.log")
 	spawn := func(config.Paths) error { return cause }
 
 	note := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"note", "kept for later"}, "", map[string]string{"DESK_SESSION": "cause"}, spawn)

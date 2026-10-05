@@ -1,12 +1,12 @@
-// Package api is desk's JSON API over HTTP: POST /v1/<method> with a JSON body. The daemon serves it on a
+// Package api is herdr-desk's JSON API over HTTP: POST /v1/<method> with a JSON body. The daemon serves it on a
 // unix socket and, when configured, on a TCP address that requires the bearer token.
 package api
 
 import (
 	"time"
 
-	"github.com/federbenjamin/desk/internal/model"
-	"github.com/federbenjamin/desk/internal/store"
+	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/store"
 )
 
 // The API methods.
@@ -82,7 +82,7 @@ type Status struct {
 	BackupError string     `json:"backup_error"`
 	// ConfigChanged is true when the config file now holds a different config from the one the daemon started
 	// with (a touch or a same-content rewrite is not a change). The daemon reads the file once, at start, so it
-	// is still running on the old values until `desk daemon restart`.
+	// is still running on the old values until `herdr-desk daemon restart`.
 	ConfigChanged bool `json:"config_changed"`
 }
 

@@ -3,13 +3,13 @@
 # shellcheck source=scripts/e2e/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 build
-run 0 on home desk add -t "alpha walks every status" --desk
-run 0 on home desk add -t "bravo asks before done" --desk
-run 0 on home desk add -t "charlie is spared" --desk
-run 0 on home desk add -t "delta gets a thread" --desk --status ready
-run 0 on home desk add -t "echo needs an answer" --desk --status blocked
+run 0 on home herdr-desk add -t "alpha walks every status" --desk
+run 0 on home herdr-desk add -t "bravo asks before done" --desk
+run 0 on home herdr-desk add -t "charlie is spared" --desk
+run 0 on home herdr-desk add -t "delta gets a thread" --desk --status ready
+run 0 on home herdr-desk add -t "echo needs an answer" --desk --status blocked
 
-term_start board 100 30 home "$BIN/desk"
+term_start board 100 30 home "$BIN/herdr-desk"
 term_wait board "alpha walks every status"
 
 term_keys board +

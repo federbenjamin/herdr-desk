@@ -12,12 +12,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/federbenjamin/desk"
-	"github.com/federbenjamin/desk/internal/config"
-	"github.com/federbenjamin/desk/internal/herdr"
-	"github.com/federbenjamin/desk/internal/model"
-	"github.com/federbenjamin/desk/internal/runner"
-	"github.com/federbenjamin/desk/internal/store"
+	"github.com/federbenjamin/herdr-desk"
+	"github.com/federbenjamin/herdr-desk/internal/config"
+	"github.com/federbenjamin/herdr-desk/internal/herdr"
+	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/runner"
+	"github.com/federbenjamin/herdr-desk/internal/store"
 )
 
 func fireString(s string) *string { return &s }
@@ -135,7 +135,7 @@ func TestTickPassesPromptSchemaInputAndHooksToTheRouter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read router system: %v", err)
 	}
-	if string(system) != desk.RouterSystem() {
+	if string(system) != herdrdesk.RouterSystem() {
 		t.Fatalf("router system = %q, want embedded router system", system)
 	}
 	if info, err := os.Stat(parts[0]); err != nil || info.Mode().Perm() != 0o600 {
@@ -390,7 +390,7 @@ func TestNotifyRunsForEachSpawnAndOnNoRouterStateTransition(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read spawn notifications: %v", err)
 	}
-	want := "desk: T" + fmt.Sprint(first.Number) + " started|first task\n" + "desk: T" + fmt.Sprint(second.Number) + " started|second task\n"
+	want := "herdr-desk: T" + fmt.Sprint(first.Number) + " started|first task\n" + "herdr-desk: T" + fmt.Sprint(second.Number) + " started|second task\n"
 	if string(got) != want {
 		t.Fatalf("spawn notifications = %q, want %q", got, want)
 	}

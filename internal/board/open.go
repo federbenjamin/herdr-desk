@@ -11,7 +11,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/federbenjamin/desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/model"
 )
 
 // herdrID is what a workspace or pane id must look like before it reaches herdr's argv.

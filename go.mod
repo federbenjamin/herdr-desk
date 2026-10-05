@@ -1,4 +1,4 @@
-module github.com/federbenjamin/desk
+module github.com/federbenjamin/herdr-desk
 
 go 1.27
 

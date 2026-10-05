@@ -9,7 +9,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/federbenjamin/desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/model"
 )
 
 // querier is what reads need from a *sql.DB or a *sql.Tx.

@@ -3,7 +3,7 @@ package model_test
 import (
 	"testing"
 
-	"github.com/federbenjamin/desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/model"
 )
 
 func TestResolveProjectTurnsABareNameIntoTheOneKnownPath(t *testing.T) {

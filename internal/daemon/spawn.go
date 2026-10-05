@@ -9,7 +9,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/federbenjamin/desk/internal/config"
+	"github.com/federbenjamin/herdr-desk/internal/config"
 )
 
 const spawnWait = 5 * time.Second

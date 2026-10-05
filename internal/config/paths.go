@@ -1,9 +1,9 @@
-// Package config owns desk's files on disk: where they live, the config file, and the token.
+// Package config owns herdr-desk's files on disk: where they live, the config file, and the token.
 package config
 
 import "path/filepath"
 
-// Paths are desk's four XDG directories; each ends in /desk.
+// Paths are herdr-desk's four XDG directories; each ends in /herdr-desk.
 type Paths struct{ ConfigDir, StateDir, DataDir, CacheDir string }
 
 // ResolvePaths reads XDG_CONFIG_HOME, XDG_STATE_HOME, XDG_DATA_HOME, XDG_CACHE_HOME, falling back to
@@ -15,7 +15,7 @@ func ResolvePaths(getenv func(string) string) Paths {
 		if base == "" {
 			base = filepath.Join(append([]string{home}, fallback...)...)
 		}
-		return filepath.Join(base, "desk")
+		return filepath.Join(base, "herdr-desk")
 	}
 	return Paths{
 		ConfigDir: dir("XDG_CONFIG_HOME", ".config"),

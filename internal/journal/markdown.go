@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/federbenjamin/desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/model"
 )
 
 // Markdown renders the view as the session's journal file.

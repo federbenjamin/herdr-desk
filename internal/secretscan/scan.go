@@ -1,4 +1,4 @@
-// Package secretscan finds secrets in text before desk stores it.
+// Package secretscan finds secrets in text before herdr-desk stores it.
 package secretscan
 
 import (

@@ -1,4 +1,4 @@
-// Package setup does the three one-time jobs of installing desk: first-time setup, the edit of herdr's keys,
+// Package setup does the three one-time jobs of installing herdr-desk: first-time setup, the edit of herdr's keys,
 // and joining a home.
 package setup
 
@@ -13,11 +13,11 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/federbenjamin/desk"
-	"github.com/federbenjamin/desk/internal/api"
-	"github.com/federbenjamin/desk/internal/config"
-	"github.com/federbenjamin/desk/internal/gitcmd"
-	"github.com/federbenjamin/desk/internal/model"
+	"github.com/federbenjamin/herdr-desk"
+	"github.com/federbenjamin/herdr-desk/internal/api"
+	"github.com/federbenjamin/herdr-desk/internal/config"
+	"github.com/federbenjamin/herdr-desk/internal/gitcmd"
+	"github.com/federbenjamin/herdr-desk/internal/model"
 )
 
 // Options configures Run.
@@ -27,7 +27,7 @@ type Options struct {
 	Profile  string // "" | "claude-code"
 	Listen   string // "" → local only
 	Runner   *bool  // nil → leave as is (false on a new config)
-	SkillDir string // "" → write no skill file; else <SkillDir>/desk/SKILL.md
+	SkillDir string // "" → write no skill file; else <SkillDir>/herdr-desk/SKILL.md
 	Force    bool   // replace another program's prefix+t / prefix+a bindings
 	NoHerdr  bool   // leave herdr's config alone
 	Out      io.Writer
@@ -208,15 +208,15 @@ func ensureScratch(ctx context.Context, p config.Paths, out io.Writer) error {
 }
 
 func writeSkill(skillDir string, out io.Writer) error {
-	path := filepath.Join(skillDir, "desk", "SKILL.md")
-	if old, err := os.ReadFile(path); err == nil && string(old) == desk.Skill() {
+	path := filepath.Join(skillDir, "herdr-desk", "SKILL.md")
+	if old, err := os.ReadFile(path); err == nil && string(old) == herdrdesk.Skill() {
 		fmt.Fprintf(out, "skill: %s unchanged\n", path)
 		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, []byte(desk.Skill()), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(herdrdesk.Skill()), 0o644); err != nil {
 		return err
 	}
 	fmt.Fprintf(out, "skill: %s written\n", path)

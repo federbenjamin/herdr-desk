@@ -8,17 +8,17 @@ home_with_listen home "$PORT"
 make_client cli home "$PORT"
 stop_daemon home
 
-run 0 as_agent cli s-h3 desk note "written while offline"
+run 0 as_agent cli s-h3 herdr-desk note "written while offline"
 [ "$OUT" = "queued" ] || fail "an offline note printed '$OUT', want queued"
-run 0 as_agent cli s-h3 desk decide "decided while offline"
+run 0 as_agent cli s-h3 herdr-desk decide "decided while offline"
 [ "$OUT" = "queued" ] || fail "an offline decision printed '$OUT', want queued"
-[ -s "$E2E/cli/state/desk/outbox.jsonl" ] || fail "the outbox is empty"
+[ -s "$E2E/cli/state/herdr-desk/outbox.jsonl" ] || fail "the outbox is empty"
 
 start_daemon home
-run 0 on cli desk list
-[ ! -s "$E2E/cli/state/desk/outbox.jsonl" ] || fail "the outbox was not forwarded"
+run 0 on cli herdr-desk list
+[ ! -s "$E2E/cli/state/herdr-desk/outbox.jsonl" ] || fail "the outbox was not forwarded"
 
-run 0 on home desk session s-h3 --md
+run 0 on home herdr-desk session s-h3 --md
 out_has "written while offline"
 out_has "decided while offline"
 say "the home's view holds both lines"

@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/federbenjamin/desk/internal/journal"
-	"github.com/federbenjamin/desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/journal"
+	"github.com/federbenjamin/herdr-desk/internal/model"
 )
 
 var journalTime = time.Date(2026, time.September, 28, 14, 0, 0, 0, time.UTC)

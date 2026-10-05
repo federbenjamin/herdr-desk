@@ -8,8 +8,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/federbenjamin/desk/internal/model"
-	"github.com/federbenjamin/desk/internal/store"
+	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/store"
 )
 
 const maxMessage = 64 << 10
@@ -34,9 +34,9 @@ func FirstMessage(d store.TaskDetail) string {
 		}
 		head = append(head, strings.Join(lines, "\n"))
 	}
-	handBack := fmt.Sprintf("When the work is finished, hand the task back: run `desk set T%[1]d review --ref <a file or PR that shows the work>`. "+
-		"Add `--merged` when that PR is merged. If you cannot finish, record what you need with `desk note --task T%[1]d \"<what you need>\"`, "+
-		"then run `desk set T%[1]d blocked`. Never set ready or done.", t.Number)
+	handBack := fmt.Sprintf("When the work is finished, hand the task back: run `herdr-desk set T%[1]d review --ref <a file or PR that shows the work>`. "+
+		"Add `--merged` when that PR is merged. If you cannot finish, record what you need with `herdr-desk note --task T%[1]d \"<what you need>\"`, "+
+		"then run `herdr-desk set T%[1]d blocked`. Never set ready or done.", t.Number)
 
 	var history []string
 	for _, ev := range d.History {

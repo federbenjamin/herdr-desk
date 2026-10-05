@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/federbenjamin/desk/internal/gitcmd"
+	"github.com/federbenjamin/herdr-desk/internal/gitcmd"
 )
 
 func TestRunUsesTheDirectoryNotTheRepositoryTheEnvironmentNames(t *testing.T) {

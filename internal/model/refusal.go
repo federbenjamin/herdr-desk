@@ -23,7 +23,7 @@ const (
 	CodeNotAllowed      = "not-allowed"
 	CodeBackupOff       = "backup-off"
 	CodeStaleRun        = "stale-run"        // a status write from a run that is not the task's newest
-	CodeNoRun           = "no-run"           // the task has no live run to kill, or desk worker's run is not running
+	CodeNoRun           = "no-run"           // the task has no live run to kill, or herdr-desk worker's run is not running
 	CodeBadInput        = "bad-input"        // exit 2: a value the store does not know (a status, an isolation, a step op, a session id) or a merged event with no branch
 	CodeHomeUnreachable = "home-unreachable" // exit 3
 	CodeScanFailed      = "scan-failed"      // exit 3

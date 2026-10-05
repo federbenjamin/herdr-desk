@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/federbenjamin/desk/internal/cli"
-	"github.com/federbenjamin/desk/internal/config"
-	"github.com/federbenjamin/desk/internal/daemon"
-	"github.com/federbenjamin/desk/internal/testutil"
+	"github.com/federbenjamin/herdr-desk/internal/cli"
+	"github.com/federbenjamin/herdr-desk/internal/config"
+	"github.com/federbenjamin/herdr-desk/internal/daemon"
+	"github.com/federbenjamin/herdr-desk/internal/testutil"
 )
 
 func TestACommandOnAnOverlongSocketPathPrintsTheReasonNotAPointerToTheLog(t *testing.T) {
