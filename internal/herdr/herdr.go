@@ -235,6 +235,19 @@ func (c *Client) FocusPane(ctx context.Context, workspace, pane string) error {
 	return nil
 }
 
+// ReportToken runs `herdr pane report-metadata <pane> --source <source> --token <name>=<value>`, or `--clear-token
+// <name>` when value is empty. The pane comes first: herdr 0.9.1 reads a value after --source as the pane otherwise.
+func (c *Client) ReportToken(ctx context.Context, pane, source, name, value string) error {
+	args := []string{"pane", "report-metadata", pane, "--source", source}
+	if value == "" {
+		args = append(args, "--clear-token", name)
+	} else {
+		args = append(args, "--token", name+"="+value)
+	}
+	_, err := c.exec(ctx, "pane report-metadata", args...)
+	return err
+}
+
 func (c *Client) json(ctx context.Context, name string, args []string, into any) error {
 	out, err := c.exec(ctx, name, args...)
 	if err != nil {

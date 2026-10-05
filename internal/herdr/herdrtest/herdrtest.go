@@ -4,6 +4,7 @@ package herdrtest
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"sync"
 
@@ -18,8 +19,8 @@ type Workspace struct {
 }
 
 // Herdr has the methods of herdr.Client that runner.Herdr names, so it satisfies it. It is safe for concurrent use. A
-// new pane reports status "unknown" and no session. ClosePane removes the pane; Run, Processes, ClosePane, and
-// FocusPane on an unknown pane are errors, and Pane reports it not found.
+// new pane reports status "unknown" and no session. ClosePane removes the pane; Run, Processes, ClosePane, FocusPane,
+// and ReportToken on an unknown pane are errors, and Pane reports it not found.
 type Herdr struct {
 	mu         sync.Mutex
 	next       int
@@ -29,15 +30,17 @@ type Herdr struct {
 	procs      map[string]herdr.Processes
 	closed     []string
 	focused    []string
+	tokens     map[string]map[string]string
 	fails      map[string]error
 }
 
 // NewHerdr returns an empty stand-in.
 func NewHerdr() *Herdr {
 	return &Herdr{
-		panes: map[string]herdr.Pane{},
-		procs: map[string]herdr.Processes{},
-		fails: map[string]error{},
+		panes:  map[string]herdr.Pane{},
+		procs:  map[string]herdr.Processes{},
+		tokens: map[string]map[string]string{},
+		fails:  map[string]error{},
 	}
 }
 
@@ -158,6 +161,37 @@ func (h *Herdr) Focused() []string {
 	return slices.Clone(h.focused)
 }
 
+// ReportToken sets the pane's token name to value, or removes it when value is empty, as herdr's report-metadata does.
+func (h *Herdr) ReportToken(_ context.Context, pane, source, name, value string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if err := h.fails["ReportToken"]; err != nil {
+		return err
+	}
+	if _, ok := h.panes[pane]; !ok {
+		return fmt.Errorf("herdr pane report-metadata: unknown pane %q", pane)
+	}
+	if source == "" || name == "" {
+		return fmt.Errorf("herdr pane report-metadata: source %q or token name %q is empty", source, name)
+	}
+	if value == "" {
+		delete(h.tokens[pane], name)
+		return nil
+	}
+	if h.tokens[pane] == nil {
+		h.tokens[pane] = map[string]string{}
+	}
+	h.tokens[pane][name] = value
+	return nil
+}
+
+// Tokens returns the tokens last reported for the pane, kept after the pane closes so a test can read what it showed.
+func (h *Herdr) Tokens(pane string) map[string]string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return maps.Clone(h.tokens[pane])
+}
+
 // Workspaces returns every workspace created, in order.
 func (h *Herdr) Workspaces() []Workspace {
 	h.mu.Lock()
@@ -203,8 +237,8 @@ func (h *Herdr) Closed() []string {
 	return slices.Clone(h.closed)
 }
 
-// Fail makes the named method (CreateWorkspace, Run, Panes, Pane, Processes, ClosePane, or FocusPane) return err;
-// nil clears it.
+// Fail makes the named method (CreateWorkspace, Run, Panes, Pane, Processes, ClosePane, FocusPane, or ReportToken)
+// return err; nil clears it.
 func (h *Herdr) Fail(method string, err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

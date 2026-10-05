@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """A stand-in for herdr, for tests. Standard library only.
 
-State lives under $FAKE_HERDR_DIR: state.json, one <pane>.log per pane, notifications.log, and calls.log, one
-line per call: the time it began and its arguments.
+State lives under $FAKE_HERDR_DIR: state.json (each pane's tokens from report-metadata included), one <pane>.log per
+pane, notifications.log, and calls.log, one line per call: the time it began and its arguments.
 FAKE_HERDR_FAIL=<subcommand words joined by ->, for example pane-run, makes that subcommand exit 1.
 FAKE_HERDR_EVENTS=1 runs `herdr-desk hook herdr-event` in the background, as herdr runs a plugin's [[events]] hook,
 after a report-agent that changes a pane's status and after a pane closes or is reaped.
@@ -183,6 +183,7 @@ def pane_info(pid, p):
         "workspace_id": p["workspace"],
         "agent_status": p["status"],
         "agent_session": {"value": p["session"]} if p["session"] else None,
+        "tokens": dict(p.get("tokens", {})),
     }
 
 
@@ -313,6 +314,30 @@ def cmd_report_agent_session(d, st, args):
     emit({"type": "ok"})
 
 
+def cmd_report_metadata(d, st, args):
+    # herdr 0.9.1 reads the pane id only as the first argument.
+    if not args or args[0].startswith("-"):
+        fail("usage: herdr pane report-metadata <PANE_ID> --source <ID> [--token NAME=VALUE]... [--clear-token NAME]...")
+    ap = Parser(prog="herdr pane report-metadata")
+    ap.add_argument("--source", required=True)
+    ap.add_argument("--token", action="append", default=[])
+    ap.add_argument("--clear-token", action="append", default=[])
+    ap.add_argument("--seq", default=None)
+    a = ap.parse_args(args[1:])
+    pane = args[0]
+    if pane not in st["panes"]:
+        not_found(d, st, "pane_not_found", "pane", pane)
+    tokens = st["panes"][pane].setdefault("tokens", {})
+    for t in a.token:
+        name, sep, value = t.partition("=")
+        if not sep or not name:
+            fail("--token wants NAME=VALUE: " + t)
+        tokens[name] = value
+    for name in a.clear_token:
+        tokens.pop(name, None)
+    emit({"type": "ok"})
+
+
 def cmd_notification_show(d, st, args):
     ap = Parser(prog="herdr notification show")
     ap.add_argument("title")
@@ -337,6 +362,7 @@ HANDLERS = {
     ("pane", "close"): cmd_pane_close,
     ("pane", "report-agent"): cmd_report_agent,
     ("pane", "report-agent-session"): cmd_report_agent_session,
+    ("pane", "report-metadata"): cmd_report_metadata,
     ("notification", "show"): cmd_notification_show,
 }
 
