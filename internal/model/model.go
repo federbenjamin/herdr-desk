@@ -77,27 +77,55 @@ type Run struct {
 	Pane      string    `json:"pane"`
 	StartedTS time.Time `json:"started_ts"`
 	EndedTS   time.Time `json:"ended_ts"`
+	LeftOpen  bool      `json:"left_open"` // its pane is owed a close (a kill or a spawn could not close it, or a start ended the run idle); the ticker closes it again
 }
 
-// The run states. A run in the first three is live: it holds one of the runner's slots.
+// The run states. A run in the first four is live. A starting or running run takes one of the runner's cap slots;
+// a starting, running, or idle in-place run holds its root.
 const (
-	RunRouting = "routing" // the router is choosing where the task runs
-	RunWaiting = "waiting" // routed; its root already has a live in-place run
-	RunRunning = "running" // a pane was started for it
-	RunEnded   = "ended"   // its task left started
-	RunFailed  = "failed"  // the router or the spawn failed
-	RunKilled  = "killed"  // killed by a person or by the time limit
+	RunStarting = "starting" // its pane is being opened
+	RunWaiting  = "waiting"  // it cannot start now: its in-place root is busy or cap runs are live
+	RunRunning  = "running"  // a pane was started for it
+	RunIdle     = "idle"     // its agent stopped without handing back
+	RunEnded    = "ended"    // its task was handed back or set done
+	RunFailed   = "failed"   // the spawn failed or the run was left starting
+	RunKilled   = "killed"   // killed by a person or by the time limit
 )
 
-// RunLive reports whether state is routing, waiting, or running.
-func RunLive(state string) bool {
-	return state == RunRouting || state == RunWaiting || state == RunRunning
+// LiveRunStates are the states of a live run: starting, waiting, running, idle.
+func LiveRunStates() []string { return []string{RunStarting, RunWaiting, RunRunning, RunIdle} }
+
+// FinalRunStates are the states a run never leaves: ended, failed, killed.
+func FinalRunStates() []string { return []string{RunEnded, RunFailed, RunKilled} }
+
+// SlotRunStates are the states of a run that takes one of the runner's cap slots: starting, running.
+func SlotRunStates() []string { return []string{RunStarting, RunRunning} }
+
+// RootRunStates are the states in which an in-place run holds its root: starting, running, idle.
+func RootRunStates() []string { return []string{RunStarting, RunRunning, RunIdle} }
+
+// RunLive reports whether state is one of LiveRunStates.
+func RunLive(state string) bool { return slices.Contains(LiveRunStates(), state) }
+
+// RunFinal reports whether state is one of FinalRunStates.
+func RunFinal(state string) bool { return slices.Contains(FinalRunStates(), state) }
+
+// RunTakesSlot reports whether state is one of SlotRunStates.
+func RunTakesSlot(state string) bool { return slices.Contains(SlotRunStates(), state) }
+
+// Coordinator is the desk's one coordinator session, its herdr workspace and pane, and the id of the newest event
+// its last context showed.
+type Coordinator struct {
+	Session   string `json:"session"`
+	Workspace string `json:"workspace"`
+	Pane      string `json:"pane"`
+	Cursor    int64  `json:"cursor"`
 }
 
 // The tags the runner writes.
 const (
 	TagRunner = "runner" // on every note the runner writes
-	TagRouter = "router" // also on the note that records a route or a router failure
+	TagRouter = "router" // on the notes the removed router wrote; a worker's first message still leaves them out
 )
 
 // SessionTask is a task created by a session in the chain, with what the journal needs.

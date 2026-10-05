@@ -39,8 +39,22 @@ func w3LiveData() board.Data {
 			RunnerOn:    true,
 			RunnerState: api.RunnerStateOn,
 			RunnerCap:   4,
+			Ticker:      api.TickerStatus{Running: true},
 		},
 		Notes: map[int]string{1: "await deploy", 3: "watching logs"},
+	}
+}
+
+// With the runner on and no ticker, nothing stops a run past max_run_minutes: the header must not read as all well.
+func TestViewHeaderSaysWhenNoTickerRunsBehindALiveRunner(t *testing.T) {
+	for _, state := range []string{api.RunnerStateOn, api.RunnerStatePaused} {
+		d := w3LiveData()
+		d.Status.RunnerState, d.Status.Ticker.Running = state, false
+		w3RequireContains(t, w3State(200, d).Text(), "· home · no ticker")
+		d.Status.Ticker.Running = true
+		if text := w3State(200, d).Text(); strings.Contains(text, "no ticker") {
+			t.Fatalf("runner %s with a ticker: header says no ticker:\n%s", state, text)
+		}
 	}
 }
 
@@ -89,7 +103,7 @@ func TestViewWideBoardShowsEverySectionRowAndDetail(t *testing.T) {
 		"T1", "blocked", "ship release", "↳ \"await deploy\"",
 		"T2", "review", "review patch", "#ops",
 		"T3", "started", "run checks", "↳ last note: \"watching logs\"",
-		"T4", "ready", "#agent · queued", "inbox",
+		"T4", "ready", "#agent · alpha", "inbox",
 		"T5", "open", "sort inbox",
 		"root - · isolation - · model -", // The wide layout draws the task beside the board.
 	)
@@ -115,7 +129,7 @@ func TestViewMediumBoardShowsTheUntruncatedRowDetails(t *testing.T) {
 		"T1  blocked  ship release", "alpha · 40s ago", "↳ \"await deploy\"",
 		"T2  review   review patch", "#ops · beta · 5m ago",
 		"T3  started  run checks", "alpha · worktree · gpt · 30h", "↳ last note: \"watching logs\"",
-		"T4  ready    queue agent", "#agent · queued · alpha · 30m ago",
+		"T4  ready    queue agent", "#agent · alpha · 30m ago",
 		"inbox", "T5  open     sort inbox", "30h ago",
 	)
 }
@@ -124,7 +138,7 @@ func TestViewNarrowBoardDropsDetailsAndUsesShortFooter(t *testing.T) {
 	s := w3State(60, w3LiveData())
 	text := s.Text()
 	w3RequireContains(t, text, "T1", "ship release", "? keys  q quit")
-	for _, absent := range []string{"alpha · 40s ago", "#agent · queued", "worktree · gpt"} {
+	for _, absent := range []string{"alpha · 40s ago", "#agent · alpha", "worktree · gpt"} {
 		if strings.Contains(text, absent) {
 			t.Fatalf("narrow board retained row detail %q:\n%s", absent, text)
 		}
@@ -139,8 +153,8 @@ func TestViewNarrowBoardDropsDetailsAndUsesShortFooter(t *testing.T) {
 func TestViewFooterWrapsAtDoubleSpaceGroups(t *testing.T) {
 	text := w3State(90, w3LiveData()).Text()
 	w3RequireContains(t, text,
-		"+ add  n ready  s start  b blocked  r review  x done  a #agent  f focus  k kill  P pause",
-		"/ search  p project  t thread  d done  ? keys",
+		"+ add  n ready  S run  s start  b blocked  r review  x done  a #agent  f focus  k kill",
+		"P pause  / search  p project  t thread  d done  ? keys",
 	)
 	for _, line := range strings.Split(text, "\n") {
 		if len([]rune(line)) > 90 {
@@ -206,8 +220,8 @@ func TestViewRunnerLabelsUseTheReportedRunnerState(t *testing.T) {
 		},
 		{
 			name: "unavailable state is displayed verbatim",
-			data: board.Data{Status: api.Status{RunnerState: api.RunnerStateNoRouter}},
-			want: "runner ○ no-router · home",
+			data: board.Data{Status: api.Status{RunnerState: api.RunnerStateNoHerdr}},
+			want: "runner ○ no-herdr · home",
 		},
 	}
 	for _, tc := range cases {

@@ -11,6 +11,12 @@ BIN="$E2E/bin"
 # A hermetic script never finds a herdr on PATH: the name is sealed to a path that does not exist.
 export DESK_HERDR="$E2E/no-herdr"
 PIDS=()
+# The caller's own XDG folders as the script began, NAME=value for each one set: a real claude runs on these, never
+# on a machine's temp folders (claude_wrapper).
+CALLER_XDG=()
+for v in XDG_CONFIG_HOME XDG_STATE_HOME XDG_DATA_HOME XDG_CACHE_HOME; do
+  if [ -n "${!v+x}" ]; then CALLER_XDG+=("$v=${!v}"); fi
+done
 TMUX_SOCK="desk-e2e-$$"
 OUT=""
 ERR=""
@@ -23,13 +29,44 @@ fail() {
 pass() { say "E2E PASS"; }
 ok() { say "ok: $*"; }
 
+# machine_env <machine>: set MACHINE_ENV to the env argv a person's command on that machine runs under: no agent
+# session or run, and the machine's four folders. on, term_start, and the event hook's command build from it.
+machine_env() {
+  local m=$1
+  MACHINE_ENV=(env -u DESK_SESSION -u DESK_RUN -u DESK_HOOKS -u CLAUDE_CODE_SESSION_ID
+    "XDG_CONFIG_HOME=$E2E/$m/config" "XDG_STATE_HOME=$E2E/$m/state"
+    "XDG_DATA_HOME=$E2E/$m/data" "XDG_CACHE_HOME=$E2E/$m/cache")
+}
+
+# popup_manifest <dst>: write to <dst> the repo's herdr-plugin.toml as the temp plugin desk-e2e: no build, startup,
+# or events block, and its board and capture commands run this build's binary as a person on the home.
+popup_manifest() {
+  local dst=$1
+  machine_env home
+  python3 - "$REPO/herdr-plugin.toml" "$dst" "$BIN/herdr-desk" "${MACHINE_ENV[@]}" <<'PY' || fail "cannot write the temp manifest"
+import json
+import re
+import sys
+
+src, dst, desk = sys.argv[1:4]
+env = sys.argv[4:]
+text = open(src).read()
+parts = re.split(r"(?m)^(?=\[\[)", text)
+text = "".join(p for p in parts if not p.startswith(("[[build]]", "[[startup]]", "[[events]]")))
+text = text.replace('id = "herdr-desk"\n', 'id = "desk-e2e"\n', 1)
+text = text.replace('command = ["herdr-desk", "capture"]', "command = " + json.dumps(env + [desk, "capture"]))
+text = text.replace('command = ["herdr-desk"]', "command = " + json.dumps(env + [desk]))
+open(dst, "w").write(text)
+PY
+  grep -q 'id = "desk-e2e"' "$dst" || fail "the temp manifest has no id desk-e2e"
+  if grep -Eq '^\[\[(build|startup|events)\]\]' "$dst"; then fail "the temp manifest still has a build, startup, or events block"; fi
+}
+
 # on <machine> <command...>: run a command as a person on that machine.
 on() {
-  local m=$1
+  machine_env "$1"
   shift
-  env -u DESK_SESSION -u DESK_RUN -u DESK_HOOKS -u CLAUDE_CODE_SESSION_ID \
-    XDG_CONFIG_HOME="$E2E/$m/config" XDG_STATE_HOME="$E2E/$m/state" \
-    XDG_DATA_HOME="$E2E/$m/data" XDG_CACHE_HOME="$E2E/$m/cache" "$@"
+  "${MACHINE_ENV[@]}" "$@"
 }
 
 # as_agent <machine> <session> <command...>: the same, as an agent session.
@@ -42,18 +79,123 @@ as_agent() {
 cleanup() {
   local d m p
   for d in "$E2E"/*/state/herdr-desk; do
-    [ -f "$d/daemon.json" ] || continue
+    [ -f "$d/ticker.json" ] || continue
     m=$(basename "$(dirname "$(dirname "$d")")")
-    on "$m" herdr-desk daemon stop >/dev/null 2>&1 || true
+    on "$m" herdr-desk ticker stop >/dev/null 2>&1 || true
   done
   for p in "${PIDS[@]:-}"; do
     if [ -n "$p" ]; then kill "$p" 2>/dev/null || true; fi
   done
   tmux -L "$TMUX_SOCK" kill-server >/dev/null 2>&1 || true
   wait 2>/dev/null || true
+  local moved=""
+  if [ -n "$CLAUDE_SEEN" ]; then
+    moved=$(claude_resolves 2>&1) && [ "$moved" = "$CLAUDE_SEEN" ] && moved=""
+  fi
   rm -rf "$E2E"
+  if [ -n "$moved" ]; then
+    say "E2E FAIL: (env) the user's claude moved during the test: it was $CLAUDE_SEEN; it is now $moved" >&2
+    exit 1
+  fi
 }
 trap cleanup EXIT
+
+# The real claude. A script that starts one calls claude_wrapper (or wrap_claude) first, which runs claude_guard.
+
+# CLAUDE_REAL is the user's claude, as PATH finds it when claude_guard runs; CLAUDE_SEEN is where it and
+# ~/.local/bin/claude resolve then. cleanup checks them again and fails (env) when either moved.
+CLAUDE_REAL=""
+CLAUDE_SEEN=""
+CLAUDE_CALLS="$E2E/claude-calls.txt"
+AGENT_BIN="$E2E/agent-bin"
+
+# claude_resolves: "<path> -> <target>" for CLAUDE_REAL and, when it exists, ~/.local/bin/claude; fails when a target
+# is not a file.
+claude_resolves() {
+  python3 - "$CLAUDE_REAL" "$HOME/.local/bin/claude" <<'PY'
+import os, sys
+
+real, local = sys.argv[1:3]
+paths = [real] + ([local] if os.path.lexists(local) and local != real else [])
+ok = True
+for p in paths:
+    target = os.path.realpath(p)
+    print("%s -> %s" % (p, target))
+    ok = ok and os.path.isfile(target)
+sys.exit(0 if ok else 1)
+PY
+}
+
+# claude_guard: record where the user's claude resolves; fail (env) when there is none or it does not resolve.
+claude_guard() {
+  [ -z "$CLAUDE_REAL" ] || return 0
+  CLAUDE_REAL=$(command -v claude) || fail "(env) no claude"
+  CLAUDE_SEEN=$(claude_resolves) || {
+    local seen=$CLAUDE_SEEN
+    CLAUDE_SEEN=""
+    fail "(env) the user's claude does not resolve: $seen"
+  }
+}
+
+# claude_wrapper <key>: write CLAUDE_WRAP, a program that runs the user's claude for that key. It logs the key to
+# $CLAUDE_CALLS (claude_calls counts them), gives claude the caller's own XDG folders (unset when the caller had none)
+# in place of a machine's temp ones, drops every CLAUDE_CODE_* variable and CLAUDECODE it inherited, turns claude's
+# updater off, and puts AGENT_BIN first on PATH, so the `herdr-desk` claude and its hooks run is this build on the
+# home's temp folders. Its values are written into it: a pane under the real herdr does not inherit this script's
+# environment.
+claude_wrapper() {
+  local key=$1 kv
+  claude_guard
+  CLAUDE_WRAP="$E2E/claude-$key"
+  mkdir -p "$AGENT_BIN"
+  {
+    printf '#!/bin/bash\n'
+    printf 'XDG_CONFIG_HOME=%q XDG_STATE_HOME=%q XDG_DATA_HOME=%q XDG_CACHE_HOME=%q exec %q "$@"\n' \
+      "$E2E/home/config" "$E2E/home/state" "$E2E/home/data" "$E2E/home/cache" "$BIN/herdr-desk"
+  } >"$AGENT_BIN/herdr-desk"
+  {
+    printf '#!/bin/bash\n'
+    printf '%s %q >>%q\n' "printf '%s\n'" "$key" "$CLAUDE_CALLS"
+    printf 'unset XDG_CONFIG_HOME XDG_STATE_HOME XDG_DATA_HOME XDG_CACHE_HOME\n'
+    for kv in "${CALLER_XDG[@]}"; do printf 'export %s=%q\n' "${kv%%=*}" "${kv#*=}"; done
+    # shellcheck disable=SC2016 # the $ is the wrapper's, expanded when it runs
+    printf 'for v in $(compgen -e); do case $v in CLAUDE_CODE_* | CLAUDECODE) unset "$v" ;; esac; done\n'
+    printf 'export DISABLE_AUTOUPDATER=1\n'
+    # shellcheck disable=SC2016 # the $PATH is the wrapper's
+    printf 'export PATH=%q:"$PATH"\n' "$AGENT_BIN"
+    printf 'exec %q "$@"\n' "$CLAUDE_REAL"
+  } >"$CLAUDE_WRAP"
+  chmod +x "$AGENT_BIN/herdr-desk" "$CLAUDE_WRAP"
+}
+
+# wrap_claude <key>: claude_wrapper <key>, and in the home's config make CLAUDE_WRAP the first word of the [agent]
+# <key> template (worker or coordinator), which the claude-code profile writes as claude.
+wrap_claude() {
+  local key=$1
+  claude_wrapper "$key"
+  python3 - "$E2E/home/config/herdr-desk/config.toml" "$CLAUDE_WRAP" "$key" <<'PY' || fail "the profile's $key template does not start with claude"
+import re, sys
+
+path, wrap, key = sys.argv[1:4]
+text = open(path).read()
+text, n = re.subn(r"(?m)^(%s\s*=\s*\[\s*)(['\"])claude\2" % key, lambda m: m.group(1) + '"%s"' % wrap, text)
+if n != 1:
+    sys.exit("no %s template starting with claude" % key)
+open(path, "w").write(text)
+PY
+}
+
+# unset_claude_markers: unset every CLAUDE_CODE_* variable and CLAUDECODE this script inherited from the session that
+# runs it, so nothing it starts reads as part of that session.
+unset_claude_markers() {
+  local v
+  for v in $(compgen -e); do
+    case $v in CLAUDE_CODE_* | CLAUDECODE) unset "$v" ;; esac
+  done
+}
+
+# claude_calls <key>: how many times the wrapper for that key ran.
+claude_calls() { grep -cx "$1" "$CLAUDE_CALLS" 2>/dev/null || true; }
 
 build() {
   mkdir -p "$BIN"
@@ -112,13 +254,6 @@ wait_long() {
 # wait_for <what> <command...>: poll until the command succeeds, up to 10 s.
 wait_for() { wait_long 10 "$@"; }
 
-sock() { printf '%s' "$E2E/$1/state/herdr-desk/desk.sock"; }
-no_sock() { [ ! -S "$(sock "$1")" ]; }
-
-free_port() {
-  python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])'
-}
-
 # mode <file>: its permission bits, as 600.
 mode() { stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1"; }
 
@@ -130,31 +265,143 @@ write_config() {
   chmod 600 "$dir/config.toml"
 }
 
-start_daemon() {
-  local m=$1
-  on "$m" herdr-desk daemon run >>"$E2E/$m.daemon.log" 2>&1 &
-  PIDS+=("$!")
-  wait_for "the daemon socket on $m" test -S "$(sock "$m")"
-}
+# home_up <machine>: set that machine up as a home. Nothing runs: every command opens the store.
+home_up() { run 0 on "$1" herdr-desk setup --no-herdr; }
 
-stop_daemon() {
-  local m=$1
-  run 0 on "$m" herdr-desk daemon stop
-  wait_for "the daemon on $m to stop" no_sock "$m"
-}
-
-# home_with_listen <machine> <port>: a set-up home serving TCP on 127.0.0.1:<port>, daemon running.
-home_with_listen() {
-  run 0 on "$1" herdr-desk setup --no-herdr --listen "127.0.0.1:$2"
-  start_daemon "$1"
-}
-
-# make_client <client-machine> <home-machine> <port>: the token goes in on stdin.
+# make_client <client-machine> <home-machine>: write a client config whose [client] command is the ssh shim, so a
+# request reaches the home machine's own folders with no sshd.
 make_client() {
-  local token
-  token=$(on "$2" herdr-desk token show)
-  run_in 0 "$token" on "$1" herdr-desk client add "127.0.0.1:$3"
+  write_config "$1" <<TOML
+[client]
+home = "$2"
+command = ["$REPO/scripts/e2e/ssh-shim.sh", "$E2E", "{home}", "herdr-desk", "rpc"]
+TOML
 }
+
+# home_down <machine> [seconds]: from now on the shim holds each request for that many seconds (0 when omitted),
+# then fails it with ssh's exit 255.
+home_down() { printf '%s' "${2:-}" >"$E2E/$1.down"; }
+
+# home_back <machine>: the shim answers again.
+home_back() { rm -f "$E2E/$1.down"; }
+
+ticker_running() { on "$1" herdr-desk ticker status | jq -e '.ticker.running' >/dev/null; }
+ticker_stopped() { ! ticker_running "$1"; }
+
+# ticker_up <machine>: start that home's ticker in the background and wait until it holds its lock.
+ticker_up() {
+  local m=$1
+  on "$m" herdr-desk ticker >>"$E2E/$m.ticker.log" 2>&1 &
+  PIDS+=("$!")
+  wait_for "the ticker on $m" ticker_running "$m"
+}
+
+# ticker_down <machine>: stop that home's ticker and wait until it lets go.
+ticker_down() {
+  run 0 on "$1" herdr-desk ticker stop
+  wait_for "the ticker on $1 to stop" ticker_stopped "$1"
+}
+
+# The real pair (p01, p02). This machine is the home. E2E_CLIENT is the ssh target of the client machine from here;
+# E2E_HOME is the target the client uses to reach this machine. Both machines get temp XDG folders: the home's under
+# $E2E, the client's under RDIR, which pair_cleanup removes.
+
+rssh() { ssh -o BatchMode=yes -o ConnectTimeout=5 "$E2E_CLIENT" "$@"; }
+
+# pair_up: build for both machines, make this one a home, and put the client's binary, a timing helper, and a
+# client config pointing at the home on the client machine.
+pair_up() {
+  { [ -n "${E2E_CLIENT:-}" ] && [ -n "${E2E_HOME:-}" ]; } || fail "(env) set E2E_CLIENT and E2E_HOME"
+  build
+  local info goos goarch
+  info=$(rssh uname -sm) || fail "(env) cannot ssh to the client machine"
+  case "${info% *}" in
+    Darwin) goos=darwin ;;
+    Linux) goos=linux ;;
+    *) fail "(env) the client machine is '$info'" ;;
+  esac
+  case "${info#* }" in
+    arm64 | aarch64) goarch=arm64 ;;
+    x86_64) goarch=amd64 ;;
+    *) fail "(env) the client machine is '$info'" ;;
+  esac
+  (cd "$REPO" && GOOS=$goos GOARCH=$goarch CGO_ENABLED=0 go build -o "$E2E/client-herdr-desk" ./cmd/herdr-desk) ||
+    fail "go build for $goos/$goarch"
+  home_up home
+  trap 'pair_cleanup; cleanup' EXIT
+  RDIR=$(rssh mktemp -d /tmp/dk.XXXXXX) || fail "(env) cannot make a temp folder on the client machine"
+  rssh "mkdir -m 700 -p $RDIR/config/herdr-desk" || fail "cannot make the client's config folder"
+  scp -q -o BatchMode=yes "$E2E/client-herdr-desk" "$E2E_CLIENT:$RDIR/herdr-desk" || fail "cannot copy the binary to the client machine"
+  rssh "chmod 755 $RDIR/herdr-desk && cat >$RDIR/timed.py" <<'PY'
+import subprocess, sys, time
+
+# timed.py <file> <command...>: run the command with this process's stdin and stdout, write its seconds to <file>.
+start = time.perf_counter()
+rc = subprocess.run(sys.argv[2:]).returncode
+open(sys.argv[1], "w").write("%.3f\n" % (time.perf_counter() - start))
+sys.exit(rc)
+PY
+  CN_ENV="env XDG_CONFIG_HOME=$RDIR/config XDG_STATE_HOME=$RDIR/state XDG_DATA_HOME=$RDIR/data XDG_CACHE_HOME=$RDIR/cache"
+  client_config "$E2E_HOME"
+}
+
+# PAIR_SSH is the ssh of the client's default [client] command, up to the home's target.
+PAIR_SSH=(ssh -o BatchMode=yes -o ConnectTimeout=5 -o ControlMaster=auto -o "ControlPath={control}" -o ControlPersist=60)
+
+# client_config <home-target>: write the client's config; its [client] command is the default ssh one, run to reach
+# this machine's home folders with this build's binary.
+client_config() {
+  local words w
+  words=$(for w in "${PAIR_SSH[@]}" "{home}" env "XDG_CONFIG_HOME=$E2E/home/config" "XDG_STATE_HOME=$E2E/home/state" \
+    "XDG_DATA_HOME=$E2E/home/data" "XDG_CACHE_HOME=$E2E/home/cache" "$BIN/herdr-desk" rpc; do printf '"%s", ' "$w"; done)
+  rssh "cat >$RDIR/config/herdr-desk/config.toml && chmod 600 $RDIR/config/herdr-desk/config.toml" <<TOML
+[client]
+home = "$1"
+command = [${words%, }]
+TOML
+}
+
+# pair_control: the client's {control} for E2E_HOME, worked out apart from the binary: <state>/ssh-<the first 8 hex
+# of the home's SHA-256>.
+pair_control() {
+  local sum
+  sum=$(printf '%s' "$E2E_HOME" | shasum -a 256)
+  printf '%s\n' "$RDIR/state/herdr-desk/ssh-${sum:0:8}"
+}
+
+# floor_command: the client's [client] command with `true` in place of the remote herdr-desk, quoted for the client's
+# shell: the cost of the pair's reused connection alone.
+floor_command() {
+  local w control
+  control=$(pair_control)
+  for w in "${PAIR_SSH[@]}" "$E2E_HOME" true; do
+    printf '%q ' "${w//\{control\}/$control}"
+  done
+}
+
+# cn <args...>: run herdr-desk on the client machine as a person, or as the session in CN_SESSION. Its stdin and
+# stdout come back, and so does its exit code. The words are plain, so they survive the remote shell.
+cn() {
+  rssh "$CN_ENV ${CN_SESSION:+DESK_SESSION=$CN_SESSION} $RDIR/herdr-desk $(printf '%q ' "$@")"
+}
+
+# ctimed <args...>: cn, timed on the client machine; the seconds are in CT afterwards.
+ctimed() {
+  local rc=0
+  rssh "$CN_ENV python3 $RDIR/timed.py $RDIR/timed.txt $RDIR/herdr-desk $(printf '%q ' "$@")" || rc=$?
+  # shellcheck disable=SC2034 # read by the scripts that source this file
+  CT=$(rssh "cat $RDIR/timed.txt")
+  return "$rc"
+}
+
+# under <seconds> <limit>: the seconds are under the limit.
+under() { awk -v t="$1" -v l="$2" 'BEGIN { exit !(t < l) }'; }
+
+pair_cleanup() {
+  [ -n "${RDIR:-}" ] || return 0
+  rssh "ssh -o ControlPath=$(pair_control) -O exit $E2E_HOME; rm -rf $RDIR" >/dev/null 2>&1 || true
+}
+
 
 # The terminal helpers. Every screen runs on a private tmux server (TMUX_SOCK) that cleanup kills, so nothing
 # opens on anyone's display. A finished program stays on the server as a dead pane, so its exit code can be read.
@@ -170,9 +417,8 @@ term_start() {
     tm new-session -d -s keeper -x 80 -y 24 -- sleep 3600 || fail "tmux cannot start a server"
     tm set-option -g remain-on-exit on
   fi
-  tm new-session -d -s "$name" -x "$cols" -y "$rows" -- env -u DESK_SESSION -u DESK_RUN -u DESK_HOOKS \
-    -u CLAUDE_CODE_SESSION_ID XDG_CONFIG_HOME="$E2E/$m/config" XDG_STATE_HOME="$E2E/$m/state" \
-    XDG_DATA_HOME="$E2E/$m/data" XDG_CACHE_HOME="$E2E/$m/cache" "$@" || fail "tmux cannot start $name"
+  machine_env "$m"
+  tm new-session -d -s "$name" -x "$cols" -y "$rows" -- "${MACHINE_ENV[@]}" "$@" || fail "tmux cannot start $name"
 }
 
 # term_screen <name>: the text on the screen now.

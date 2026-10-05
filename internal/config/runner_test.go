@@ -11,11 +11,11 @@ import (
 	"github.com/federbenjamin/herdr-desk/internal/config"
 )
 
-func TestLoadReadsAgentModelsAndRouterFiles(t *testing.T) {
+func TestLoadReadsAgentModelsCoordinatorAndStartRuns(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "config.toml")
-	contents := "[agent]\nmodels = [\"gpt-5.6\", \"fast\"]\n\n[router]\nsystem = \"/prompts/router.md\"\nschema = \"/schemas/route.json\"\n"
+	contents := "[agent]\nmodels = [\"gpt-5.6\", \"fast\"]\ncoordinator = [\"agent\", \"{session}\"]\n\n[coordinator]\nstart_runs = \"auto\"\n"
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -27,18 +27,52 @@ func TestLoadReadsAgentModelsAndRouterFiles(t *testing.T) {
 	if want := []string{"gpt-5.6", "fast"}; !slices.Equal(got.Agent.Models, want) {
 		t.Errorf("Load().Agent.Models = %#v; want %#v", got.Agent.Models, want)
 	}
-	if got.Router.System != "/prompts/router.md" || got.Router.Schema != "/schemas/route.json" {
-		t.Errorf("Load().Router = %#v; want system and schema paths", got.Router)
+	if want := []string{"agent", "{session}"}; !slices.Equal(got.Agent.Coordinator, want) {
+		t.Errorf("Load().Agent.Coordinator = %#v; want %#v", got.Agent.Coordinator, want)
+	}
+	if got.Coordinator.StartRuns != config.StartRunsAuto {
+		t.Errorf("Load().Coordinator.StartRuns = %q; want auto", got.Coordinator.StartRuns)
 	}
 }
 
-func TestSaveAndLoadPreserveAgentModelsAndRouterFiles(t *testing.T) {
+func TestLoadRefusesEachRemovedRunnerKeyByName(t *testing.T) {
+	t.Parallel()
+
+	// Each removed key is built from its words, so the tree's sweep for dropped names finds none here.
+	for _, test := range []struct {
+		table string
+		words []string
+		value string
+	}{
+		{"runner", []string{"poll", "seconds"}, "30"},
+		{"runner", []string{"agents", "may", "arm"}, "true"},
+		{"agent", []string{"router"}, `["claude"]`},
+		{"router", []string{"system"}, `"/prompts/router.md"`},
+	} {
+		field := strings.Join(test.words, "_")
+		key := test.table + "." + field
+		text := "[" + test.table + "]\n" + field + " = " + test.value + "\n"
+		t.Run(key, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "config.toml")
+			if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := config.Load(path); err == nil || !strings.Contains(err.Error(), key) {
+				t.Errorf("Load(%q) error = %v; want an error naming %s", text, err, key)
+			}
+		})
+	}
+}
+
+func TestSaveAndLoadPreserveAgentModelsAndTheCoordinator(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "config.toml")
 	want := config.Default()
 	want.Agent.Models = []string{"gpt-5.6", "gpt-5.6-fast"}
-	want.Router = config.RouterFiles{System: "/prompts/custom-router.md", Schema: "/schemas/custom-route.json"}
+	want.Agent.Coordinator = []string{"agent", "--session-id", "{session}"}
+	want.Coordinator.StartRuns = config.StartRunsAuto
 	if err := want.Save(path); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
@@ -47,15 +81,15 @@ func TestSaveAndLoadPreserveAgentModelsAndRouterFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load(saved config) error = %v", err)
 	}
-	if !slices.Equal(got.Agent.Models, want.Agent.Models) {
-		t.Errorf("Load(saved config).Agent.Models = %#v; want %#v", got.Agent.Models, want.Agent.Models)
+	if !slices.Equal(got.Agent.Models, want.Agent.Models) || !slices.Equal(got.Agent.Coordinator, want.Agent.Coordinator) {
+		t.Errorf("Load(saved config).Agent = %#v; want %#v", got.Agent, want.Agent)
 	}
-	if got.Router != want.Router {
-		t.Errorf("Load(saved config).Router = %#v; want %#v", got.Router, want.Router)
+	if got.Coordinator != want.Coordinator {
+		t.Errorf("Load(saved config).Coordinator = %#v; want %#v", got.Coordinator, want.Coordinator)
 	}
 }
 
-func TestValidateRefusesEachRunnerLimitBelowOneByKey(t *testing.T) {
+func TestValidateRefusesEachBadRunnerValueByKey(t *testing.T) {
 	t.Parallel()
 
 	for _, test := range []struct {
@@ -65,7 +99,7 @@ func TestValidateRefusesEachRunnerLimitBelowOneByKey(t *testing.T) {
 		{"runner.cap", func(c *config.Config) { c.Runner.Cap = 0 }},
 		{"runner.max_runs_per_day", func(c *config.Config) { c.Runner.MaxRunsPerDay = 0 }},
 		{"runner.max_run_minutes", func(c *config.Config) { c.Runner.MaxRunMinutes = 0 }},
-		{"runner.poll_seconds", func(c *config.Config) { c.Runner.PollSeconds = 0 }},
+		{"coordinator.start_runs", func(c *config.Config) { c.Coordinator.StartRuns = "always" }},
 	} {
 		t.Run(test.key, func(t *testing.T) {
 			c := config.Default()
@@ -169,13 +203,10 @@ func TestPathsEnvRoundTripsThroughResolvePathsInXDGOrder(t *testing.T) {
 	}
 }
 
-func TestRouterAndRunnerPathsStayInTheStateDirectory(t *testing.T) {
+func TestRunnerPauseStaysInTheStateDirectory(t *testing.T) {
 	t.Parallel()
 
 	p := config.Paths{StateDir: "/state/herdr-desk"}
-	if got, want := p.RouterSystemFile(), "/state/herdr-desk/router-system.md"; got != want {
-		t.Errorf("RouterSystemFile() = %q; want %q", got, want)
-	}
 	if got, want := p.RunnerPause(), "/state/herdr-desk/runner-paused"; got != want {
 		t.Errorf("RunnerPause() = %q; want %q", got, want)
 	}

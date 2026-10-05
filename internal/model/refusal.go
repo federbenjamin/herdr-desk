@@ -23,11 +23,16 @@ const (
 	CodeNotAllowed      = "not-allowed"
 	CodeBackupOff       = "backup-off"
 	CodeStaleRun        = "stale-run"        // a status write from a run that is not the task's newest
+	CodeStale           = "stale"            // a notes write whose NotesWere is not the task's notes now
 	CodeNoRun           = "no-run"           // the task has no live run to kill, or herdr-desk worker's run is not running
+	CodeRunnerOff       = "runner-off"       // run start with runner.enabled false
+	CodeRunnerPaused    = "runner-paused"    // run start while the runner is paused
+	CodeCapReached      = "cap-reached"      // run start once today's runs reach runner.max_runs_per_day
+	CodeNoHerdr         = "no-herdr"         // run start, or a command that opens a pane, with no usable herdr
+	CodeRunFailed       = "run-failed"       // run start whose run failed to start in the same call: the run's reason follows
 	CodeBadInput        = "bad-input"        // exit 2: a value the store does not know (a status, an isolation, a step op, a session id) or a merged event with no branch
 	CodeHomeUnreachable = "home-unreachable" // exit 3
 	CodeScanFailed      = "scan-failed"      // exit 3
-	CodeBadToken        = "bad-token"        // exit 3: the home refused the client's token (HTTP 401)
 )
 
 // AsRefusal reports the Refusal in err's chain, if any.

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -95,36 +96,72 @@ func (c *Client) Run(ctx context.Context, pane, command string) error {
 	return err
 }
 
+// paneJSON is one pane as `herdr pane list` and `herdr pane get` print it.
+type paneJSON struct {
+	ID           string `json:"pane_id"`
+	Workspace    string `json:"workspace_id"`
+	Status       string `json:"agent_status"`
+	AgentSession *struct {
+		Value string `json:"value"`
+	} `json:"agent_session"`
+}
+
+func (p paneJSON) pane() Pane {
+	out := Pane{ID: p.ID, Workspace: p.Workspace, Status: p.Status}
+	if p.AgentSession != nil {
+		out.Session = p.AgentSession.Value
+	}
+	return out
+}
+
 // Panes runs `herdr pane list`.
 func (c *Client) Panes(ctx context.Context) ([]Pane, error) {
 	var res struct {
 		Result struct {
-			Panes *[]struct {
-				ID           string `json:"pane_id"`
-				Workspace    string `json:"workspace_id"`
-				Status       string `json:"agent_status"`
-				AgentSession *struct {
-					Value string `json:"value"`
-				} `json:"agent_session"`
-			} `json:"panes"`
+			Panes *[]paneJSON `json:"panes"`
 		} `json:"result"`
 	}
 	if err := c.json(ctx, "pane list", []string{"pane", "list"}, &res); err != nil {
 		return nil, err
 	}
-	// An answer with no panes list is not "every pane is gone": the watch would hand back every live run.
+	// An answer with no panes list is not "every pane is gone": the reconcile would hand back every live run.
 	if res.Result.Panes == nil {
 		return nil, errors.New("herdr pane list: the answer holds no panes list")
 	}
 	panes := make([]Pane, 0, len(*res.Result.Panes))
 	for _, p := range *res.Result.Panes {
-		pane := Pane{ID: p.ID, Workspace: p.Workspace, Status: p.Status}
-		if p.AgentSession != nil {
-			pane.Session = p.AgentSession.Value
-		}
-		panes = append(panes, pane)
+		panes = append(panes, p.pane())
 	}
 	return panes, nil
+}
+
+// Pane runs `herdr pane get <id>`. found is false, with no error, when herdr answers pane_not_found.
+func (c *Client) Pane(ctx context.Context, id string) (pane Pane, found bool, err error) {
+	out, errOut, err := c.run(ctx, "pane", "get", id)
+	if err != nil {
+		var refusal struct {
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && json.Unmarshal(bytes.TrimSpace(errOut), &refusal) == nil && refusal.Error.Code == "pane_not_found" {
+			return Pane{}, false, nil
+		}
+		return Pane{}, false, cmdError("pane get", err, errOut)
+	}
+	var res struct {
+		Result struct {
+			Pane *paneJSON `json:"pane"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(out, &res); err != nil {
+		return Pane{}, false, fmt.Errorf("herdr pane get: the answer is not the expected JSON: %w", err)
+	}
+	if res.Result.Pane == nil {
+		return Pane{}, false, errors.New("herdr pane get: the answer holds no pane")
+	}
+	return res.Result.Pane.pane(), true, nil
 }
 
 // Processes runs `herdr pane process-info --pane <pane>`.
@@ -165,6 +202,52 @@ func (c *Client) ClosePane(ctx context.Context, pane string) error {
 	return err
 }
 
+// idPattern is what a workspace or pane id must look like before it reaches herdr's argv.
+var idPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9:_.-]*$`)
+
+// FocusArgv returns the commands, each starting with bin, that focus an agent's pane: `workspace focus`, then
+// `pane zoom --on` and `--off`. herdr focuses by id only a pane a plugin owns, so zooming the pane on and off is
+// what focuses an agent's. An id that is not one herdr gives is an error.
+func FocusArgv(bin, workspace, pane string) ([][]string, error) {
+	for _, id := range []string{workspace, pane} {
+		if !idPattern.MatchString(id) {
+			return nil, fmt.Errorf("the workspace or pane id %q is not one herdr gives", id)
+		}
+	}
+	return [][]string{
+		{bin, "workspace", "focus", workspace},
+		{bin, "pane", "zoom", pane, "--on"},
+		{bin, "pane", "zoom", pane, "--off"},
+	}, nil
+}
+
+// FocusPane runs FocusArgv's commands in order, stopping at the first that fails.
+func (c *Client) FocusPane(ctx context.Context, workspace, pane string) error {
+	argvs, err := FocusArgv("herdr", workspace, pane)
+	if err != nil {
+		return err
+	}
+	for _, argv := range argvs {
+		if _, err := c.exec(ctx, strings.Join(argv[1:3], " "), argv[1:]...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ReportToken runs `herdr pane report-metadata <pane> --source <source> --token <name>=<value>`, or `--clear-token
+// <name>` when value is empty. The pane comes first: herdr 0.9.1 reads a value after --source as the pane otherwise.
+func (c *Client) ReportToken(ctx context.Context, pane, source, name, value string) error {
+	args := []string{"pane", "report-metadata", pane, "--source", source}
+	if value == "" {
+		args = append(args, "--clear-token", name)
+	} else {
+		args = append(args, "--token", name+"="+value)
+	}
+	_, err := c.exec(ctx, "pane report-metadata", args...)
+	return err
+}
+
 func (c *Client) json(ctx context.Context, name string, args []string, into any) error {
 	out, err := c.exec(ctx, name, args...)
 	if err != nil {
@@ -177,15 +260,23 @@ func (c *Client) json(ctx context.Context, name string, args []string, into any)
 }
 
 func (c *Client) exec(ctx context.Context, name string, args ...string) ([]byte, error) {
+	out, errOut, err := c.run(ctx, args...)
+	if err != nil {
+		return nil, cmdError(name, err, errOut)
+	}
+	return out, nil
+}
+
+// run runs herdr with args and returns its stdout and stderr; an error is not yet named for its subcommand.
+func (c *Client) run(ctx context.Context, args ...string) (stdout, stderr []byte, err error) {
 	timeout := c.Timeout
 	if timeout <= 0 {
 		timeout = defaultTimeout
 	}
 	bin := c.Bin
 	if bin == "" {
-		var err error
 		if bin, err = Find(); err != nil {
-			return nil, fmt.Errorf("herdr %s: %w", name, err)
+			return nil, nil, err
 		}
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -198,14 +289,19 @@ func (c *Client) exec(ctx context.Context, name string, args ...string) ([]byte,
 		if ctx.Err() != nil {
 			err = fmt.Errorf("timed out after %s", timeout)
 		}
-		msg := strings.TrimSpace(errOut.String())
-		if len(msg) > maxStderr {
-			msg = strings.ToValidUTF8(msg[:maxStderr], "")
-		}
-		if msg != "" {
-			return nil, fmt.Errorf("herdr %s: %w: %s", name, err, msg)
-		}
-		return nil, fmt.Errorf("herdr %s: %w", name, err)
+		return nil, errOut.Bytes(), err
 	}
-	return out.Bytes(), nil
+	return out.Bytes(), errOut.Bytes(), nil
+}
+
+// cmdError names the subcommand and quotes at most 300 bytes of its stderr.
+func cmdError(name string, err error, stderr []byte) error {
+	msg := strings.TrimSpace(string(stderr))
+	if len(msg) > maxStderr {
+		msg = strings.ToValidUTF8(msg[:maxStderr], "")
+	}
+	if msg != "" {
+		return fmt.Errorf("herdr %s: %w: %s", name, err, msg)
+	}
+	return fmt.Errorf("herdr %s: %w", name, err)
 }

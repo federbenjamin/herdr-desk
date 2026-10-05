@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# H13: a backup exports every event and pushes it to the configured remote.
+# H14: a backup exports every event and pushes it to the configured remote.
 # shellcheck source=scripts/e2e/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 build
-run 0 on home herdr-desk setup --no-herdr
-start_daemon home
+home_up home
 
 run 1 on home herdr-desk backup
 err_has "backup-off"
@@ -12,12 +11,10 @@ say "backup-off refused ok"
 
 REMOTE="$E2E/remote.git"
 run 0 git init --quiet --bare "$REMOTE"
-stop_daemon home
 write_config home <<TOML
 [backup]
 git_remote = "$REMOTE"
 TOML
-start_daemon home
 
 run 0 on home herdr-desk add -t "first" --desk
 run 0 on home herdr-desk add -t "second" --desk

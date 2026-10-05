@@ -281,6 +281,18 @@ func (h *fakeHome) KillRun(_ context.Context, a store.Actor, task int) (model.Ta
 	return model.Task{Number: task}, nil
 }
 
+func (h *fakeHome) StartRun(_ context.Context, _ store.Actor, task int, _ store.RunRoute) (model.Run, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if err := h.script("StartRun"); err != nil {
+		return model.Run{}, err
+	}
+	return model.Run{Task: task}, nil
+}
+
+// Retry is a no-op: the fake has no sticky unreachable answer to forget.
+func (h *fakeHome) Retry() {}
+
 func (h *fakeHome) PauseRunner(_ context.Context, a store.Actor, paused bool) (api.Status, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

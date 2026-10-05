@@ -4,26 +4,39 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"slices"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/federbenjamin/herdr-desk/internal/model"
 )
 
-// ErrNotArmed is StartRun's answer when the task is no longer armed.
-var ErrNotArmed = errors.New("the task is not armed")
+// ErrRunLive is StartRun's answer when the task already has a starting, waiting, or running run; StartRun returns
+// that run with it.
+var ErrRunLive = errors.New("the task already has a live run")
 
 // runCols leaves out exit: the column has no writer, since herdr owns the pane and herdr-desk never sees a worker exit.
-const runCols = `id, task, state, root, isolation, model, reason, session, workspace, pane, started_ts, ended_ts`
+const runCols = `id, task, state, root, isolation, model, reason, session, workspace, pane, started_ts, ended_ts, left_open`
 
-const liveRunStates = `('` + model.RunRouting + `', '` + model.RunWaiting + `', '` + model.RunRunning + `')`
+// liveRunStates is model.LiveRunStates as an SQL list.
+var liveRunStates = sqlList(model.LiveRunStates())
+
+// sqlList is states as an SQL list, ('a', 'b'). The states are model's constants, never input.
+func sqlList(states []string) string {
+	return "('" + strings.Join(states, "', '") + "')"
+}
+
+// execer is what a write of run rows needs from a *sql.DB or a *sql.Tx.
+type execer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
 
 func scanRun(row interface{ Scan(...any) error }) (model.Run, error) {
 	var r model.Run
 	var started string
 	var ended sql.NullString
 	err := row.Scan(&r.ID, &r.Task, &r.State, &r.Root, &r.Isolation, &r.Model, &r.Reason, &r.Session,
-		&r.Workspace, &r.Pane, &started, &ended)
+		&r.Workspace, &r.Pane, &started, &ended, &r.LeftOpen)
 	if err != nil {
 		return r, err
 	}
@@ -39,8 +52,8 @@ func scanRun(row interface{ Scan(...any) error }) (model.Run, error) {
 }
 
 // readRuns returns the runs the where clause picks, by id.
-func (s *Store) readRuns(ctx context.Context, where string, args ...any) ([]model.Run, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+runCols+` FROM runs `+where+` ORDER BY id`, args...)
+func readRuns(ctx context.Context, q querier, where string, args ...any) ([]model.Run, error) {
+	rows, err := q.QueryContext(ctx, `SELECT `+runCols+` FROM runs `+where+` ORDER BY id`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -58,12 +71,30 @@ func (s *Store) readRuns(ctx context.Context, where string, args ...any) ([]mode
 
 // ListRuns returns every run, by id.
 func (s *Store) ListRuns(ctx context.Context) ([]model.Run, error) {
-	return s.readRuns(ctx, ``)
+	return readRuns(ctx, s.db, ``)
 }
 
-// LiveRuns returns the runs in state routing, waiting, or running, by id.
+// LiveRuns returns the runs in state starting, waiting, running, or idle, by id.
 func (s *Store) LiveRuns(ctx context.Context) ([]model.Run, error) {
-	return s.readRuns(ctx, `WHERE state IN `+liveRunStates)
+	return readRuns(ctx, s.db, `WHERE state IN `+liveRunStates)
+}
+
+// LiveRunOnPane returns the newest live run whose pane is pane; ok is false when there is none.
+func (s *Store) LiveRunOnPane(ctx context.Context, pane string) (run model.Run, ok bool, err error) {
+	if pane == "" {
+		return model.Run{}, false, nil
+	}
+	runs, err := readRuns(ctx, s.db, `WHERE pane = ? AND state IN `+liveRunStates, pane)
+	if err != nil || len(runs) == 0 {
+		return model.Run{}, false, err
+	}
+	return runs[len(runs)-1], true, nil
+}
+
+// LeftOpenRuns returns the runs whose pane is owed a close, by id: a kill or a spawn could not close it, or StartRun
+// ended the run while idle.
+func (s *Store) LeftOpenRuns(ctx context.Context) ([]model.Run, error) {
+	return readRuns(ctx, s.db, `WHERE left_open = 1`)
 }
 
 // CurrentRun returns the task's newest run; ok is false when it has none.
@@ -80,9 +111,15 @@ func (s *Store) CurrentRun(ctx context.Context, task int) (run model.Run, ok boo
 
 // RunsSince counts the runs started at or after t.
 func (s *Store) RunsSince(ctx context.Context, t time.Time) (int, error) {
+	return runsSince(ctx, s.db, t)
+}
+
+// runsSince is the one count of runs started at or after t: RunsSince's, and StartRun's day cap's inside its
+// transaction.
+func runsSince(ctx context.Context, q querier, t time.Time) (int, error) {
 	// started_ts is RFC 3339 with trimmed nanoseconds, which does not sort as text within one second: the
 	// query keeps every run from t's second on, and the exact test is on the parsed time.
-	rows, err := s.db.QueryContext(ctx, `SELECT started_ts FROM runs WHERE started_ts >= ?`,
+	rows, err := q.QueryContext(ctx, `SELECT started_ts FROM runs WHERE started_ts >= ?`,
 		t.UTC().Format("2006-01-02T15:04:05"))
 	if err != nil {
 		return 0, err
@@ -112,44 +149,45 @@ func (s *Store) RunWrote(ctx context.Context, run int64) (bool, error) {
 	return wrote, err
 }
 
-// RunUpdate is a change to a run row. A zero field is left as it is.
+// RunUpdate is a change to a run row. A zero field is left as it is. Reason is written by HandBack.
 type RunUpdate struct {
 	State     string
-	Root      string
-	Isolation string
-	Model     string
 	Reason    string
 	Session   string
 	Workspace string
 	Pane      string
+	LeftOpen  *bool
 }
 
 // UpdateRun applies u to the run while its state is from, and reports whether it did. A State of ended,
-// failed, or killed also sets ended_ts. A State of running also sets started_ts, so a run's time is counted from
-// its spawn, not from the routing or waiting before it.
+// failed, or killed also sets ended_ts. A State of running from starting or waiting also sets started_ts, so a
+// run's time is counted from its spawn; from idle it keeps it.
 func (s *Store) UpdateRun(ctx context.Context, id int64, from string, u RunUpdate) (bool, error) {
-	var started, ended any
-	if slices.Contains([]string{model.RunEnded, model.RunFailed, model.RunKilled}, u.State) {
-		ended = formatTS(s.now())
+	return updateRun(ctx, s.db, id, from, u, s.now())
+}
+
+func updateRun(ctx context.Context, q execer, id int64, from string, u RunUpdate, now time.Time) (bool, error) {
+	var started, ended, leftOpen any
+	if model.RunFinal(u.State) {
+		ended = formatTS(now)
 	}
-	if u.State == model.RunRunning {
-		started = formatTS(s.now())
+	if u.State == model.RunRunning && (from == model.RunStarting || from == model.RunWaiting) {
+		started = formatTS(now)
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	res, err := s.db.ExecContext(ctx, `UPDATE runs SET
+	if u.LeftOpen != nil {
+		leftOpen = *u.LeftOpen
+	}
+	res, err := q.ExecContext(ctx, `UPDATE runs SET
 		state = COALESCE(NULLIF(?, ''), state),
-		root = COALESCE(NULLIF(?, ''), root),
-		isolation = COALESCE(NULLIF(?, ''), isolation),
-		model = COALESCE(NULLIF(?, ''), model),
 		reason = COALESCE(NULLIF(?, ''), reason),
 		session = COALESCE(NULLIF(?, ''), session),
 		workspace = COALESCE(NULLIF(?, ''), workspace),
 		pane = COALESCE(NULLIF(?, ''), pane),
 		started_ts = COALESCE(?, started_ts),
-		ended_ts = COALESCE(?, ended_ts)
+		ended_ts = COALESCE(?, ended_ts),
+		left_open = COALESCE(?, left_open)
 		WHERE id = ? AND state = ?`,
-		u.State, u.Root, u.Isolation, u.Model, u.Reason, u.Session, u.Workspace, u.Pane, started, ended, id, from)
+		u.State, u.Reason, u.Session, u.Workspace, u.Pane, started, ended, leftOpen, id, from)
 	if err != nil {
 		return false, err
 	}
@@ -157,93 +195,265 @@ func (s *Store) UpdateRun(ctx context.Context, id int64, from string, u RunUpdat
 	return n > 0, err
 }
 
-// armedTasks returns the armed tasks' numbers in the order they were armed; extra narrows the query. One query
-// decides arming for Armed and StartRun.
-func (s *Store) armedTasks(ctx context.Context, q querier, extra string, args ...any) ([]int, error) {
-	query := `SELECT t.number FROM tasks t
-		JOIN events e ON e.id = (SELECT MAX(id) FROM events WHERE task = t.number AND kind IN ('task', 'set')
-			AND json_extract(data, '$.status') = 'ready')
-		WHERE t.status = 'ready' AND t.thread = 'agent' AND t.archived = 0`
-	if !s.agentsMayArm {
-		query += ` AND e.who = 'user'`
-	}
-	rows, err := q.QueryContext(ctx, query+extra+` ORDER BY e.id`, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []int
-	for rows.Next() {
-		var n int
-		if err := rows.Scan(&n); err != nil {
-			return nil, err
-		}
-		out = append(out, n)
-	}
-	return out, rows.Err()
+// RunRoute is where and how a task runs: runs.start's params, Resolve's input and output, and what StartRun
+// records. An empty field means not given.
+type RunRoute struct {
+	Root      string `json:"root,omitempty"`
+	Isolation string `json:"isolation,omitempty"`
+	Model     string `json:"model,omitempty"`
 }
 
-// Armed returns the tasks the runner may start, in the order they were armed: status ready, thread "agent",
-// not archived, and, unless AgentsMayArm, the newest event that set the task ready was written by a user.
-func (s *Store) Armed(ctx context.Context) ([]model.Task, error) {
-	numbers, err := s.armedTasks(ctx, s.db, ``)
-	if err != nil {
-		return nil, err
-	}
-	tasks, err := s.readTasks(ctx, `WHERE number IN (SELECT value FROM json_each(?))`,
-		[]any{string(model.MustData(numbers))}, func(model.Task) bool { return true })
-	if err != nil {
-		return nil, err
-	}
-	out := make([]model.Task, 0, len(tasks))
-	for _, n := range numbers {
-		if i := slices.IndexFunc(tasks, func(t model.Task) bool { return t.Number == n }); i >= 0 {
-			out = append(out, tasks[i])
-		}
-	}
-	return out, nil
+// RunCaps are the limits StartRun checks inside its transaction.
+type RunCaps struct {
+	Slots  int       // runner.cap: runs starting or running at once; a run past it waits
+	PerDay int       // runner.max_runs_per_day: runs started at or after Since; a start past it is refused
+	Since  time.Time // the start of the day PerDay counts, local midnight
 }
 
-// StartRun creates the task's run row in state routing and sets the task started, in one transaction. The set
-// event carries the run's id and no session. It returns ErrNotArmed when the task is not armed any more.
-func (s *Store) StartRun(ctx context.Context, task int) (model.Run, error) {
-	var run model.Run
-	started := model.StatusStarted
-	_, _, err := s.append(ctx, Actor{}, write{
-		kind: model.KindSet,
+// StartRun creates the task's run on the route and sets the task started with the route, in one transaction of two
+// writes: the run insert, then the task's set event, which carries the run's id and no session. The run is starting
+// when slotOpen allows it under caps.Slots, else waiting. The task must exist, be neither archived nor done, and have
+// no starting, waiting, or running run (ErrRunLive, with that run). Then, while caps.PerDay runs started at or after
+// caps.Since, the start is refused cap-reached and writes nothing. An idle run of the task is ended in the same
+// transaction and, when it has a pane, marked left_open: its pane is owed a close (LeftOpenRuns).
+func (s *Store) StartRun(ctx context.Context, task int, route RunRoute, caps RunCaps) (model.Run, error) {
+	var run, live model.Run
+	insert := write{
 		prepare: func(tx *sql.Tx) (int, any, error) {
-			armed, err := s.armedTasks(ctx, tx, ` AND t.number = ?`, task)
+			cur, err := readTask(ctx, tx, task)
 			if err != nil {
 				return 0, nil, err
 			}
-			if len(armed) == 0 {
-				return 0, nil, ErrNotArmed
+			switch {
+			case cur.Archived:
+				return 0, nil, refuse(model.CodeNotAllowed, "T%d is archived; unarchive it to run it", task)
+			case cur.Status == model.StatusDone:
+				return 0, nil, refuse(model.CodeNotAllowed, "T%d is done; set it open or ready to run it again", task)
 			}
-			return task, model.Patch{Status: &started}, nil
-		},
-		apply: func(tx *sql.Tx, ev model.Event) error {
-			ts := formatTS(ev.TS)
-			res, err := tx.ExecContext(ctx, `INSERT INTO runs(task, state, started_ts) VALUES(?, ?, ?)`, task, model.RunRouting, ts)
+			lives, err := readRuns(ctx, tx, `WHERE task = ? AND state IN `+liveRunStates, task)
 			if err != nil {
-				return err
+				return 0, nil, err
+			}
+			for _, r := range lives {
+				if r.State != model.RunIdle {
+					live = r
+					return 0, nil, ErrRunLive
+				}
+			}
+			today, err := runsSince(ctx, tx, caps.Since)
+			if err != nil {
+				return 0, nil, err
+			}
+			if today >= caps.PerDay {
+				return 0, nil, refuse(model.CodeCapReached, "%d runs started today, runner.max_runs_per_day is %d", today, caps.PerDay)
+			}
+			ts := s.stamp(Actor{})
+			if err := endLiveRuns(ctx, tx, ts, `task = ? AND state = ?`, task, model.RunIdle); err != nil {
+				return 0, nil, err
+			}
+			// Every live run left in lives is idle, and its worker is still at its prompt in its pane: the close it is
+			// owed is recorded with its end, so whoever closes it (the caller, or the ticker) learns it from this
+			// transaction, never from a read made before it.
+			for _, idle := range lives {
+				if idle.Pane == "" {
+					continue
+				}
+				if _, err := tx.ExecContext(ctx, `UPDATE runs SET left_open = 1 WHERE id = ?`, idle.ID); err != nil {
+					return 0, nil, err
+				}
+			}
+			state := model.RunWaiting
+			if open, err := slotOpen(ctx, tx, caps.Slots, route); err != nil {
+				return 0, nil, err
+			} else if open {
+				state = model.RunStarting
+			}
+			res, err := tx.ExecContext(ctx, `INSERT INTO runs(task, state, root, isolation, model, started_ts) VALUES(?, ?, ?, ?, ?, ?)`,
+				task, state, route.Root, route.Isolation, route.Model, formatTS(ts))
+			if err != nil {
+				return 0, nil, err
 			}
 			id, err := res.LastInsertId()
 			if err != nil {
-				return err
-			}
-			// The event is inserted before the run exists, so it learns the run's id here, in the same transaction.
-			if _, err := tx.ExecContext(ctx, `UPDATE events SET run = ? WHERE id = ?`, id, ev.ID); err != nil {
-				return err
-			}
-			if _, err := tx.ExecContext(ctx, `UPDATE tasks SET status = ?, updated_ts = ? WHERE number = ?`,
-				string(started), ts, task); err != nil {
-				return err
+				return 0, nil, err
 			}
 			run, err = scanRun(tx.QueryRowContext(ctx, `SELECT `+runCols+` FROM runs WHERE id = ?`, id))
+			return 0, nil, err
+		},
+	}
+	started := model.StatusStarted
+	var after model.Task
+	set := s.setWrite(ctx, Actor{}, task, model.Patch{Status: &started, Root: &route.Root, Isolation: &route.Isolation, Model: &route.Model},
+		"", false, &after)
+	apply := set.apply
+	set.apply = func(tx *sql.Tx, ev model.Event) error {
+		// The set event is inserted with the actor's run, none, so it learns the new run's id here.
+		if _, err := tx.ExecContext(ctx, `UPDATE events SET run = ? WHERE id = ?`, run.ID, ev.ID); err != nil {
 			return err
+		}
+		return apply(tx, ev)
+	}
+	_, err := s.append(ctx, Actor{}, insert, set)
+	if errors.Is(err, ErrRunLive) {
+		return live, err
+	}
+	if err != nil {
+		return model.Run{}, err
+	}
+	return run, nil
+}
+
+// ClaimWaiting moves the oldest waiting run that slotOpen allows under cap to starting, with its started_ts set to
+// now, in one transaction. ok is false when no waiting run can start.
+func (s *Store) ClaimWaiting(ctx context.Context, cap int) (run model.Run, ok bool, err error) {
+	_, err = s.append(ctx, Actor{}, write{
+		prepare: func(tx *sql.Tx) (int, any, error) {
+			waiting, err := readRuns(ctx, tx, `WHERE state = ?`, model.RunWaiting)
+			if err != nil {
+				return 0, nil, err
+			}
+			for _, w := range waiting {
+				open, err := slotOpen(ctx, tx, cap, RunRoute{Root: w.Root, Isolation: w.Isolation})
+				if err != nil {
+					return 0, nil, err
+				}
+				if !open {
+					continue
+				}
+				now := s.now()
+				if _, err := tx.ExecContext(ctx, `UPDATE runs SET state = ?, started_ts = ? WHERE id = ? AND state = ?`,
+					model.RunStarting, formatTS(now), w.ID, model.RunWaiting); err != nil {
+					return 0, nil, err
+				}
+				run, ok = w, true
+				run.State, run.StartedTS = model.RunStarting, now.UTC()
+				break
+			}
+			return 0, nil, nil
 		},
 	})
-	return run, err
+	if err != nil {
+		return model.Run{}, false, err
+	}
+	return run, ok, nil
+}
+
+// slotOpen is the one slot rule, answered inside the caller's transaction: fewer than cap runs are starting or
+// running, and, for an in-place route, no in-place run on its root is starting, running, or idle. Waiting and idle
+// runs take no slot.
+func slotOpen(ctx context.Context, q querier, cap int, route RunRoute) (bool, error) {
+	var used int
+	err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM runs WHERE state IN `+sqlList(model.SlotRunStates())).Scan(&used)
+	if err != nil || used >= cap {
+		return false, err
+	}
+	if route.Isolation != "in-place" {
+		return true, nil
+	}
+	var busy bool
+	err = q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM runs WHERE root = ? AND isolation = 'in-place' AND state IN `+
+		sqlList(model.RootRunStates())+`)`, route.Root).Scan(&busy)
+	return !busy, err
+}
+
+// HandBack is one hand-back of a run: the claim moves the run from From to To, then the note and the task's status
+// are written as the run's actor.
+type HandBack struct {
+	From, To string       // the claim; To "" leaves the run in From
+	Status   model.Status // the task's new status; "" leaves it
+	IfStatus model.Status // "" → always; else Status is written only while the task's status is IfStatus, and a status-only hand-back (From equals To) writes nothing else then either
+	Tags     []string     // the note's tags
+	Note     string       // "" writes no note
+	Reason   string       // written on the run row with the claim; "" leaves it
+}
+
+// ErrNoteWithheld wraps the secret scan's refusal of a hand-back's own text, which HandBack replaced with a fixed
+// note. The hand-back was written: the claim, the fixed note, and the status.
+var ErrNoteWithheld = errors.New("the hand-back's note was withheld")
+
+// HandBack claims the run and writes hb's note, reason, and status in one transaction, as the run's actor, and
+// returns the task and whether the claim held. A claim that finds the run out of From writes nothing, and so does a
+// status-only hand-back (From equals To, IfStatus set) that finds the task out of IfStatus. A run that is
+// not its task's newest is refused stale-run, as checkRunRules refuses its worker. The status write never ends a run:
+// To alone decides the run's state.
+//
+// The note and the reason are the runner's own text, which may quote a child's output, so they are scanned for
+// secrets once. A scan that refuses them (secret-detected, or scan-failed from a scanner that cannot run) does not
+// stop the hand-back: both are replaced with a fixed text that is not scanned, the rest is written, and the refusal
+// comes back wrapped in ErrNoteWithheld with the task and the claim.
+func (s *Store) HandBack(ctx context.Context, run model.Run, hb HandBack) (model.Task, bool, error) {
+	var withheld error
+	if hb.Note != "" || hb.Reason != "" {
+		withheld = s.scanText(ctx, append([]string{hb.Note, hb.Reason}, hb.Tags...))
+	}
+	if withheld != nil {
+		fixed := "the runner's note was withheld: the secret scan refused it"
+		if r, ok := model.AsRefusal(withheld); ok {
+			fixed += " (" + r.Code + ")"
+		}
+		if hb.Note != "" {
+			hb.Note = fixed
+		}
+		if hb.Reason != "" {
+			hb.Reason = fixed
+		}
+	}
+	a := Actor{Run: run.ID}
+	var out model.Task
+	claimed := false
+	ws := []write{{
+		prepare: func(tx *sql.Tx) (int, any, error) {
+			if err := checkNewestRun(ctx, tx, run.ID, run.Task); err != nil {
+				return 0, nil, err
+			}
+			if hb.IfStatus != "" && hb.From == hb.To {
+				// A status-only hand-back: with the task out of IfStatus it has nothing to write, its note included,
+				// so two processes that saw the same pane write one note between them.
+				cur, err := readTask(ctx, tx, run.Task)
+				if err != nil || cur.Status != hb.IfStatus {
+					return 0, nil, err
+				}
+			}
+			ok, err := updateRun(ctx, tx, run.ID, hb.From, RunUpdate{State: hb.To, Reason: hb.Reason}, s.now())
+			if err != nil || !ok {
+				return 0, nil, err
+			}
+			claimed = true
+			out, err = readTask(ctx, tx, run.Task)
+			return 0, nil, err
+		},
+	}}
+	if hb.Note != "" {
+		note := journalWrite(ctx, model.KindNote, run.Task, hb.Tags, nil, model.NoteData{Text: hb.Note}, nil, nil)
+		note.scan = nil // scanned above
+		ws = append(ws, note)
+	}
+	if hb.Status != "" {
+		p, err := s.checkPatch(a, model.Patch{Status: &hb.Status})
+		if err != nil {
+			return model.Task{}, false, err
+		}
+		ws = append(ws, s.setWrite(ctx, a, run.Task, p, hb.IfStatus, false, &out))
+	}
+	for i := 1; i < len(ws); i++ {
+		prepare := ws[i].prepare
+		ws[i].prepare = func(tx *sql.Tx) (int, any, error) {
+			if !claimed {
+				return 0, nil, nil
+			}
+			return prepare(tx)
+		}
+	}
+	if _, err := s.append(ctx, a, ws...); err != nil {
+		return model.Task{}, false, err
+	}
+	if !claimed {
+		return model.Task{}, false, nil
+	}
+	if withheld != nil {
+		return out, true, fmt.Errorf("%w: %w", ErrNoteWithheld, withheld)
+	}
+	return out, true, nil
 }
 
 // newestRun returns the id of the task's newest run, 0 when it has none.
@@ -253,9 +463,9 @@ func newestRun(ctx context.Context, q querier, task int) (int64, error) {
 	return id.Int64, err
 }
 
-// endLiveRun sets the task's live run, when it has one, to ended.
-func endLiveRun(ctx context.Context, tx *sql.Tx, task int, ts time.Time) error {
-	_, err := tx.ExecContext(ctx, `UPDATE runs SET state = ?, ended_ts = ? WHERE task = ? AND state IN `+liveRunStates,
-		model.RunEnded, formatTS(ts), task)
+// endLiveRuns sets the live runs the where clause picks to ended at ts.
+func endLiveRuns(ctx context.Context, q execer, ts time.Time, where string, args ...any) error {
+	_, err := q.ExecContext(ctx, `UPDATE runs SET state = ?, ended_ts = ? WHERE `+where+` AND state IN `+liveRunStates,
+		append([]any{model.RunEnded, formatTS(ts)}, args...)...)
 	return err
 }

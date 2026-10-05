@@ -391,11 +391,11 @@ func (a *app) setCmd() *cobra.Command {
 }
 
 func (a *app) editCmd() *cobra.Command {
-	var title, notes string
+	var title, notes, appendNotes string
 	var asJSON bool
 	cmd := &cobra.Command{
 		Use:   "edit <task>",
-		Short: "Replace a task's title or notes",
+		Short: "Replace a task's title or notes, or add a line to its notes",
 		Args:  cobra.ExactArgs(1),
 	}
 	cmd.RunE = a.do(func(cmd *cobra.Command, args []string) error {
@@ -410,8 +410,9 @@ func (a *app) editCmd() *cobra.Command {
 		if cmd.Flags().Changed("notes") {
 			p.Notes = &notes
 		}
-		if p.Title == nil && p.Notes == nil {
-			return usage("give --title or --notes")
+		appending := cmd.Flags().Changed("append-notes")
+		if p.Title == nil && p.Notes == nil && !appending {
+			return usage("give --title, --notes, or --append-notes")
 		}
 		actor, err := a.actor()
 		if err != nil {
@@ -421,7 +422,12 @@ func (a *app) editCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		t, err := c.SetTask(a.ctx, actor, n, p)
+		var t model.Task
+		if appending {
+			t, err = a.appendNotes(c, actor, n, p, appendNotes)
+		} else {
+			t, err = c.SetTask(a.ctx, actor, n, p)
+		}
 		if err != nil {
 			return err
 		}
@@ -434,8 +440,33 @@ func (a *app) editCmd() *cobra.Command {
 	})
 	cmd.Flags().StringVar(&title, "title", "", "the new title")
 	cmd.Flags().StringVar(&notes, "notes", "", "the new notes; replaces the old ones")
+	cmd.Flags().StringVar(&appendNotes, "append-notes", "", "a line to add to the end of the notes")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the task as JSON")
+	cmd.MarkFlagsMutuallyExclusive("notes", "append-notes")
 	return cmd
+}
+
+// appendNotes reads task n and writes p with text on a new line after its notes, naming the notes it read.
+// When they changed in between (stale) it reads once more and tries once more.
+func (a *app) appendNotes(c *api.Client, actor store.Actor, n int, p model.Patch, text string) (model.Task, error) {
+	var err error
+	for range 2 {
+		var d store.TaskDetail
+		if d, err = c.GetTask(a.ctx, n); err != nil {
+			return model.Task{}, err
+		}
+		old, notes := d.Task.Notes, text
+		if old != "" {
+			notes = old + "\n" + text
+		}
+		p.Notes, p.NotesWere = &notes, &old
+		var t model.Task
+		t, err = c.SetTask(a.ctx, actor, n, p)
+		if r, ok := model.AsRefusal(err); !ok || r.Code != model.CodeStale {
+			return t, err
+		}
+	}
+	return model.Task{}, err
 }
 
 // stepOp reads the words after `herdr-desk steps <task>`.

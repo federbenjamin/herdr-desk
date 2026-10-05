@@ -37,14 +37,20 @@ const (
 
 // Run exports every event to <BackupDir>/events.jsonl, commits when the file changed, pushes to the remote's
 // main branch, and records the time of the run in the backup state file. A failed run records its error
-// there instead, keeping the last successful time; a later success clears the error.
+// there instead, keeping the last successful time; a later success clears the error. It holds the backup lock for
+// the whole run, so the ticker's backup and `herdr-desk backup` never share the backup folder.
 func Run(ctx context.Context, st *store.Store, p config.Paths, remote string) (Result, error) {
+	unlock, err := config.Lock(p.BackupLock())
+	if err != nil {
+		return Result{}, err
+	}
+	defer unlock()
 	res, err := run(ctx, st, p, remote)
 	if err == nil {
 		return res, nil
 	}
 	if remote != "" {
-		// The remote may carry a credential, and the error reaches the daemon log, the API, and the state file.
+		// The remote may carry a credential, and the error reaches the ticker's log, the API, and the state file.
 		err = errors.New(strings.ReplaceAll(err.Error(), remote, "<remote>"))
 	}
 	s, _ := readState(p)
@@ -141,7 +147,7 @@ func writeState(p config.Paths, s state) error {
 	return os.WriteFile(path, b, 0o600)
 }
 
-// git runs one git command in dir and returns its trimmed stdout. A daemon has no terminal, so a signing prompt
+// git runs one git command in dir and returns its trimmed stdout. The ticker has no terminal, so a signing prompt
 // would hang it, and the machine may have no git identity.
 func git(ctx context.Context, dir string, args ...string) (string, error) {
 	identity := []string{"-c", "commit.gpgsign=false", "-c", "user.name=herdr-desk", "-c", "user.email=herdr-desk@localhost"}

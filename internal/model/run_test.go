@@ -7,16 +7,18 @@ import (
 	"github.com/federbenjamin/herdr-desk/internal/model"
 )
 
-func TestRunLiveRecognizesOnlyTheThreeLiveStates(t *testing.T) {
+func TestRunLiveRecognizesOnlyTheFourLiveStates(t *testing.T) {
 	t.Parallel()
 
 	for _, test := range []struct {
 		state string
 		want  bool
 	}{
-		{model.RunRouting, true},
+		{model.RunStarting, true},
 		{model.RunWaiting, true},
 		{model.RunRunning, true},
+		{model.RunIdle, true},
+		{"routing", false},
 		{model.RunEnded, false},
 		{model.RunFailed, false},
 		{model.RunKilled, false},
@@ -48,7 +50,8 @@ func TestRunConstantsKeepTheirPublishedWireValues(t *testing.T) {
 	t.Parallel()
 
 	for name, test := range map[string]struct{ got, want string }{
-		"RunRouting":   {model.RunRouting, "routing"},
+		"RunStarting":  {model.RunStarting, "starting"},
+		"RunIdle":      {model.RunIdle, "idle"},
 		"RunWaiting":   {model.RunWaiting, "waiting"},
 		"RunRunning":   {model.RunRunning, "running"},
 		"RunEnded":     {model.RunEnded, "ended"},

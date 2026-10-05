@@ -1,33 +1,30 @@
 package api
 
 import (
+	"bytes"
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"log"
-	"net/http"
-	"strings"
 	"time"
 
 	"github.com/federbenjamin/herdr-desk/internal/backup"
 	"github.com/federbenjamin/herdr-desk/internal/config"
 	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/runner"
 	"github.com/federbenjamin/herdr-desk/internal/store"
+	"github.com/federbenjamin/herdr-desk/internal/ticker"
 	"github.com/federbenjamin/herdr-desk/internal/version"
 )
 
 // ServerOptions configures a Server.
 type ServerOptions struct {
-	Store        *store.Store
-	Config       config.Config
-	Paths        config.Paths // the token is read with config.ReadToken on each TCP request, so a rotation needs no restart
-	StartedTS    time.Time
-	ConfigDigest string                                           // config.Config.Digest of the config the daemon started with, before it bound the listener; "" when unknown
-	Backup       func(ctx context.Context) (backup.Result, error) // nil → backup.run refuses backup-off
-	Runner       RunnerControl                                    // nil → runs.kill and runner.pause are unknown methods; runner_state is "off"
+	Store  *store.Store
+	Config config.Config
+	Paths  config.Paths
+	Backup func(ctx context.Context) (backup.Result, error) // nil → backup.run refuses backup-off
+	Runner RunnerControl                                    // nil → runs.start, runs.kill, and runner.pause are unknown methods; runner_state is "off"
 }
 
 // RunnerControl is what the server needs from the runner. *runner.Runner satisfies it.
@@ -36,38 +33,60 @@ type RunnerControl interface {
 	Paused() bool
 	Pause(ctx context.Context, a store.Actor, paused bool) error
 	Kill(ctx context.Context, a store.Actor, task int) (model.Task, error)
+	Start(ctx context.Context, a store.Actor, task int, route store.RunRoute) (model.Run, error)
+	AfterSet(ctx context.Context, task int)
+	Reconcile(ctx context.Context) error
 }
 
-// Server answers the API methods from one store.
+var _ RunnerControl = (*runner.Runner)(nil)
+
+// Server answers the API methods from one store. It is a Transport whose Close closes nothing: its store is the
+// caller's.
 type Server struct {
 	o       ServerOptions
 	methods map[string]method
 }
 
-// method decodes a request body and calls the store.
-type method func(ctx context.Context, body []byte) (any, error)
+// method decodes a request's params and calls the store.
+type method func(ctx context.Context, params []byte) (any, error)
 
-// badRequest is an error the server answers with 400.
+// badRequest is a request whose params do not decode.
 type badRequest struct{ err error }
 
 func (b badRequest) Error() string { return b.err.Error() }
 
-// shown is a failure whose text the caller reads in the 500's body: a backup's, which names the git step,
-// served on the unix socket only, and stripped of the remote by backup.Run.
-type shown struct{ err error }
-
-func (s shown) Error() string { return s.err.Error() }
-func (s shown) Unwrap() error { return s.err }
-
-// bind is the one decode-and-call adapter every method goes through.
+// bind is the one decode-and-call adapter every method goes through. A field the params type does not have is a bad
+// request: a request is never answered with part of it dropped.
 func bind[Req any](fn func(ctx context.Context, r Req) (any, error)) method {
-	return func(ctx context.Context, body []byte) (any, error) {
+	return func(ctx context.Context, params []byte) (any, error) {
 		var r Req
-		if err := json.Unmarshal(body, &r); err != nil {
+		if err := decodeStrict(params, &r); err != nil {
 			return nil, badRequest{err}
 		}
 		return fn(ctx, r)
 	}
+}
+
+// decodeStrict decodes one JSON value from b into v, refusing a field v does not have and anything after the value.
+func decodeStrict(b []byte, v any) error {
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return errors.New("the request holds more than one JSON value")
+	}
+	return nil
+}
+
+// homeServer is the server over r's store, as every command on the home and `herdr-desk rpc` serve it.
+func homeServer(r *runner.Runner, p config.Paths, c config.Config) *Server {
+	o := ServerOptions{Store: r.Store(), Config: c, Paths: p, Runner: r}
+	if remote := c.Backup.GitRemote; remote != "" {
+		o.Backup = func(ctx context.Context) (backup.Result, error) { return backup.Run(ctx, r.Store(), p, remote) }
+	}
+	return NewServer(o)
 }
 
 // NewServer returns a server over o.Store.
@@ -89,7 +108,11 @@ func NewServer(o ServerOptions) *Server {
 			return st.AddTask(ctx, r.Actor, r.Input)
 		}),
 		MethodTasksSet: bind(func(ctx context.Context, r setRequest) (any, error) {
-			return st.SetTask(ctx, r.Actor, r.Number, r.Patch)
+			t, err := st.SetTask(ctx, r.Actor, r.Number, r.Patch)
+			if err == nil && r.Patch.Status != nil && o.Runner != nil {
+				o.Runner.AfterSet(ctx, r.Number)
+			}
+			return t, err
 		}),
 		MethodTasksSteps: bind(func(ctx context.Context, r stepsRequest) (any, error) {
 			return st.Step(ctx, r.Actor, r.Number, r.Op)
@@ -98,12 +121,23 @@ func NewServer(o ServerOptions) *Server {
 		MethodSessionView: bind(func(ctx context.Context, r sessionRequest) (any, error) {
 			return st.SessionEvents(ctx, r.Session)
 		}),
-		MethodRunsList: bind(func(ctx context.Context, _ empty) (any, error) {
+		MethodRunsList: bind(func(ctx context.Context, r runsRequest) (any, error) {
+			var out RunList
+			if r.Reconcile && o.Runner != nil {
+				// A failed reconcile is logged by the runner and told to the caller; the list is still the store's now.
+				if err := o.Runner.Reconcile(ctx); err != nil {
+					out.Unchecked = "the live runs were not checked against herdr: " + err.Error()
+				}
+			}
 			runs, err := st.ListRuns(ctx)
 			if runs == nil {
 				runs = []model.Run{}
 			}
-			return runs, err
+			out.Runs = runs
+			return out, err
+		}),
+		MethodCoordinatorChanges: bind(func(ctx context.Context, r changesRequest) (any, error) {
+			return st.Changes(ctx, r.Actor, maxChanges)
 		}),
 		MethodStatus: bind(func(ctx context.Context, _ empty) (any, error) { return s.status(ctx) }),
 		MethodBackupRun: bind(func(ctx context.Context, _ empty) (any, error) {
@@ -111,16 +145,15 @@ func NewServer(o ServerOptions) *Server {
 				return nil, &model.Refusal{Code: model.CodeBackupOff, Msg: "no [backup] git_remote is configured"}
 			}
 			// A push the caller stops waiting for still finishes, so the remote never holds half a run.
-			res, err := o.Backup(context.WithoutCancel(ctx))
-			if err != nil {
-				return nil, shown{err}
-			}
-			return res, nil
+			return o.Backup(context.WithoutCancel(ctx))
 		}),
 	}
 	if rn := o.Runner; rn != nil {
 		s.methods[MethodRunsKill] = bind(func(ctx context.Context, r killRequest) (any, error) {
 			return rn.Kill(ctx, r.Actor, r.Task)
+		})
+		s.methods[MethodRunsStart] = bind(func(ctx context.Context, r startRequest) (any, error) {
+			return rn.Start(ctx, r.Actor, r.Task, r.Route)
 		})
 		s.methods[MethodRunnerPause] = bind(func(ctx context.Context, r pauseRequest) (any, error) {
 			if err := rn.Pause(ctx, r.Actor, r.Paused); err != nil {
@@ -140,19 +173,35 @@ func (s *Server) status(ctx context.Context) (Status, error) {
 	if o.Runner != nil {
 		runnerState, paused = o.Runner.State(), o.Runner.Paused()
 	}
+	var tk TickerStatus
+	if info, ok := ticker.Running(o.Paths); ok {
+		tk = TickerStatus{Running: true, PID: info.PID, StartedTS: &info.StartedTS}
+	}
+	today := 0
+	if err == nil {
+		today, err = o.Store.RunsSince(ctx, runner.Midnight(time.Now()))
+	}
+	roots := []Root{}
+	for _, r := range runner.Roots(o.Config, o.Paths) {
+		roots = append(roots, Root{Path: r.Path, About: r.About, Isolation: r.Isolation})
+	}
+	c := o.Config
 	return Status{
-		Version:      version.Version,
-		Listen:       o.Config.Home.Listen,
-		StartedTS:    o.StartedTS,
-		RunnerOn:     o.Config.Runner.Enabled,
-		RunnerState:  runnerState,
-		RunnerPaused: paused,
-		RunnerCap:    o.Config.Runner.Cap,
-		Tasks:        counts,
-		BackupTS:     backupTS,
-		BackupError:  backupErr,
-
-		ConfigChanged: o.Paths.ConfigChanged(o.ConfigDigest),
+		Version:       version.Version,
+		Ticker:        tk,
+		RunnerOn:      c.Runner.Enabled,
+		RunnerState:   runnerState,
+		RunnerPaused:  paused,
+		RunnerCap:     c.Runner.Cap,
+		StartRuns:     c.Coordinator.StartRuns,
+		MaxRunsPerDay: c.Runner.MaxRunsPerDay,
+		MaxRunMinutes: c.Runner.MaxRunMinutes,
+		Today:         today,
+		Roots:         roots,
+		Models:        append([]string{}, c.Agent.Models...),
+		Tasks:         counts,
+		BackupTS:      backupTS,
+		BackupError:   backupErr,
 	}, err
 }
 
@@ -175,76 +224,33 @@ func (s *Server) appendEvent(ctx context.Context, r AppendRequest) (any, error) 
 	}
 }
 
-// Handler serves the API. trusted=true is the unix socket: no token. trusted=false requires the bearer token
-// and does not serve backup.run.
-func (s *Server) Handler(trusted bool) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			writeError(w, http.StatusMethodNotAllowed, "", "use POST")
-			return
-		}
-		if !trusted && !s.tokenOK(r) {
-			writeError(w, http.StatusUnauthorized, "", "a missing or wrong token")
-			return
-		}
-		name, _ := strings.CutPrefix(r.URL.Path, "/v1/")
-		m, ok := s.methods[name]
-		if !ok || (!trusted && name == MethodBackupRun) {
-			writeError(w, http.StatusBadRequest, "", "unknown method "+r.URL.Path)
-			return
-		}
-		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBody))
-		if err != nil {
-			if mbe := (*http.MaxBytesError)(nil); errors.As(err, &mbe) {
-				writeError(w, http.StatusRequestEntityTooLarge, "", fmt.Sprintf("the body is over %d bytes", maxBody))
-				return
-			}
-			writeError(w, http.StatusBadRequest, "", err.Error())
-			return
-		}
-		res, err := m(r.Context(), body)
-		if err != nil {
-			var bad badRequest
-			var sh shown
-			switch ref, isRef := model.AsRefusal(err); {
-			case isRef:
-				writeError(w, http.StatusConflict, ref.Code, ref.Msg)
-			case errors.As(err, &bad):
-				writeError(w, http.StatusBadRequest, "", bad.Error())
-			default:
-				log.Printf("herdr-desk daemon: %s: %v", name, err)
-				msg := "an internal error; the daemon log has it"
-				if errors.As(err, &sh) {
-					msg = sh.Error()
-				}
-				writeError(w, http.StatusInternalServerError, "", msg)
-			}
-			return
-		}
-		writeJSON(w, http.StatusOK, res)
-	})
+// RoundTrip answers one request and returns its RPCResponse, encoded. It fails only when the answer cannot be
+// encoded.
+func (s *Server) RoundTrip(ctx context.Context, method string, params []byte) ([]byte, error) {
+	return json.Marshal(s.answer(ctx, method, params))
 }
 
-// tokenOK reads the token file on every request, so a rotation takes effect without a restart.
-func (s *Server) tokenOK(r *http.Request) bool {
-	got, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-	if !ok || got == "" {
-		return false
+// Close closes nothing: the server's store belongs to its caller.
+func (s *Server) Close() error { return nil }
+
+func (s *Server) answer(ctx context.Context, method string, params []byte) RPCResponse {
+	m, ok := s.methods[method]
+	if !ok {
+		return RPCResponse{Error: &RPCError{BadRequest: true, Message: fmt.Sprintf("unknown method %q", method)}}
 	}
-	want, err := config.ReadToken(s.o.Paths)
+	res, err := m(ctx, params)
 	if err != nil {
-		log.Printf("herdr-desk daemon: the token cannot be read, so every TCP request gets 401: %v", err)
-		return false
+		var bad badRequest
+		if ref, ok := model.AsRefusal(err); ok {
+			return RPCResponse{Refusal: ref}
+		} else if errors.As(err, &bad) {
+			return RPCResponse{Error: &RPCError{BadRequest: true, Message: bad.Error()}}
+		}
+		return RPCResponse{Error: &RPCError{Message: fmt.Sprintf("%s: %v", method, err)}}
 	}
-	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
-}
-
-func writeError(w http.ResponseWriter, code int, refusal, msg string) {
-	writeJSON(w, code, errorBody{Code: refusal, Message: msg})
-}
-
-func writeJSON(w http.ResponseWriter, code int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(v)
+	b, err := json.Marshal(res)
+	if err != nil {
+		return RPCResponse{Error: &RPCError{Message: fmt.Sprintf("%s: encode the result: %v", method, err)}}
+	}
+	return RPCResponse{Result: b}
 }

@@ -1,6 +1,8 @@
-// Package store is herdr-desk's SQLite store. The daemon is its one user; every event goes through one private
-// append that scans for secrets, inserts the event, and updates the state tables in one transaction. Run rows
-// are runner state, outside the event log: UpdateRun writes them directly.
+// Package store is herdr-desk's SQLite store. Every command on the home opens it, so several processes may write
+// at once: every write transaction begins IMMEDIATE, and a second writer waits on the busy timeout. Every event
+// goes through one private append that scans for secrets, inserts the event, and updates the state tables in one
+// transaction. Run rows and the coordinator row are runner state, outside the event log: UpdateRun and
+// SetCoordinator write them directly.
 package store
 
 import (
@@ -13,41 +15,44 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/federbenjamin/herdr-desk/internal/model"
 	"github.com/federbenjamin/herdr-desk/internal/secretscan"
 
 	_ "modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // Options configures a Store.
 type Options struct {
-	Scanner      secretscan.Scanner // nil → secretscan.Builtin()
-	Now          func() time.Time   // nil → time.Now
-	AgentsMayArm bool
-	OnMerged     model.Status // "" → model.StatusReview
+	Scanner   secretscan.Scanner // nil → secretscan.Builtin()
+	Now       func() time.Time   // nil → time.Now
+	AutoStart bool               // [coordinator] start_runs = "auto": an agent may set a task ready
+	OnMerged  model.Status       // "" → model.StatusReview
 }
 
 // Store is an open desk database.
 type Store struct {
-	db           *sql.DB
-	scan         secretscan.Scanner
-	now          func() time.Time
-	agentsMayArm bool
-	onMerged     model.Status
-	// mu serializes writes: a deferred SQLite transaction that reads then writes fails with SQLITE_BUSY
-	// when another connection wrote first, and busy_timeout does not retry that.
-	mu sync.Mutex
+	db        *sql.DB
+	scan      secretscan.Scanner
+	now       func() time.Time
+	autoStart bool
+	onMerged  model.Status
 }
 
-// Open opens the store at path. It creates the parent dir 0700 and the file 0600, uses WAL, and applies
-// migrations.
-func Open(path string, o Options) (*Store, error) {
+var (
+	// ErrNoStore is OpenReadOnly finding no store file.
+	ErrNoStore = errors.New("no store")
+	// ErrSchema is OpenReadOnly finding a schema version other than this binary's.
+	ErrSchema = errors.New("the store's schema version is not this binary's")
+)
+
+// withDefaults checks o and fills its unset fields.
+func (o Options) withDefaults() (Options, error) {
 	onMerged, ok := model.OnMergedStatus(string(o.OnMerged))
 	if !ok {
-		return nil, fmt.Errorf("on_merged must be review or done, not %q", o.OnMerged)
+		return o, fmt.Errorf("on_merged must be review or done, not %q", o.OnMerged)
 	}
 	o.OnMerged = onMerged
 	if o.Scanner == nil {
@@ -55,6 +60,20 @@ func Open(path string, o Options) (*Store, error) {
 	}
 	if o.Now == nil {
 		o.Now = time.Now
+	}
+	return o, nil
+}
+
+func newStore(db *sql.DB, o Options) *Store {
+	return &Store{db: db, scan: o.Scanner, now: o.Now, autoStart: o.AutoStart, onMerged: o.OnMerged}
+}
+
+// Open opens the store at path. It creates the parent dir 0700 and the file 0600, uses WAL, and applies
+// migrations, writing nothing when the schema is current. Every write transaction begins IMMEDIATE.
+func Open(path string, o Options) (*Store, error) {
+	o, err := o.withDefaults()
+	if err != nil {
+		return nil, err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
@@ -67,15 +86,72 @@ func Open(path string, o Options) (*Store, error) {
 	if err := private(path); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)")
+	// _txlock=immediate: a deferred transaction that reads then writes fails with SQLITE_BUSY when another
+	// connection wrote first, and the busy timeout does not retry that; an IMMEDIATE one waits at its BEGIN.
+	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_txlock=immediate")
 	if err != nil {
 		return nil, err
+	}
+	if err := connect(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
 	if err := migrate(context.Background(), db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
-	return &Store{db: db, scan: o.Scanner, now: o.Now, agentsMayArm: o.AgentsMayArm, onMerged: o.OnMerged}, nil
+	return newStore(db, o), nil
+}
+
+// busyTimeout is the DSN's busy_timeout.
+const busyTimeout = 5 * time.Second
+
+// connect makes the first connection, retrying while it fails with SQLITE_BUSY, up to busyTimeout. The switch of a
+// new file to WAL runs as each connection opens and does not wait on the busy timeout, so processes opening a new
+// store at once can see busy here.
+func connect(db *sql.DB) error {
+	deadline := time.Now().Add(busyTimeout)
+	for {
+		err := db.Ping()
+		if err == nil || !isBusy(err) || time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// isBusy reports SQLITE_BUSY or one of its extended codes.
+func isBusy(err error) bool {
+	var coded interface{ Code() int }
+	return errors.As(err, &coded) && coded.Code()&0xff == sqlite3.SQLITE_BUSY
+}
+
+// OpenReadOnly opens an existing store for reading. It never creates the file or its folder, never changes a
+// mode, and never migrates: a missing file is ErrNoStore and a schema version other than this binary's is
+// ErrSchema. Every write through it fails.
+func OpenReadOnly(path string, o Options) (*Store, error) {
+	o, err := o.withDefaults()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("open %s: %w", path, ErrNoStore)
+	} else if err != nil {
+		return nil, err
+	}
+	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=query_only(1)")
+	if err != nil {
+		return nil, err
+	}
+	v, err := schemaVersion(context.Background(), db)
+	if err == nil && v != len(migrations) {
+		err = fmt.Errorf("%w: the file is version %d, this binary's is %d", ErrSchema, v, len(migrations))
+	}
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("open %s: %w", path, err)
+	}
+	return newStore(db, o), nil
 }
 
 // private sets the store's folder to 0700 and its files to 0600, whoever created them first and with what mode.
@@ -117,65 +193,76 @@ type write struct {
 	tags []string
 	scan []string // the write's text fields, scanned once as one text
 	// prepare runs in the transaction before the insert and returns the event's task and payload. A nil
-	// payload writes nothing.
+	// payload writes no event, and the write's apply is skipped.
 	prepare func(tx *sql.Tx) (task int, data any, err error)
 	// apply updates the state tables once the event has its id; nil for a journal event.
 	apply func(tx *sql.Tx, ev model.Event) error
 }
 
-// append is the one write path. It reports whether an event was written.
-func (s *Store) append(ctx context.Context, a Actor, w write) (model.Event, bool, error) {
-	if err := s.scanText(ctx, w.scan); err != nil {
-		return model.Event{}, false, err
+// append is the one write path: it scans every write's text, then runs each write's prepare, insert, and apply in
+// order in one transaction, and returns the events written. Any error rolls back every write.
+func (s *Store) append(ctx context.Context, a Actor, ws ...write) ([]model.Event, error) {
+	var text []string
+	for _, w := range ws {
+		text = append(text, w.scan...)
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := s.scanText(ctx, text); err != nil {
+		return nil, err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return model.Event{}, false, err
+		return nil, err
 	}
 	defer tx.Rollback()
-	task, data, err := w.prepare(tx)
-	if err != nil {
-		return model.Event{}, false, err
-	}
-	if data == nil {
-		return model.Event{}, false, tx.Commit()
-	}
-	ts := s.now()
-	if a.TS != nil {
-		ts = *a.TS
-	}
-	ev := model.Event{
-		TS:      ts.UTC(),
-		Session: a.Session,
-		Who:     a.Who(),
-		Kind:    w.kind,
-		Task:    task,
-		Data:    model.MustData(data),
-		Tags:    w.tags,
-		Run:     a.Run,
-		V:       1,
-	}
-	res, err := tx.ExecContext(ctx,
-		`INSERT INTO events(ts, session, who, kind, task, data, tags, run, v) VALUES(?,?,?,?,?,?,?,?,?)`,
-		formatTS(ev.TS), ev.Session, string(ev.Who), string(ev.Kind), nullInt(int64(ev.Task)), string(ev.Data),
-		encodeTags(ev.Tags), nullInt(ev.Run), ev.V)
-	if err != nil {
-		return model.Event{}, false, err
-	}
-	if ev.ID, err = res.LastInsertId(); err != nil {
-		return model.Event{}, false, err
-	}
-	if w.apply != nil {
-		if err := w.apply(tx, ev); err != nil {
-			return model.Event{}, false, err
+	var out []model.Event
+	for _, w := range ws {
+		task, data, err := w.prepare(tx)
+		if err != nil {
+			return nil, err
 		}
+		if data == nil {
+			continue
+		}
+		ev := model.Event{
+			TS:      s.stamp(a),
+			Session: a.Session,
+			Who:     a.Who(),
+			Kind:    w.kind,
+			Task:    task,
+			Data:    model.MustData(data),
+			Tags:    w.tags,
+			Run:     a.Run,
+			V:       1,
+		}
+		res, err := tx.ExecContext(ctx,
+			`INSERT INTO events(ts, session, who, kind, task, data, tags, run, v) VALUES(?,?,?,?,?,?,?,?,?)`,
+			formatTS(ev.TS), ev.Session, string(ev.Who), string(ev.Kind), nullInt(int64(ev.Task)), string(ev.Data),
+			encodeTags(ev.Tags), nullInt(ev.Run), ev.V)
+		if err != nil {
+			return nil, err
+		}
+		if ev.ID, err = res.LastInsertId(); err != nil {
+			return nil, err
+		}
+		if w.apply != nil {
+			if err := w.apply(tx, ev); err != nil {
+				return nil, err
+			}
+		}
+		out = append(out, ev)
 	}
 	if err := tx.Commit(); err != nil {
-		return model.Event{}, false, err
+		return nil, err
 	}
-	return ev, true, nil
+	return out, nil
+}
+
+// stamp is the time of a's writes: its own TS (an outbox replay), else now, in UTC.
+func (s *Store) stamp(a Actor) time.Time {
+	if a.TS != nil {
+		return a.TS.UTC()
+	}
+	return s.now().UTC()
 }
 
 // scanText joins the fields with newlines and runs the scanner once. A refusal names the pattern, never

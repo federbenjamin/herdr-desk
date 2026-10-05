@@ -32,6 +32,9 @@ type Home interface {
 	Status(ctx context.Context) (api.Status, error)
 	KillRun(ctx context.Context, a store.Actor, task int) (model.Task, error)
 	PauseRunner(ctx context.Context, a store.Actor, paused bool) (api.Status, error)
+	StartRun(ctx context.Context, a store.Actor, task int, route store.RunRoute) (model.Run, error)
+	// Retry forgets an unreachable home, so a refresh after the home came back reaches it.
+	Retry()
 }
 
 var _ Home = (*api.Client)(nil)
@@ -126,6 +129,17 @@ func (m runModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // wrote is the executor's answer to a write that succeeded, with the write.
 type wrote struct{ effect Effect }
+
+// staleNotes is a notes save's stale refusal with the notes the home held when it came back, or, when they could
+// not be read, why (readErr). Its text and its refusal are the refusal's.
+type staleNotes struct {
+	err     error
+	notes   string
+	readErr error
+}
+
+func (e staleNotes) Error() string { return e.err.Error() }
+func (e staleNotes) Unwrap() error { return e.err }
 
 // feed applies one message of Run's program to s. A write that succeeded reaches s as a Tick, once s has dropped
 // the notes save it carried, which can no longer fail.
@@ -243,12 +257,21 @@ func (x *executor) run(ctx context.Context, e Effect) tea.Msg {
 		return Added{Task: t}
 	case SetTask:
 		_, err := x.home.SetTask(ctx, user, e.Task, e.Patch)
+		if r, ok := model.AsRefusal(err); ok && r.Code == model.CodeStale && e.Patch.NotesWere != nil {
+			// The editor reopens on the home's notes, read now, so the next ctrl+s replaces them with no refresh
+			// between; a read that fails goes with the refusal, so the editor does not promise that.
+			d, gerr := x.home.GetTask(ctx, e.Task)
+			err = staleNotes{err: err, notes: d.Task.Notes, readErr: gerr}
+		}
 		return afterWrite(err)
 	case StepTask:
 		_, err := x.home.Step(ctx, user, e.Task, e.Op)
 		return afterWrite(err)
 	case KillRun:
 		_, err := x.home.KillRun(ctx, user, e.Task)
+		return afterWrite(err)
+	case StartRun:
+		_, err := x.home.StartRun(ctx, user, e.Task, store.RunRoute{})
 		return afterWrite(err)
 	case PauseRunner:
 		_, err := x.home.PauseRunner(ctx, user, e.Paused)
@@ -311,6 +334,8 @@ func (x *executor) rearm(ctx context.Context, e Rearm) tea.Msg {
 }
 
 func (x *executor) refresh(ctx context.Context, done bool) tea.Msg {
+	// Each refresh tries the home afresh: a board left open while the home was away recovers once it answers.
+	x.home.Retry()
 	tl, err := x.home.ListTasks(ctx, store.Filter{})
 	if err != nil {
 		return Failed{Err: err}

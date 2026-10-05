@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# H5: a note holding an AWS key is refused; the key is neither stored nor echoed.
+# H11: a note holding an AWS key is refused; the key is neither stored nor echoed. A scanner config edit applies on
+# the next command, with no restart.
 # shellcheck source=scripts/e2e/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 build
-run 0 on home herdr-desk setup --no-herdr
-start_daemon home
+home_up home
 
 # Built at run time so no scanner reads a key in this file. The value is made up.
 KEY="AKIA""ABCDEFGHIJKLMNOP"
@@ -34,23 +34,20 @@ run 0 on home herdr-desk note "a clean note"
 if grep -a -q "$KEY" "$E2E"/home/data/herdr-desk/desk.db*; then fail "the key is in the store"; fi
 say "key not in store"
 
-stop_daemon home
 write_config home <<TOML
 [secret_scan]
 command = ["$E2E/no-such-scanner"]
 TOML
-start_daemon home
 run 3 on home herdr-desk note "the scanner cannot start"
 err_has "scan-failed"
+say "scanner edit applied on the next command"
 
-stop_daemon home
 printf '#!/bin/sh\ncat >/dev/null\nexit 1\n' >"$E2E/always-hit.sh"
 chmod +x "$E2E/always-hit.sh"
 write_config home <<TOML
 [secret_scan]
 command = ["$E2E/always-hit.sh"]
 TOML
-start_daemon home
 run 1 on home herdr-desk note "the scanner says no"
 err_has "secret-detected"
 pass

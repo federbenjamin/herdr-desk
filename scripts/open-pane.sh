@@ -1,16 +1,16 @@
 #!/bin/sh
 # Opens a herdr-desk pane: `board` focuses this plugin's open board pane in this workspace when one is
-# open and opens it otherwise; `capture` opens the capture popup.
+# open and opens it otherwise; `board-popup` opens the board in a popup; `capture` opens the capture popup.
 set -u
 
-entrypoint="${1:?usage: open-pane.sh board|capture}"
+entrypoint="${1:?usage: open-pane.sh board|board-popup|capture}"
 herdr_bin="${HERDR_BIN_PATH:-herdr}"
 plugin_id="${HERDR_PLUGIN_ID:-herdr-desk}"
 
 case "$entrypoint" in
-  capture)
+  capture | board-popup)
     # A popup is a session singleton: a second press while one is up is not an error.
-    out=$("$herdr_bin" plugin pane open --plugin "$plugin_id" --entrypoint capture --focus 2>&1)
+    out=$("$herdr_bin" plugin pane open --plugin "$plugin_id" --entrypoint "$entrypoint" --focus 2>&1)
     status=$?
     case "$out" in
       *"popup pane is already open"*) exit 0 ;;

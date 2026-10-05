@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# H26: open-pane.sh focuses the open board pane even after a title plugin renamed it, opens one when none is open,
-# and takes a busy popup as done, against a stub herdr.
+# H26 (H49): open-pane.sh focuses the open board pane even after a title plugin renamed it, opens one when none is open,
+# opens the board in a popup and takes a busy popup (a second press) as done, against a stub herdr.
 #
 # The stub on HERDR_BIN_PATH logs its argv and answers `pane list` from a fixture with the shape herdr 0.9.1
 # prints: one line, keys in order, the agent pane's nested objects, and a plugin pane whose cwd is its plugin's
@@ -42,7 +42,7 @@ case "$*" in
         ;;
     esac
     ;;
-  *"--entrypoint capture"*)
+  *"--entrypoint capture"* | *"--entrypoint board-popup"*)
     if [ "$STUB_POPUP" = busy ]; then
       echo 'error: a popup pane is already open (ui_busy)' >&2
       exit 1
@@ -145,6 +145,18 @@ ok "capture opens the popup"
 open_pane 0 "$E2E/none.json" busy capture
 called "plugin pane open --plugin herdr-desk --entrypoint capture --focus"
 ok "a busy popup exits 0"
+
+open_pane 0 "$E2E/renamed.json" free board-popup
+called "plugin pane open --plugin herdr-desk --entrypoint board-popup --focus"
+not_called "pane list"
+not_called "plugin pane focus"
+not_called "--entrypoint board --focus"
+ok "board-popup opens the popup, and neither lists panes nor focuses the split board"
+
+open_pane 0 "$E2E/none.json" busy board-popup
+called "plugin pane open --plugin herdr-desk --entrypoint board-popup --focus"
+{ [ -z "$OUT" ] && [ -z "$ERR" ]; } || fail "a second press of board-popup printed: $OUT$ERR"
+ok "a second press while the popup is up exits 0 and prints nothing"
 
 open_pane 2 "$E2E/none.json" free nosuch
 grep -qF "unknown pane 'nosuch'" <<<"$ERR" || fail "stderr does not name the unknown pane"

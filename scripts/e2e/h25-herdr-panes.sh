@@ -3,9 +3,9 @@
 # and shows a refusal.
 #
 # This runs in the herdr that is running now, so it touches nothing of the installed plugin. It links a temp copy of
-# the manifest under the id desk-e2e, with the build and startup blocks removed and each pane command wrapped to run
-# this script's own herdr-desk binary against temp XDG folders. The panes it opens appear on the screen of the person
-# using herdr. An EXIT trap closes exactly the panes that run in the temp plugin folder and unlinks desk-e2e, also
+# the manifest under the id desk-e2e, with the build, startup, and events blocks removed (so its copy fires no hook
+# into a store) and each pane command wrapped to run this script's own herdr-desk binary against temp XDG folders.
+# The panes it opens appear on the screen of the person using herdr. An EXIT trap closes exactly the panes that run in the temp plugin folder and unlinks desk-e2e, also
 # when a check fails. It never closes another pane, never runs herdr-desk setup, and never reads or writes herdr's
 # config.toml. The capture entrypoint is opened as a split pane: a popup has no pane id, and herdr's API can only
 # close it, so a popup cannot be read or typed into. Every pane opens without focus; only the second open-board
@@ -117,25 +117,7 @@ mkdir -p "$PLUG/scripts"
 sed 's/ --focus$/ --no-focus/' "$REPO/scripts/open-pane.sh" >"$PLUG/scripts/open-pane.sh"
 grep -q -- '--no-focus' "$PLUG/scripts/open-pane.sh" || fail "the temp open-pane.sh keeps --focus"
 ORIG=$(focused)
-python3 - "$REPO/herdr-plugin.toml" "$PLUG/herdr-plugin.toml" "$BIN/herdr-desk" "$E2E/home" <<'PY'
-import json
-import re
-import sys
-
-src, dst, desk, home = sys.argv[1:5]
-text = open(src).read()
-parts = re.split(r"(?m)^(?=\[\[)", text)
-text = "".join(p for p in parts if not p.startswith(("[[build]]", "[[startup]]")))
-text = text.replace('id = "herdr-desk"\n', 'id = "desk-e2e"\n', 1)
-env = ["env", "-u", "DESK_SESSION", "-u", "DESK_RUN", "-u", "DESK_HOOKS",
-       "XDG_CONFIG_HOME=%s/config" % home, "XDG_STATE_HOME=%s/state" % home,
-       "XDG_DATA_HOME=%s/data" % home, "XDG_CACHE_HOME=%s/cache" % home]
-text = text.replace('command = ["herdr-desk", "capture"]', "command = " + json.dumps(env + [desk, "capture"]))
-text = text.replace('command = ["herdr-desk"]', "command = " + json.dumps(env + [desk]))
-open(dst, "w").write(text)
-PY
-grep -q 'id = "desk-e2e"' "$PLUG/herdr-plugin.toml" || fail "the temp manifest has no id desk-e2e"
-if grep -Eq '^\[\[(build|startup)\]\]' "$PLUG/herdr-plugin.toml"; then fail "the temp manifest still has a build or startup block"; fi
+popup_manifest "$PLUG/herdr-plugin.toml"
 
 run 0 "$HERDR" plugin link "$PLUG" --enabled
 LINKED=1

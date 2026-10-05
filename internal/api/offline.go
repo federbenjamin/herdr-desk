@@ -6,12 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
-	"net/http"
 	"os"
-	"path/filepath"
 	"time"
-
-	"golang.org/x/sys/unix"
 
 	"github.com/federbenjamin/herdr-desk/internal/config"
 	"github.com/federbenjamin/herdr-desk/internal/model"
@@ -42,28 +38,12 @@ func (c *Client) readSnapshot() (snapshot, error) {
 
 // lockOutbox takes the outbox's lock, a file beside it. The outbox itself is replaced by a rename on every
 // flush, so a lock on the outbox's own inode would let an enqueue append to the file a flush just replaced.
-func (c *Client) lockOutbox() (unlock func(), err error) {
-	path := c.o.Paths.Outbox() + ".lock"
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return nil, err
-	}
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
-	if err != nil {
-		return nil, err
-	}
-	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX); err != nil {
-		f.Close()
-		return nil, err
-	}
-	return func() { f.Close() }, nil
+func (c *Client) lockOutbox() (unlock func() error, err error) {
+	return config.Lock(c.o.Paths.Outbox() + ".lock")
 }
 
-// enqueue appends r to the outbox, stamped with the time it was written so a replay keeps it.
+// enqueue appends r, which Append stamped with the time it was written, to the outbox.
 func (c *Client) enqueue(r AppendRequest) error {
-	if r.Actor.TS == nil {
-		now := time.Now().UTC()
-		r.Actor.TS = &now
-	}
 	line, err := json.Marshal(r)
 	if err != nil {
 		return err
@@ -83,10 +63,9 @@ func (c *Client) enqueue(r AppendRequest) error {
 }
 
 // Flush forwards the outbox in order and returns how many entries it sent. It stops when the home cannot be
-// reached, or answers in a way a retry may change (scan-failed, a 500, bad-token: the fault is the token),
-// keeping what was not sent. An entry the
-// home refuses for a cause in the entry itself (any other refusal, a 400, a 413) will never be accepted: it is
-// removed, reported through ClientOptions.Refused, and Flush goes on. A line that does not parse is removed the
+// reached, or answers in a way a retry may change (scan-failed, an error that is not a bad request), keeping what
+// was not sent. An entry the home refuses for a cause in the entry itself (any other refusal, a bad request) will
+// never be accepted: it is removed, reported through ClientOptions.Refused, and Flush goes on. A line that does not parse is removed the
 // same way, reported with the code bad-input. The entries kept replace the outbox through a rename, so a
 // failure leaves the old outbox whole.
 func (c *Client) Flush(ctx context.Context) (int, error) {
@@ -122,7 +101,7 @@ func (c *Client) Flush(ctx context.Context) (int, error) {
 			done++
 			continue
 		}
-		err := c.send(ctx, MethodEventsAppend, r, nil, true)
+		err := c.send(ctx, MethodEventsAppend, r, nil)
 		if ref := refusedForGood(err); ref != nil {
 			refused(r.Kind, ref)
 			done++
@@ -149,14 +128,14 @@ func (c *Client) Flush(ctx context.Context) (int, error) {
 // change.
 func refusedForGood(err error) *model.Refusal {
 	if ref, ok := model.AsRefusal(err); ok {
-		if ref.Code == model.CodeHomeUnreachable || ref.Code == model.CodeScanFailed || ref.Code == model.CodeBadToken {
+		if ref.Code == model.CodeHomeUnreachable || ref.Code == model.CodeScanFailed {
 			return nil
 		}
 		return ref
 	}
-	var he *httpError
-	if errors.As(err, &he) && (he.status == http.StatusBadRequest || he.status == http.StatusRequestEntityTooLarge) {
-		return &model.Refusal{Code: model.CodeBadInput, Msg: he.msg}
+	var re *RPCError
+	if errors.As(err, &re) && re.BadRequest {
+		return &model.Refusal{Code: model.CodeBadInput, Msg: re.Message}
 	}
 	return nil
 }

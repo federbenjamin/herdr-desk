@@ -48,13 +48,13 @@ func TestOpenCreatesPrivateWALDatabaseWithExpectedSchema(t *testing.T) {
 	if got := pragmaText(t, db, "journal_mode"); strings.ToLower(got) != "wal" {
 		t.Errorf("journal_mode = %q, want WAL", got)
 	}
-	if got := userTableNames(t, db); !reflect.DeepEqual(got, []string{"events", "runs", "sessions", "steps", "tasks"}) {
-		t.Errorf("tables = %v, want the five store tables", got)
+	if got := userTableNames(t, db); !reflect.DeepEqual(got, []string{"coordinator", "events", "runs", "sessions", "steps", "tasks"}) {
+		t.Errorf("tables = %v, want the six store tables", got)
 	}
 	assertColumns(t, db, "events", []string{"id", "ts", "session", "who", "kind", "task", "data", "tags", "run", "v"})
 	assertColumns(t, db, "tasks", []string{"number", "title", "notes", "status", "project", "thread", "archived", "root", "isolation", "model", "created_ts", "updated_ts"})
 	assertColumns(t, db, "steps", []string{"task", "short_id", "text", "done", "pos"})
-	assertColumns(t, db, "runs", []string{"id", "task", "state", "root", "isolation", "model", "reason", "session", "workspace", "pane", "started_ts", "ended_ts", "exit"})
+	assertColumns(t, db, "runs", []string{"id", "task", "state", "root", "isolation", "model", "reason", "session", "workspace", "pane", "started_ts", "ended_ts", "exit", "left_open"})
 	assertColumns(t, db, "sessions", []string{"id", "continues"})
 	if got := pragmaInt(t, db, "user_version"); got < 1 {
 		t.Errorf("user_version = %d, want a numbered migration version", got)

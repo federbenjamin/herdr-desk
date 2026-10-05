@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
-# H2: with the home down, a client's add exits 3 and bare herdr-desk shows the offline banner.
+# H4: with the home down, a client's add exits 3 and bare herdr-desk shows the offline banner.
 # shellcheck source=scripts/e2e/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 build
-PORT=$(free_port)
-home_with_listen home "$PORT"
+home_up home
 run 0 on home herdr-desk add -t "seen before the outage" --desk
-make_client cli home "$PORT"
+make_client cli home
 run 0 on cli herdr-desk list
 out_has "seen before the outage"
 
-stop_daemon home
+home_down home
 
 run 3 on cli herdr-desk add -t "while offline" --desk
 err_has "home-unreachable"

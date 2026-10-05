@@ -1,14 +1,11 @@
 package api
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net"
-	"net/http"
+	"sync"
 	"time"
 
 	"github.com/federbenjamin/herdr-desk/internal/backup"
@@ -17,64 +14,59 @@ import (
 	"github.com/federbenjamin/herdr-desk/internal/store"
 )
 
+// defaultTimeout bounds one request on the command transport.
+const defaultTimeout = 15 * time.Second
+
 // ClientOptions configures a Client.
 type ClientOptions struct {
 	Paths   config.Paths
 	Config  config.Config
-	Timeout time.Duration            // 0 → 5s
-	Spawn   func(config.Paths) error // starts the daemon on a home; nil → never
+	Timeout time.Duration // 0 → 15 s per request on the command transport
+	// Transport carries the requests; nil → NewCommandTransport on a client, NewLocalTransport on a home.
+	Transport Transport
 	// Refused is called once for each queued entry the home refuses for good; nil → the entry is dropped silently.
 	Refused func(kind model.Kind, r *model.Refusal)
-	// Token, when set, is used in place of the token file; `client add` checks a home with it before saving it.
-	Token string
-	// Unreachable is called with the error each time a write is queued because the home could not take it now:
-	// it did not answer (home-unreachable) or refused the token (bad-token); nil → not reported. Append's
-	// results are unchanged: (Event{}, true, nil).
+	// Unreachable is called with the error each time a write is queued because the home did not answer
+	// (home-unreachable); nil → not reported. Append's results are unchanged: (Event{}, true, nil).
 	Unreachable func(err error)
 }
 
-// Client calls the home: through the unix socket on the home itself, through TCP with the token on a client.
-// It owns the snapshot and the outbox, so a caller sees the answer, a refusal, or home-unreachable.
+// Client calls the home through its Transport. It owns the snapshot and the outbox, so a caller sees the answer, a
+// refusal, or home-unreachable. Once the home has not answered, every later request of this Client gets the same
+// refusal at once, so a command that makes several requests waits for one connect timeout, not one per request.
 type Client struct {
-	o    ClientOptions
-	http *http.Client
-	long *http.Client // the same transport with no timeout, for a backup, which runs git against a remote
-	base string
+	o  ClientOptions
+	tr Transport
+
+	mu   sync.Mutex
+	down error // the home-unreachable refusal, once the home did not answer
 }
 
 // NewClient returns a client for the machine o describes.
 func NewClient(o ClientOptions) *Client {
 	if o.Timeout == 0 {
-		o.Timeout = 5 * time.Second
+		o.Timeout = defaultTimeout
 	}
-	c := &Client{o: o}
-	// The token goes to the home only: never through a proxy the environment names.
-	tr := &http.Transport{Proxy: nil}
-	if o.Config.IsClient() {
-		c.base = "http://" + o.Config.Client.Home
-	} else {
-		sock := o.Paths.Socket()
-		c.base = "http://desk"
-		tr.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
-			var d net.Dialer
-			return d.DialContext(ctx, "unix", sock)
-		}
+	tr := o.Transport
+	switch {
+	case tr != nil:
+	case o.Config.IsClient():
+		tr = NewCommandTransport(o.Paths, o.Config, o.Timeout)
+	default:
+		tr = NewLocalTransport(o.Paths, o.Config)
 	}
-	c.http = &http.Client{Timeout: o.Timeout, Transport: tr}
-	c.long = &http.Client{Transport: tr}
-	return c
+	return &Client{o: o, tr: tr}
 }
 
-// where names the home for a message.
-func (c *Client) where() string {
-	if c.o.Config.IsClient() {
-		return "the home at " + c.o.Config.Client.Home
-	}
-	return "the herdr-desk daemon"
-}
+// Close closes the client's transport: on a home, the store it opened.
+func (c *Client) Close() error { return c.tr.Close() }
 
-func unreachable(where string, err error) error {
-	return &model.Refusal{Code: model.CodeHomeUnreachable, Msg: fmt.Sprintf("%s did not answer: %v", where, err)}
+// Retry forgets that the home did not answer, so the next request tries the transport again. A caller that lives
+// past one command, as the board does, calls it once per refresh; within one command the sticky refusal stands.
+func (c *Client) Retry() {
+	c.mu.Lock()
+	c.down = nil
+	c.mu.Unlock()
 }
 
 func isUnreachable(err error) bool {
@@ -82,111 +74,52 @@ func isUnreachable(err error) bool {
 	return ok && r.Code == model.CodeHomeUnreachable
 }
 
-// badToken is the home's 401. The fault is the client's token, never the entry, so a journal write the home
-// answers this way is queued like one it did not answer.
-func (c *Client) badToken() error {
-	return &model.Refusal{Code: model.CodeBadToken, Msg: fmt.Sprintf("%s refused the token (HTTP 401); run `herdr-desk client add` with the home's current token", c.where())}
-}
-
-// cannotTake reports an error that says the home cannot take a write now, for a cause a later call may change
-// without touching the entry: it did not answer, or it refused the token.
-func cannotTake(err error) bool {
-	r, ok := model.AsRefusal(err)
-	return ok && (r.Code == model.CodeHomeUnreachable || r.Code == model.CodeBadToken)
-}
-
-// call forwards the outbox, then sends one request. When the outbox finds the home unreachable or refusing the
-// token, so does the call; an outbox that cannot be forwarded for another reason ends the call with that reason.
+// call forwards the outbox, then sends one request. When the outbox finds the home unreachable, so does the call;
+// an outbox that cannot be forwarded for another reason ends the call with that reason.
 func (c *Client) call(ctx context.Context, method string, req, res any) error {
-	if _, err := c.Flush(ctx); cannotTake(err) {
+	if _, err := c.Flush(ctx); isUnreachable(err) {
 		return err
 	} else if err != nil {
 		return fmt.Errorf("the queued entries in %s could not be forwarded: %w", c.o.Paths.Outbox(), err)
 	}
-	return c.send(ctx, method, req, res, true)
+	return c.send(ctx, method, req, res)
 }
 
-// send makes one request. On a home whose socket refuses the dial it starts the daemon once, when spawn and
-// Spawn allow, and tries again.
-func (c *Client) send(ctx context.Context, method string, req, res any, spawn bool) error {
-	body, err := json.Marshal(req)
+// send makes one request and decodes its answer into res: a refusal is a *model.Refusal, an error a *RPCError.
+func (c *Client) send(ctx context.Context, method string, req, res any) error {
+	params, err := json.Marshal(req)
 	if err != nil {
 		return err
 	}
-	err = c.post(ctx, method, body, res)
-	var opErr *net.OpError
-	if spawn && c.o.Spawn != nil && !c.o.Config.IsClient() && errors.As(err, &opErr) && opErr.Op == "dial" {
-		if serr := c.o.Spawn(c.o.Paths); serr != nil {
-			return unreachable(c.where(), serr)
-		}
-		err = c.post(ctx, method, body, res)
+	c.mu.Lock()
+	down := c.down
+	c.mu.Unlock()
+	if down != nil {
+		return down
 	}
-	var te transportError
-	if errors.As(err, &te) {
-		return unreachable(c.where(), te.err)
+	b, err := c.tr.RoundTrip(ctx, method, params)
+	if isUnreachable(err) {
+		c.mu.Lock()
+		c.down = err
+		c.mu.Unlock()
 	}
-	return err
-}
-
-// transportError is a request that got no HTTP answer.
-type transportError struct{ err error }
-
-func (t transportError) Error() string { return t.err.Error() }
-func (t transportError) Unwrap() error { return t.err }
-
-func (c *Client) post(ctx context.Context, method string, body []byte, res any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/v1/"+method, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	if c.o.Config.IsClient() {
-		token := c.o.Token
-		if token == "" {
-			if token, err = config.ReadToken(c.o.Paths); err != nil {
-				return fmt.Errorf("read the token: %w", err)
-			}
-		}
-		req.Header.Set("Authorization", "Bearer "+token)
+	var resp RPCResponse
+	if err := json.Unmarshal(b, &resp); err != nil {
+		return fmt.Errorf("the home's answer to %s does not parse: %w", method, err)
 	}
-	hc := c.http
-	if method == MethodBackupRun {
-		hc = c.long
-	}
-	resp, err := hc.Do(req)
-	if err != nil {
-		return transportError{err}
-	}
-	defer resp.Body.Close()
-	b, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return transportError{err}
-	}
-	if resp.StatusCode == http.StatusOK {
-		if res == nil {
-			return nil
-		}
-		return json.Unmarshal(b, res)
-	}
-	var eb errorBody
-	_ = json.Unmarshal(b, &eb)
 	switch {
-	case resp.StatusCode == http.StatusConflict && eb.Code != "":
-		return &model.Refusal{Code: eb.Code, Msg: eb.Message}
-	case resp.StatusCode == http.StatusUnauthorized:
-		return c.badToken()
-	default:
-		return &httpError{resp.StatusCode, fmt.Sprintf("%s answered HTTP %d: %s", c.where(), resp.StatusCode, eb.Message)}
+	case resp.Refusal != nil:
+		return resp.Refusal
+	case resp.Error != nil:
+		return resp.Error
+	case res == nil:
+		return nil
 	}
+	return json.Unmarshal(resp.Result, res)
 }
-
-// httpError is an answer that is neither 200 nor a refusal.
-type httpError struct {
-	status int
-	msg    string
-}
-
-func (e *httpError) Error() string { return e.msg }
 
 // ListTasks keeps the snapshot whole: for a filter with f.Live() it asks the home for the zero Filter, writes
 // the snapshot, and returns the tasks f matches. With the home unreachable it answers such a filter from the
@@ -253,15 +186,19 @@ func (c *Client) Step(ctx context.Context, a store.Actor, number int, op model.S
 	return t, err
 }
 
-// Append sends one journal event. queued=true means the home did not answer or refused the token, and the event
-// is in the outbox.
+// Append sends one journal event. queued=true means the home did not answer, and the event is in the outbox, stamped
+// with the time Append was called: the replay keeps the time it was written, not the time the home stopped answering.
 func (c *Client) Append(ctx context.Context, r AppendRequest) (ev model.Event, queued bool, err error) {
 	if !r.valid() {
 		return model.Event{}, false, fmt.Errorf("an append of kind %q must set exactly the field its kind names", r.Kind)
 	}
+	written := time.Now().UTC()
 	err = c.call(ctx, MethodEventsAppend, r, &ev)
-	if !cannotTake(err) {
+	if !isUnreachable(err) {
 		return ev, false, err
+	}
+	if r.Actor.TS == nil {
+		r.Actor.TS = &written
 	}
 	if qerr := c.enqueue(r); qerr != nil {
 		return model.Event{}, false, errors.Join(err, qerr)
@@ -279,17 +216,25 @@ func (c *Client) SessionView(ctx context.Context, session string) (model.Session
 	return d, err
 }
 
-// ListRuns returns the runner's runs.
+// ListRuns returns the runner's runs. It never reconciles.
 func (c *Client) ListRuns(ctx context.Context) ([]model.Run, error) {
-	var runs []model.Run
-	err := c.call(ctx, MethodRunsList, empty{}, &runs)
-	return runs, err
+	var l RunList
+	err := c.call(ctx, MethodRunsList, runsRequest{}, &l)
+	return l.Runs, err
 }
 
-// Status never starts the daemon.
+// ReconcileRuns has the home check its live runs against herdr once, then returns the runner's runs. unchecked is
+// why the check could not run, "" when it ran: the runs are then the store's, unchecked.
+func (c *Client) ReconcileRuns(ctx context.Context) (runs []model.Run, unchecked string, err error) {
+	var l RunList
+	err = c.call(ctx, MethodRunsList, runsRequest{Reconcile: true}, &l)
+	return l.Runs, l.Unchecked, err
+}
+
+// Status asks for the home's status without forwarding the outbox first.
 func (c *Client) Status(ctx context.Context) (Status, error) {
 	var s Status
-	err := c.send(ctx, MethodStatus, empty{}, &s, false)
+	err := c.send(ctx, MethodStatus, empty{}, &s)
 	return s, err
 }
 
@@ -305,6 +250,21 @@ func (c *Client) KillRun(ctx context.Context, a store.Actor, task int) (model.Ta
 	var t model.Task
 	err := c.call(ctx, MethodRunsKill, killRequest{Actor: a, Task: task}, &t)
 	return t, err
+}
+
+// StartRun starts a run of the task; a field of route left empty is not given.
+func (c *Client) StartRun(ctx context.Context, a store.Actor, task int, route store.RunRoute) (model.Run, error) {
+	var r model.Run
+	err := c.call(ctx, MethodRunsStart, startRequest{Actor: a, Task: task, Route: route}, &r)
+	return r, err
+}
+
+// Changes returns the events after the coordinator's cursor, at most 100 of them, oldest first; it moves the cursor
+// only when a is the recorded coordinator's session.
+func (c *Client) Changes(ctx context.Context, a store.Actor) (store.Changes, error) {
+	var ch store.Changes
+	err := c.call(ctx, MethodCoordinatorChanges, changesRequest{Actor: a}, &ch)
+	return ch, err
 }
 
 // PauseRunner pauses or resumes the runner and returns the status after.

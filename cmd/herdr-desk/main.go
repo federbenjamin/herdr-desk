@@ -10,7 +10,6 @@ import (
 	"github.com/charmbracelet/x/term"
 
 	"github.com/federbenjamin/herdr-desk/internal/cli"
-	"github.com/federbenjamin/herdr-desk/internal/daemon"
 )
 
 func main() {
@@ -23,7 +22,6 @@ func main() {
 		Cwd:       workingDir(os.Getwd, os.Stderr),
 		StdinTTY:  stdinTTY,
 		StdoutTTY: stdoutTTY,
-		Spawn:     daemon.Spawn,
 	}))
 }
 

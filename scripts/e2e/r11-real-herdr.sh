@@ -1,26 +1,34 @@
 #!/usr/bin/env bash
-# H11 (runner): on the real herdr, with the stub router and worker: a workspace opens without taking focus, the pane
-# is found by its agent session, a worker whose pane closes goes to review, and a kill leaves nothing. People may be
-# working in this herdr: the script closes only the workspaces a run row of its own desk names, and nothing else.
-# A stub found by its session cannot also be seen idle (herdr ignores reported states once a pane has a session), so
-# the watch is proven here by ending the stub and its pane; the idle rule is proven by W9 and H3.
+# H38 (runner): on the real herdr, with the stub worker: `run start` opens a workspace without taking focus, the pane
+# is found by its agent session, a worker whose process ends by itself goes to review through herdr's real event for
+# it (pane.exited, measured on herdr 0.9.1; the ok line names the events the pane got), with no ticker running, and a
+# kill leaves nothing. People may be working in this herdr: run it in a
+# separate named session (HERDR_SOCKET_PATH), and open one focused workspace in that session first
+# (`herdr workspace create --cwd <a folder> --focus`): the focus check needs a focused workspace to compare. The script
+# links a temp plugin, desk-e2e, whose event hooks (the manifest's) run this script's own herdr-desk on temp folders,
+# and unlinks it at exit. It closes only the workspaces a run row of its own desk names, and nothing else. A stub found
+# by its session cannot also be seen idle (herdr ignores reported states once a pane has a session), so the tracking
+# is proven here by ending the stub and its pane; the idle rows are proven by b09.
 # shellcheck source=scripts/e2e/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 # shellcheck source=scripts/e2e/runner-lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/runner-lib.sh"
-# The real herdr: lib.sh sealed DESK_HERDR, and this script is one of the two that want it open.
+# The real herdr: lib.sh sealed DESK_HERDR, and this script is one of those that want it open.
 unset DESK_HERDR
 need_real_herdr
 build
 RC_NOTIFY=none
+RC_CAP=2
 runner_up home
-route_to "$SCRATCH" in-place sonnet "stub"
+home_event_command
+link_event_plugin "${EVENT_CMD[@]}"
 FOCUS=$(focused_workspace)
+[ -n "$FOCUS" ] || fail "(env) no workspace has focus in this herdr session: open one with --focus first"
 
 # T1: a busy worker whose pane closes without a hand-back.
-run 0 on home herdr-desk add -t "desk e2e: close my pane" --desk --thread agent
+run 0 on home herdr-desk add -t "desk e2e: close my pane" --desk
 set_mode 1 busy
-run 0 on home herdr-desk set T1 ready
+run 0 on home herdr-desk run start T1
 wait_run 1 running 30
 wait_file "$STUB/worker-run1.env"
 track_workspaces
@@ -31,6 +39,7 @@ say "focus unchanged ok"
 wait_long 30 "herdr to show the agent session $SESSION" pane_has_session "$SESSION"
 [ "$(pane_of_session "$SESSION")" = "$PANE" ] || fail "herdr shows the session on $(pane_of_session "$SESSION"), the run row says $PANE"
 say "pane found by agent session ok"
+ticker_stopped home || fail "a ticker runs, so the event is not what is tested"
 # The stub was exec'd into the pane's shell, so ending it closes the pane. Its sleep is ended too.
 WORKER1=$(head -n 1 "$STUB/pids-run1")
 CHILDREN1=$(pgrep -P "$WORKER1" || true)
@@ -39,15 +48,16 @@ for p in $CHILDREN1; do kill -TERM "$p" 2>/dev/null || true; done
 wait_task 1 review 40
 run_is 1 ended || fail "run 1 is $(run_field 1 state)"
 task_has_note 1 "the pane closed without a hand-back" || fail "T1 has no note that its pane closed: $(task_notes 1)"
-say "pane closed → review ok"
+say "pane closed → review through herdr's event ok ($(grep -F "\"pane_id\":\"$PANE\"" "$EVENT_LOG" | cut -f2 | sort -u | paste -sd, -))"
 
 # T2: kill a worker with a child.
-run 0 on home herdr-desk add -t "desk e2e: kill me" --desk --thread agent
+run 0 on home herdr-desk add -t "desk e2e: kill me" --desk
 set_mode 2 children
-run 0 on home herdr-desk set T2 ready
+run 0 on home herdr-desk run start T2 --isolation self
 wait_run 2 running 30
 wait_file "$STUB/pids-run2"
-wait_long 10 "the child's pid" test "$(wc -l <"$STUB/pids-run2" | tr -d ' ')" -ge 2
+two_pids() { [ "$(wc -l <"$STUB/pids-run2" | tr -d ' ')" -ge 2 ]; }
+wait_long 10 "the child's pid" two_pids
 track_workspaces
 PANE2=$(run_field 2 pane)
 pids_alive "$STUB/pids-run2" || fail "the worker or its child is not alive"
@@ -61,7 +71,6 @@ say "pane gone from herdr ok"
 
 # Close what this script opened, and check it is closed and that nothing it started is left.
 track_workspaces
-stop_daemon home
 close_tracked_workspaces
 [ -s "$E2E/workspaces.txt" ] || fail "no run row named a workspace"
 while read -r id; do

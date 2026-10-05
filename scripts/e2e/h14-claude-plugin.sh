@@ -4,10 +4,11 @@
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 build
 PLUGIN="$REPO/profiles/claude-code"
+claude_wrapper validate
 
-run 0 claude plugin validate --strict "$PLUGIN"
+run 0 "$CLAUDE_WRAP" plugin validate --strict "$PLUGIN"
 say "plugin valid"
-run 0 claude plugin validate --strict "$REPO/.claude-plugin/marketplace.json"
+run 0 "$CLAUDE_WRAP" plugin validate --strict "$REPO/.claude-plugin/marketplace.json"
 say "marketplace valid"
 
 jq -e '.name == "herdr-desk"' "$PLUGIN/.claude-plugin/plugin.json" >/dev/null || fail "the plugin is not named herdr-desk"

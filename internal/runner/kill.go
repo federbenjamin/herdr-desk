@@ -15,7 +15,7 @@ import (
 	"github.com/federbenjamin/herdr-desk/internal/store"
 )
 
-// killTries bounds Kill's retries when a tick moves the run on between Kill's read and its write.
+// killTries bounds Kill's retries when another process moves the run on between Kill's read and its write.
 const killTries = 3
 
 // Kill stops the task's live run: it kills the pane's processes, closes the pane, sets the run killed and the
@@ -35,10 +35,11 @@ func (r *Runner) Kill(ctx context.Context, a store.Actor, task int) (model.Task,
 		if !ok || !model.RunLive(run.State) {
 			return model.Task{}, &model.Refusal{Code: model.CodeNoRun, Msg: fmt.Sprintf("T%d has no live run", task)}
 		}
-		f := flip{from: run.State, to: model.RunKilled, status: model.StatusBlocked, tags: []string{model.TagRunner},
-			note: fmt.Sprintf("run %d killed while %s", run.ID, run.State)}
+		hb := store.HandBack{From: run.State, To: model.RunKilled, Status: model.StatusBlocked, Tags: []string{model.TagRunner},
+			Note: fmt.Sprintf("run %d killed while %s", run.ID, run.State)}
+		var cleanup func(ctx context.Context) string
 		var k paneKill
-		if run.State == model.RunRunning {
+		if run.Pane != "" {
 			h, why := r.findHerdr()
 			if why != nil {
 				return model.Task{}, fmt.Errorf("herdr cannot be reached, so the pane cannot be closed: %w", why)
@@ -47,12 +48,12 @@ func (r *Runner) Kill(ctx context.Context, a store.Actor, task int) (model.Task,
 			if err != nil {
 				return model.Task{}, err
 			}
-			f.cleanup = func(ctx context.Context) string {
+			cleanup = func(ctx context.Context) string {
 				k = r.killPane(ctx, h, run, panes)
 				return fmt.Sprintf("run %d killed: %s", run.ID, k)
 			}
 		}
-		t, claimed, err := r.handBack(ctx, run, f)
+		t, claimed, err := r.handBack(ctx, run, hb, cleanup)
 		if err != nil {
 			return t, err
 		}
@@ -69,11 +70,11 @@ func (r *Runner) Kill(ctx context.Context, a store.Actor, task int) (model.Task,
 
 // stop is the time limit's kill: the run killed, the pane's processes, the pane, the task blocked.
 func (r *Runner) stop(ctx context.Context, h Herdr, run model.Run, panes []herdr.Pane, msg string) {
-	r.handBack(ctx, run, flip{from: model.RunRunning, to: model.RunKilled, status: model.StatusBlocked,
-		tags: []string{model.TagRunner}, cleanup: func(ctx context.Context) string {
-			k := r.killPane(ctx, h, run, panes)
-			return strings.Join(append([]string{msg}, k.problems...), "; ")
-		}})
+	r.handBack(ctx, run, store.HandBack{From: model.RunRunning, To: model.RunKilled, Status: model.StatusBlocked,
+		Tags: []string{model.TagRunner}}, func(ctx context.Context) string {
+		k := r.killPane(ctx, h, run, panes)
+		return strings.Join(append([]string{msg}, k.problems...), "; ")
+	})
 }
 
 // paneKill is what killing a pane did, for a note.
@@ -91,22 +92,22 @@ func (k paneKill) String() string {
 	return strings.Join(parts, "; ")
 }
 
-// killPane kills the run's pane, found as the watch finds it.
+// killPane kills the run's pane, found by findPane.
 func (r *Runner) killPane(ctx context.Context, h Herdr, run model.Run, panes []herdr.Pane) paneKill {
 	pane, _ := findPane(panes, run)
 	if pane == nil {
 		return paneKill{done: "no pane was open"}
 	}
-	return r.closePane(ctx, h, run.Task, *pane)
+	return r.closePane(ctx, h, run, *pane)
 }
 
 // closePane signals the pane's processes with TERM, then KILL after the grace, and closes the pane. A pane that
-// does not close is kept, and the watch closes it again until herdr no longer lists it.
-func (r *Runner) closePane(ctx context.Context, h Herdr, task int, pane herdr.Pane) paneKill {
+// does not close is recorded on the run (close), and Jobs closes it again until herdr no longer lists it.
+func (r *Runner) closePane(ctx context.Context, h Herdr, run model.Run, pane herdr.Pane) paneKill {
 	var k paneKill
 	procs, err := h.Processes(ctx, pane.ID)
 	if err != nil {
-		r.logErr("T%d: read the processes of pane %s", task, pane.ID, err)
+		r.logErr("T%d: read the processes of pane %s", run.Task, pane.ID, err)
 		k.problems = append(k.problems, "its processes could not be read")
 		k.alive = true
 	}
@@ -114,7 +115,7 @@ func (r *Runner) closePane(ctx context.Context, h Herdr, task int, pane herdr.Pa
 	signalAll(targets, syscall.SIGTERM)
 	left := waitGone(targets, r.o.KillGrace)
 	signalAll(left, syscall.SIGKILL)
-	if r.close(ctx, h, task, pane) {
+	if r.close(ctx, h, run, pane) {
 		k.done = fmt.Sprintf("pane %s closed", pane.ID)
 	} else {
 		k.problems = append(k.problems, fmt.Sprintf("pane %s did not close", pane.ID))
@@ -135,56 +136,78 @@ func (r *Runner) closePane(ctx context.Context, h Herdr, task int, pane herdr.Pa
 	return k
 }
 
-// close closes the pane and reports whether it is gone. A close that fails on a pane herdr no longer lists is
-// gone too: its processes ended and took it. A pane that may still be open is kept for the watch to close again.
-func (r *Runner) close(ctx context.Context, h Herdr, task int, pane herdr.Pane) bool {
+// close closes the run's pane and reports whether it is gone. A close that fails on a pane herdr no longer lists
+// is gone too: its processes ended and took it. A pane that may still be open is recorded on the run (keepOpen).
+func (r *Runner) close(ctx context.Context, h Herdr, run model.Run, pane herdr.Pane) bool {
 	err := h.ClosePane(ctx, pane.ID)
 	if err != nil {
-		if panes, lerr := h.Panes(ctx); lerr == nil && !listed(panes, pane) {
-			err = nil
+		if panes, lerr := h.Panes(ctx); lerr == nil {
+			if _, ok := paneByID(panes, pane); !ok {
+				err = nil
+			}
 		}
 	}
 	if err != nil {
-		r.logErr("T%d: close pane %s", task, pane.ID, err)
-		r.keepOpen(pane, task)
+		r.logErr("T%d: close pane %s", run.Task, pane.ID, err)
+		r.keepOpen(ctx, run, pane)
 		return false
 	}
-	r.forgetOpen(pane.ID)
 	return true
 }
 
-// listed reports whether herdr lists the pane, by its id and workspace.
-func listed(panes []herdr.Pane, pane herdr.Pane) bool {
+// keepOpen records on the run that its pane did not close, so Jobs closes it again: in the state the store holds
+// when the run is its task's newest, else in run.State, the state its caller knows an older run to be in.
+func (r *Runner) keepOpen(ctx context.Context, run model.Run, pane herdr.Pane) {
+	if run.LeftOpen {
+		return
+	}
+	open := true
+	state := run.State
+	cur, ok, err := r.o.Store.CurrentRun(ctx, run.Task)
+	if err == nil && ok && cur.ID == run.ID {
+		state = cur.State
+	}
+	if err == nil {
+		ok, err = r.o.Store.UpdateRun(ctx, run.ID, state, store.RunUpdate{LeftOpen: &open, Workspace: pane.Workspace, Pane: pane.ID})
+	}
+	if err == nil && !ok {
+		err = errors.New("the run changed state")
+	}
+	if err != nil {
+		r.logErr("T%d run %d: record that pane %s is still open", run.Task, run.ID, pane.ID, err)
+	}
+}
+
+// paneByID is the one rule for which listed pane is a given one: the same id in the same workspace (herdr may reuse
+// an id in another workspace). It returns that pane as herdr lists it; false when herdr does not list it.
+func paneByID(panes []herdr.Pane, pane herdr.Pane) (herdr.Pane, bool) {
 	for _, p := range panes {
 		if p.ID == pane.ID && p.Workspace == pane.Workspace {
-			return true
+			return p, true
 		}
 	}
-	return false
+	return herdr.Pane{}, false
 }
 
-// keepOpen remembers a pane that did not close, so the watch closes it again.
-func (r *Runner) keepOpen(pane herdr.Pane, task int) {
-	r.openMu.Lock()
-	defer r.openMu.Unlock()
-	r.open[pane.ID] = openPane{pane: pane, task: task}
-}
+// runPane is the pane the run row names.
+func runPane(run model.Run) herdr.Pane { return herdr.Pane{ID: run.Pane, Workspace: run.Workspace} }
 
-func (r *Runner) forgetOpen(pane string) {
-	r.openMu.Lock()
-	defer r.openMu.Unlock()
-	delete(r.open, pane)
-}
-
-// leftOpen returns the panes kept by keepOpen.
-func (r *Runner) leftOpen() []openPane {
-	r.openMu.Lock()
-	defer r.openMu.Unlock()
-	out := make([]openPane, 0, len(r.open))
-	for _, o := range r.open {
-		out = append(out, o)
+// findPane returns the run's pane: the one whose agent session is the run's, else the one paneByID finds for the run
+// row's pane. bySession reports which; nil is no pane.
+func findPane(panes []herdr.Pane, run model.Run) (pane *herdr.Pane, bySession bool) {
+	if run.Session != "" {
+		for i := range panes {
+			if panes[i].Session == run.Session {
+				return &panes[i], true
+			}
+		}
 	}
-	return out
+	if run.Pane != "" {
+		if p, ok := paneByID(panes, runPane(run)); ok {
+			return &p, false
+		}
+	}
+	return nil, false
 }
 
 // signalTargets returns what kill(2) is given for the pane's processes: the foreground group as a negative id,

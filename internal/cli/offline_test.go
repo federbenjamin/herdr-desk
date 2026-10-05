@@ -13,7 +13,7 @@ import (
 )
 
 func TestOfflineLiveListsUseTheSnapshotAndMarkJSONOffline(t *testing.T) {
-	home := testutil.StartHome(t, testutil.HomeOptions{Listen: true})
+	home := testutil.StartHome(t, testutil.HomeOptions{})
 	clientMachine := testutil.NewClientMachine(t, home)
 	getenv := clientMachine.Getenv(nil)
 	cwd := t.TempDir()
@@ -47,7 +47,7 @@ func TestOfflineLiveListsUseTheSnapshotAndMarkJSONOffline(t *testing.T) {
 }
 
 func TestOfflineBareDeskUsesSnapshotBannerAndLiveBoard(t *testing.T) {
-	home := testutil.StartHome(t, testutil.HomeOptions{Listen: true})
+	home := testutil.StartHome(t, testutil.HomeOptions{})
 	clientMachine := testutil.NewClientMachine(t, home)
 	getenv := clientMachine.Getenv(nil)
 	cwd := t.TempDir()
@@ -112,7 +112,7 @@ func setSnapshotTime(t *testing.T, path string, ts time.Time) {
 }
 
 func TestOfflineRefusesNonLiveReadsAndTaskWrites(t *testing.T) {
-	home := testutil.StartHome(t, testutil.HomeOptions{Listen: true})
+	home := testutil.StartHome(t, testutil.HomeOptions{})
 	clientMachine := testutil.NewClientMachine(t, home)
 	getenv := clientMachine.Getenv(nil)
 	cwd := t.TempDir()
@@ -149,7 +149,7 @@ func firstLine(text string) string {
 }
 
 func TestOfflineNoticeNamesTheSnapshotTimeInUTCWithAZ(t *testing.T) {
-	home := testutil.StartHome(t, testutil.HomeOptions{Listen: true})
+	home := testutil.StartHome(t, testutil.HomeOptions{})
 	clientMachine := testutil.NewClientMachine(t, home)
 	getenv := clientMachine.Getenv(nil)
 	cwd := t.TempDir()

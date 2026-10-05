@@ -3,155 +3,45 @@ package store_test
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"reflect"
 	"testing"
 
 	"github.com/federbenjamin/herdr-desk/internal/model"
 	"github.com/federbenjamin/herdr-desk/internal/store"
-	"github.com/federbenjamin/herdr-desk/internal/testutil"
 )
 
-func TestArmedReturnsOnlyUserArmedReadyAgentTasks(t *testing.T) {
-	ctx := context.Background()
-	st := openStore(t, store.Options{})
+// startRoute is the route the runs of these tests take; cap 100 is one no test reaches.
+var startRoute = store.RunRoute{Root: "/repos/desk", Isolation: "worktree", Model: "model-a"}
 
-	armed, err := st.AddTask(ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{
-		Title: "user armed", Status: model.StatusReady, Thread: "agent",
-	}})
-	if err != nil {
-		t.Fatalf("add armed task: %v", err)
-	}
-	if _, err := st.AddTask(ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{
-		Title: "wrong thread", Status: model.StatusReady, Thread: "user",
-	}}); err != nil {
-		t.Fatalf("add wrong-thread task: %v", err)
-	}
-	archived, err := st.AddTask(ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{
-		Title: "archived", Status: model.StatusReady, Thread: "agent",
-	}})
-	if err != nil {
-		t.Fatalf("add archived task: %v", err)
-	}
-	archivedValue := true
-	if _, err := st.SetTask(ctx, store.Actor{}, archived.Number, model.Patch{Archived: &archivedValue}); err != nil {
-		t.Fatalf("archive task: %v", err)
-	}
-	if _, err := st.AddTask(ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{
-		Title: "not ready", Status: model.StatusOpen, Thread: "agent",
-	}}); err != nil {
-		t.Fatalf("add open task: %v", err)
-	}
-
-	got, err := st.Armed(ctx)
-	if err != nil {
-		t.Fatalf("Armed() error = %v", err)
-	}
-	if want := []model.Task{armed}; !reflect.DeepEqual(got, want) {
-		t.Errorf("Armed() = %#v, want %#v", got, want)
-	}
-}
-
-func TestArmedOrdersTasksByTheirArmingEvent(t *testing.T) {
-	ctx := context.Background()
-	st := openStore(t, store.Options{})
-	first, err := st.AddTask(ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{Title: "first", Thread: "agent"}})
-	if err != nil {
-		t.Fatalf("add first task: %v", err)
-	}
-	second, err := st.AddTask(ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{Title: "second", Thread: "agent"}})
-	if err != nil {
-		t.Fatalf("add second task: %v", err)
-	}
-	ready := model.StatusReady
-	if _, err := st.SetTask(ctx, store.Actor{}, second.Number, model.Patch{Status: &ready}); err != nil {
-		t.Fatalf("arm second task: %v", err)
-	}
-	if _, err := st.SetTask(ctx, store.Actor{}, first.Number, model.Patch{Status: &ready}); err != nil {
-		t.Fatalf("arm first task: %v", err)
-	}
-
-	got, err := st.Armed(ctx)
-	if err != nil {
-		t.Fatalf("Armed() error = %v", err)
-	}
-	if len(got) != 2 || got[0].Number != second.Number || got[1].Number != first.Number {
-		t.Errorf("Armed() task order = %#v, want T%d then T%d", got, second.Number, first.Number)
-	}
-}
-
-func TestArmedHonorsAgentsMayArmOnlyForThatStore(t *testing.T) {
-	ctx := context.Background()
-	machine := testutil.NewMachine(t)
-	st, err := store.Open(machine.Paths.DB(), store.Options{AgentsMayArm: true})
-	if err != nil {
-		t.Fatalf("open agent-arming store: %v", err)
-	}
-	task, err := st.AddTask(ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{Title: "agent armed", Thread: "agent"}})
-	if err != nil {
-		st.Close()
-		t.Fatalf("add task: %v", err)
-	}
-	ready := model.StatusReady
-	if _, err := st.SetTask(ctx, store.Actor{Session: "agent-session"}, task.Number, model.Patch{Status: &ready}); err != nil {
-		st.Close()
-		t.Fatalf("agent arms task: %v", err)
-	}
-	got, err := st.Armed(ctx)
-	if err != nil {
-		st.Close()
-		t.Fatalf("Armed() with AgentsMayArm: %v", err)
-	}
-	if len(got) != 1 || got[0].Number != task.Number || got[0].Status != model.StatusReady {
-		st.Close()
-		t.Fatalf("Armed() with AgentsMayArm = %#v, want ready T%d", got, task.Number)
-	}
-	if err := st.Close(); err != nil {
-		t.Fatalf("close agent-arming store: %v", err)
-	}
-
-	st, err = store.Open(machine.Paths.DB(), store.Options{})
-	if err != nil {
-		t.Fatalf("reopen default store: %v", err)
-	}
-	t.Cleanup(func() { _ = st.Close() })
-	got, err = st.Armed(ctx)
-	if err != nil {
-		t.Fatalf("Armed() after reopen: %v", err)
-	}
-	if len(got) != 0 {
-		t.Errorf("Armed() after reopen = %#v, want no agent-armed tasks", got)
-	}
-}
-
-func TestStartRunCreatesRoutingRunAndMarksTaskStarted(t *testing.T) {
+func TestStartRunCreatesAStartingRunAndMarksTaskStartedWithItsRoute(t *testing.T) {
 	ctx := context.Background()
 	st := openStore(t, store.Options{})
 	task, err := st.AddTask(ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{
-		Title: "ready", Status: model.StatusReady, Thread: "agent",
+		Title: "ready", Status: model.StatusReady,
 	}})
 	if err != nil {
 		t.Fatalf("add ready task: %v", err)
 	}
 
-	run, err := st.StartRun(ctx, task.Number)
+	run, err := st.StartRun(ctx, task.Number, startRoute, store.RunCaps{Slots: 100, PerDay: 1000})
 	if err != nil {
 		t.Fatalf("StartRun() error = %v", err)
 	}
-	if run.Task != task.Number || run.State != model.RunRouting || run.StartedTS.IsZero() {
-		t.Errorf("StartRun() = %#v, want routing run for T%d with a start time", run, task.Number)
+	if run.Task != task.Number || run.State != model.RunStarting || run.StartedTS.IsZero() ||
+		run.Root != startRoute.Root || run.Isolation != startRoute.Isolation || run.Model != startRoute.Model {
+		t.Errorf("StartRun() = %#v, want a starting run for T%d on %#v with a start time", run, task.Number, startRoute)
 	}
 	detail, err := st.GetTask(ctx, task.Number)
 	if err != nil {
 		t.Fatalf("GetTask() error = %v", err)
 	}
-	if detail.Task.Status != model.StatusStarted {
-		t.Errorf("task status after StartRun = %q, want %q", detail.Task.Status, model.StatusStarted)
+	if got := detail.Task; got.Status != model.StatusStarted || got.Root != startRoute.Root || got.Isolation != startRoute.Isolation || got.Model != startRoute.Model {
+		t.Errorf("task after StartRun = %#v, want started with the route", got)
 	}
-	if len(detail.History) < 2 {
-		t.Fatalf("history length after StartRun = %d, want creation and set events", len(detail.History))
+	if len(detail.History) != 2 {
+		t.Fatalf("history length after StartRun = %d, want the creation and one set event", len(detail.History))
 	}
-	event := detail.History[len(detail.History)-1]
+	event := detail.History[1]
 	if event.Kind != model.KindSet || event.Run != run.ID || event.Session != "" {
 		t.Errorf("start event = %#v, want a sessionless set event carrying run %d", event, run.ID)
 	}
@@ -159,42 +49,44 @@ func TestStartRunCreatesRoutingRunAndMarksTaskStarted(t *testing.T) {
 	if err := json.Unmarshal(event.Data, &patch); err != nil {
 		t.Fatalf("unmarshal start event: %v", err)
 	}
-	if patch.Status == nil || *patch.Status != model.StatusStarted {
-		t.Errorf("start event patch = %#v, want status started", patch)
+	if patch.Status == nil || *patch.Status != model.StatusStarted || patch.Root == nil || *patch.Root != startRoute.Root {
+		t.Errorf("start event patch = %#v, want status started and the root", patch)
 	}
 }
 
-func TestStartRunRefusesTasksThatAreNotArmed(t *testing.T) {
+func TestStartRunRefusesDoneArchivedAndUnknownTasks(t *testing.T) {
 	ctx := context.Background()
 	st := openStore(t, store.Options{})
-	open, err := st.AddTask(ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{Title: "open", Thread: "agent"}})
+	done, err := st.AddTask(ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{Title: "done", Status: model.StatusDone}})
 	if err != nil {
-		t.Fatalf("add open task: %v", err)
+		t.Fatalf("add done task: %v", err)
 	}
-	otherThread, err := st.AddTask(ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{Title: "other thread", Status: model.StatusReady, Thread: "user"}})
+	archived, err := st.AddTask(ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{Title: "archived", Status: model.StatusReady}})
 	if err != nil {
-		t.Fatalf("add other-thread task: %v", err)
+		t.Fatalf("add archived task: %v", err)
 	}
-	alreadyStarted, err := st.AddTask(ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{Title: "started", Status: model.StatusReady, Thread: "agent"}})
-	if err != nil {
-		t.Fatalf("add started task: %v", err)
-	}
-	if _, err := st.StartRun(ctx, alreadyStarted.Number); err != nil {
-		t.Fatalf("start setup task: %v", err)
+	yes := true
+	if _, err := st.SetTask(ctx, store.Actor{}, archived.Number, model.Patch{Archived: &yes}); err != nil {
+		t.Fatalf("archive task: %v", err)
 	}
 
 	for _, tc := range []struct {
 		name string
 		task int
+		code string
 	}{
-		{name: "open", task: open.Number},
-		{name: "other thread", task: otherThread.Number},
-		{name: "already started", task: alreadyStarted.Number},
+		{"done", done.Number, model.CodeNotAllowed},
+		{"archived", archived.Number, model.CodeNotAllowed},
+		{"unknown", 99, model.CodeUnknownTask},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := st.StartRun(ctx, tc.task)
-			if !errors.Is(err, store.ErrNotArmed) {
-				t.Errorf("StartRun(T%d) error = %v, want errors.Is(err, ErrNotArmed)", tc.task, err)
+			before := eventCount(t, st)
+			_, err := st.StartRun(ctx, tc.task, startRoute, store.RunCaps{Slots: 100, PerDay: 1000})
+			if got := refusalCode(t, err); got != tc.code {
+				t.Errorf("StartRun(T%d) refusal = %q, want %q", tc.task, got, tc.code)
+			}
+			if got := eventCount(t, st); got != before {
+				t.Errorf("event count after a refused start = %d, want %d", got, before)
 			}
 		})
 	}
@@ -213,11 +105,11 @@ func TestCurrentRunReportsNoRun(t *testing.T) {
 func TestCurrentRunReturnsTheTaskRun(t *testing.T) {
 	ctx := context.Background()
 	st := openStore(t, store.Options{})
-	task, err := st.AddTask(ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{Title: "ready", Status: model.StatusReady, Thread: "agent"}})
+	task, err := st.AddTask(ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{Title: "ready", Status: model.StatusReady}})
 	if err != nil {
 		t.Fatalf("add ready task: %v", err)
 	}
-	want, err := st.StartRun(ctx, task.Number)
+	want, err := st.StartRun(ctx, task.Number, startRoute, store.RunCaps{Slots: 100, PerDay: 1000})
 	if err != nil {
 		t.Fatalf("StartRun() error = %v", err)
 	}
@@ -233,18 +125,18 @@ func TestCurrentRunReturnsTheTaskRun(t *testing.T) {
 func TestCurrentRunReturnsTheNewestRun(t *testing.T) {
 	ctx := context.Background()
 	st := openStore(t, store.Options{})
-	task, err := st.AddTask(ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{Title: "ready", Status: model.StatusReady, Thread: "agent"}})
+	task, err := st.AddTask(ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{Title: "ready", Status: model.StatusReady}})
 	if err != nil {
 		t.Fatalf("add ready task: %v", err)
 	}
-	if _, err := st.StartRun(ctx, task.Number); err != nil {
+	first, err := st.StartRun(ctx, task.Number, startRoute, store.RunCaps{Slots: 100, PerDay: 1000})
+	if err != nil {
 		t.Fatalf("start first run: %v", err)
 	}
-	ready := model.StatusReady
-	if _, err := st.SetTask(ctx, store.Actor{}, task.Number, model.Patch{Status: &ready}); err != nil {
-		t.Fatalf("re-arm task: %v", err)
+	if _, err := st.UpdateRun(ctx, first.ID, model.RunStarting, store.RunUpdate{State: model.RunEnded}); err != nil {
+		t.Fatalf("end first run: %v", err)
 	}
-	want, err := st.StartRun(ctx, task.Number)
+	want, err := st.StartRun(ctx, task.Number, startRoute, store.RunCaps{Slots: 100, PerDay: 1000})
 	if err != nil {
 		t.Fatalf("start second run: %v", err)
 	}
@@ -260,11 +152,11 @@ func TestCurrentRunReturnsTheNewestRun(t *testing.T) {
 func TestRunWroteRequiresAnEventWithBothRunAndSession(t *testing.T) {
 	ctx := context.Background()
 	st := openStore(t, store.Options{})
-	task, err := st.AddTask(ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{Title: "ready", Status: model.StatusReady, Thread: "agent"}})
+	task, err := st.AddTask(ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{Title: "ready", Status: model.StatusReady}})
 	if err != nil {
 		t.Fatalf("add ready task: %v", err)
 	}
-	run, err := st.StartRun(ctx, task.Number)
+	run, err := st.StartRun(ctx, task.Number, startRoute, store.RunCaps{Slots: 100, PerDay: 1000})
 	if err != nil {
 		t.Fatalf("StartRun() error = %v", err)
 	}

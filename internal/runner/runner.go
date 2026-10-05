@@ -1,8 +1,8 @@
-// Package runner starts armed tasks in herdr panes, watches them, and stops them.
+// Package runner starts runs of tasks in herdr panes, hands them back, and does the ticker's run jobs. It keeps no
+// state of its own between calls: every process that opens the store makes its own Runner.
 package runner
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,7 +13,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 	"unicode/utf8"
@@ -21,6 +20,7 @@ import (
 	"github.com/federbenjamin/herdr-desk/internal/config"
 	"github.com/federbenjamin/herdr-desk/internal/herdr"
 	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/sidebar"
 	"github.com/federbenjamin/herdr-desk/internal/store"
 )
 
@@ -29,65 +29,51 @@ type Herdr interface {
 	CreateWorkspace(ctx context.Context, cwd, label string, env []string) (herdr.Created, error)
 	Run(ctx context.Context, pane, command string) error
 	Panes(ctx context.Context) ([]herdr.Pane, error)
+	Pane(ctx context.Context, id string) (herdr.Pane, bool, error)
 	Processes(ctx context.Context, pane string) (herdr.Processes, error)
 	ClosePane(ctx context.Context, pane string) error
+	FocusPane(ctx context.Context, workspace, pane string) error
+	ReportToken(ctx context.Context, pane, source, name, value string) error
 }
 
-// The runner's states, as State returns them and daemon.json and the status method show them.
+// The runner's states, as State returns them and the status method shows them.
 const (
-	StateOff      = "off"       // runner.enabled is false
-	StatePaused   = "paused"    // the pause file exists
-	StateNoHerdr  = "no-herdr"  // no usable herdr binary: DESK_HERDR names none, or, unset, none is on PATH
-	StateNoRouter = "no-router" // [agent] router is empty or its first word is not an executable
-	StateOn       = "on"
+	StateOff     = "off"      // runner.enabled is false
+	StatePaused  = "paused"   // the pause file exists
+	StateNoHerdr = "no-herdr" // no usable herdr binary: DESK_HERDR names none, or, unset, none is on PATH
+	StateOn      = "on"
 )
 
 const (
-	defaultRouterTimeout = 2 * time.Minute
-	defaultKillGrace     = 2 * time.Second
-	notifyTimeout        = 10 * time.Second
-	gitTimeout           = 30 * time.Second
-	maxQuoted            = 80
+	defaultKillGrace = 2 * time.Second
+	notifyTimeout    = 10 * time.Second
+	gitTimeout       = 30 * time.Second
+	maxQuoted        = 80
+	// staleAfter is how long a run may stay starting before Jobs fails it, and how long after a run ended Jobs
+	// waits before it blocks a task the run left started: a hand-back between its claim and its writes is not one.
+	staleAfter = time.Minute
 )
 
 // Options configures a Runner.
 type Options struct {
-	Store         *store.Store
-	Config        config.Config
-	Paths         config.Paths
-	Herdr         Herdr                            // nil → a *herdr.Client when herdr.Find succeeds, checked at each tick
-	Exe           string                           // the herdr-desk binary a pane runs; "" → os.Executable()
-	Now           func() time.Time                 // nil → time.Now
-	OnState       func(state string)               // called from New, and from Tick or Pause when the state changed; calls never overlap and arrive in order
-	Logf          func(format string, args ...any) // nil → log.Printf
-	RouterTimeout time.Duration                    // 0 → 2 minutes
-	KillGrace     time.Duration                    // 0 → 2 seconds between TERM and KILL
+	Store     *store.Store
+	Config    config.Config
+	Paths     config.Paths
+	Herdr     Herdr                            // nil → a *herdr.Client when herdr.Find succeeds, looked up at each call
+	Exe       string                           // the herdr-desk binary a pane runs; "" → os.Executable()
+	Now       func() time.Time                 // nil → time.Now
+	Logf      func(format string, args ...any) // nil → log.Printf
+	KillGrace time.Duration                    // 0 → 2 seconds between TERM and KILL
 }
 
 // Runner is one desk's runner.
 type Runner struct {
-	o Options
-
-	stateMu   sync.Mutex // held while the state is computed and published, so OnState calls arrive in order
-	published bool
-	last      string
-
-	idle map[int64]int // run id → ticks in a row its pane was done or idle; read and written by Tick only
-
-	openMu sync.Mutex
-	open   map[string]openPane // pane id → a pane that did not close; the watch closes it again
-
-	handMu  sync.Mutex
-	handing map[int64]int // run id → hand-backs of it in flight, from before their claim until their writes end
+	o        Options
+	owned    bool         // Open opened the store, so Close closes it
+	closeLog func() error // Open opened the log, so Close closes it
 }
 
-// openPane is a pane the runner failed to close, and the task it was opened for.
-type openPane struct {
-	pane herdr.Pane
-	task int
-}
-
-// New returns a runner and publishes its state through OnState.
+// New returns a runner over o.Store.
 func New(o Options) *Runner {
 	if o.Now == nil {
 		o.Now = time.Now
@@ -95,15 +81,10 @@ func New(o Options) *Runner {
 	if o.Logf == nil {
 		o.Logf = log.Printf
 	}
-	if o.RouterTimeout <= 0 {
-		o.RouterTimeout = defaultRouterTimeout
-	}
 	if o.KillGrace <= 0 {
 		o.KillGrace = defaultKillGrace
 	}
-	r := &Runner{o: o, idle: map[int64]int{}, open: map[string]openPane{}, handing: map[int64]int{}}
-	r.publish(context.Background())
-	return r
+	return &Runner{o: o}
 }
 
 // State returns the runner's state now.
@@ -137,42 +118,12 @@ func (r *Runner) Pause(ctx context.Context, a store.Actor, paused bool) error {
 		return &model.Refusal{Code: model.CodeNotAllowed, Msg: "an agent may not pause or resume the runner; a person does"}
 	}
 	if paused {
-		if err := config.WriteFileAtomic(r.o.Paths.RunnerPause(), []byte("paused\n")); err != nil {
-			return err
-		}
-	} else if err := os.Remove(r.o.Paths.RunnerPause()); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return config.WriteFileAtomic(r.o.Paths.RunnerPause(), []byte("paused\n"))
+	}
+	if err := os.Remove(r.o.Paths.RunnerPause()); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	r.publish(ctx)
 	return nil
-}
-
-// Tick is one poll: watch every live run, then start runs for armed tasks while the state and the caps allow.
-func (r *Runner) Tick(ctx context.Context) {
-	state, h := r.publish(ctx)
-	r.failStaleRouting(ctx)
-	r.repairStarted(ctx)
-	if h != nil {
-		r.watch(ctx, h)
-	}
-	if state == StateOn {
-		r.start(ctx, h)
-	}
-}
-
-// Loop calls Tick, then again every runner.poll_seconds, until ctx ends.
-func (r *Runner) Loop(ctx context.Context) {
-	poll := time.Duration(max(r.o.Config.Runner.PollSeconds, 1)) * time.Second
-	t := time.NewTicker(poll)
-	defer t.Stop()
-	for {
-		r.Tick(ctx)
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-		}
-	}
 }
 
 // compute returns the state, the herdr to use (nil when none is found), and why the state is paused or no-herdr
@@ -187,8 +138,6 @@ func (r *Runner) compute() (string, Herdr, error) {
 		return StatePaused, h, pauseErr
 	case h == nil:
 		return StateNoHerdr, h, herdrErr
-	case !routerFound(r.o.Config.Agent.Router):
-		return StateNoRouter, h, nil
 	}
 	return StateOn, h, nil
 }
@@ -205,52 +154,122 @@ func (r *Runner) findHerdr() (Herdr, error) {
 	return &herdr.Client{Bin: bin}, nil
 }
 
-func routerFound(argv []string) bool {
-	if len(argv) == 0 || argv[0] == "" {
-		return false
-	}
-	_, err := exec.LookPath(argv[0])
-	return err == nil
+// Jobs is the ticker's run jobs, once: reconcile, the deadline, start what waits, fail runs left starting, close
+// the panes left open again, and block tasks left started. With no live run and no pane left open, herdr is not asked.
+func (r *Runner) Jobs(ctx context.Context) {
+	_ = r.Reconcile(ctx) // Reconcile logs its errors.
+	r.deadline(ctx)
+	r.StartWaiting(ctx)
+	r.failStaleStarting(ctx)
+	r.closeLeftOpen(ctx)
+	r.repairStarted(ctx)
 }
 
-// publish computes the state, calls OnState when it changed (always on the first call), logs why when the new
-// state has a reason, and notifies once each time the state becomes no-router.
-func (r *Runner) publish(ctx context.Context) (string, Herdr) {
-	r.stateMu.Lock()
-	state, h, why := r.compute()
-	changed := !r.published || state != r.last
-	r.published, r.last = true, state
-	if changed && r.o.OnState != nil {
-		r.o.OnState(state)
+// deadline stops every running run past runner.max_run_minutes. It asks herdr for its panes only when one is.
+func (r *Runner) deadline(ctx context.Context) {
+	live, err := r.o.Store.LiveRuns(ctx)
+	if err != nil {
+		r.logErr("read live runs", err)
+		return
 	}
-	if changed && why != nil {
-		r.logErr("runner %s", state, why)
+	limit := time.Duration(r.o.Config.Runner.MaxRunMinutes) * time.Minute
+	var over []model.Run
+	for _, run := range live {
+		if run.State == model.RunRunning && r.o.Now().Sub(run.StartedTS) > limit {
+			over = append(over, run)
+		}
 	}
-	r.stateMu.Unlock()
-	if changed && state == StateNoRouter {
-		r.notify(ctx, "herdr-desk: runner stopped", "no router: [agent] router is empty or its first word is not an executable")
+	if len(over) == 0 {
+		return
 	}
-	return state, h
+	h, panes, ok := r.panes(ctx)
+	if !ok {
+		return
+	}
+	for _, run := range over {
+		r.stop(ctx, h, run, panes, fmt.Sprintf("stopped after %d minutes (runner.max_run_minutes)", r.o.Config.Runner.MaxRunMinutes))
+	}
 }
 
-// failStaleRouting fails every run left in routing: Tick routes a run to the end within one call, so a routing
-// run at the start of a tick was left by a daemon that stopped.
-func (r *Runner) failStaleRouting(ctx context.Context) {
+// panes finds herdr and lists its panes; false, logged, when either fails.
+func (r *Runner) panes(ctx context.Context) (Herdr, []herdr.Pane, bool) {
+	h, err := r.findHerdr()
+	if err != nil {
+		r.logErr("find herdr", err)
+		return nil, nil, false
+	}
+	panes, err := h.Panes(ctx)
+	if err != nil {
+		r.logErr("list herdr panes", err)
+		return nil, nil, false
+	}
+	return h, panes, true
+}
+
+// failStaleStarting fails every run left starting for over a minute: a start spawns its run within one call, so
+// such a run was left by a process that stopped.
+func (r *Runner) failStaleStarting(ctx context.Context) {
 	live, err := r.o.Store.LiveRuns(ctx)
 	if err != nil {
 		r.logErr("read live runs", err)
 		return
 	}
 	for _, run := range live {
-		if run.State == model.RunRouting {
-			r.fail(ctx, run, model.RunRouting, []string{model.TagRunner},
-				"the daemon restarted while this run was being routed; arm the task again")
+		if run.State == model.RunStarting && r.o.Now().Sub(run.StartedTS) > staleAfter {
+			r.fail(ctx, run, model.RunStarting, fmt.Sprintf("run %d was left starting for over a minute; start the task again", run.ID))
 		}
 	}
 }
 
-// repairStarted blocks each task left started by its newest run after that run ended: a hand-back that claimed the
-// run but could not write the task's status. A task a person set started is left alone.
+// closeLeftOpen closes each pane owed a close (LeftOpenRuns), and clears the mark once herdr no longer lists the pane.
+func (r *Runner) closeLeftOpen(ctx context.Context) {
+	runs, err := r.o.Store.LeftOpenRuns(ctx)
+	if err != nil {
+		r.logErr("read the runs whose pane was left open", err)
+		return
+	}
+	if len(runs) == 0 {
+		return
+	}
+	h, panes, ok := r.panes(ctx)
+	if !ok {
+		return
+	}
+	r.closeOwed(ctx, h, panes, runs)
+}
+
+// closeOwed closes the pane of each run owed a close, the one herdr lists with the run's pane id in the run's
+// workspace (paneByID), and clears a run's mark once herdr no longer lists its pane. It returns why, for each run
+// whose pane or processes may still be alive.
+func (r *Runner) closeOwed(ctx context.Context, h Herdr, panes []herdr.Pane, runs []model.Run) []string {
+	shut := false
+	var open []string
+	for _, run := range runs {
+		pane := runPane(run)
+		if _, ok := paneByID(panes, pane); ok {
+			k := r.closePane(ctx, h, run, pane)
+			r.o.Logf("herdr-desk runner: T%d: closing pane %s of run %d: %s", run.Task, pane.ID, run.ID, k)
+			if k.alive {
+				open = append(open, mayBeOpen(run, strings.Join(k.problems, "; ")))
+			}
+			if k.done == "" {
+				continue
+			}
+		}
+		if _, err := r.o.Store.UpdateRun(ctx, run.ID, run.State, store.RunUpdate{LeftOpen: &shut}); err != nil {
+			r.logErr("T%d run %d: clear its open pane", run.Task, run.ID, err)
+		}
+	}
+	return open
+}
+
+// mayBeOpen says that the run's pane may still be open, and why.
+func mayBeOpen(run model.Run, why string) string {
+	return fmt.Sprintf("the pane %s of run %d may still be open (%s)", run.Pane, run.ID, why)
+}
+
+// repairStarted blocks each task left started by its newest run more than a minute after that run ended: a
+// hand-back that claimed the run but could not write the task's status. A task a person set started is left alone.
 func (r *Runner) repairStarted(ctx context.Context) {
 	tasks, err := r.o.Store.ListTasks(ctx, store.Filter{Statuses: []model.Status{model.StatusStarted}})
 	if err != nil {
@@ -263,9 +282,7 @@ func (r *Runner) repairStarted(ctx context.Context) {
 			r.logErr("T%d: read its run", t.Number, err)
 			continue
 		}
-		// A hand-back marks its run before it claims it, so a run seen ended and unmarked here has no writes still
-		// to come, and the task read after this check holds them.
-		if !ok || model.RunLive(run.State) || r.handingBack(run.ID) {
+		if !ok || model.RunLive(run.State) || r.o.Now().Sub(run.EndedTS) <= staleAfter {
 			continue
 		}
 		d, err := r.o.Store.GetTask(ctx, t.Number)
@@ -274,8 +291,8 @@ func (r *Runner) repairStarted(ctx context.Context) {
 			continue
 		}
 		if startedBy(d.History, run.ID) {
-			r.handBack(ctx, run, flip{from: run.State, status: model.StatusBlocked, tags: []string{model.TagRunner},
-				note: fmt.Sprintf("run %d is %s, but its task was left started", run.ID, run.State)})
+			r.handBack(ctx, run, store.HandBack{From: run.State, Status: model.StatusBlocked, Tags: []string{model.TagRunner},
+				Note: fmt.Sprintf("run %d is %s, but its task was left started", run.ID, run.State)}, nil)
 		}
 	}
 }
@@ -293,133 +310,165 @@ func startedBy(history []model.Event, run int64) bool {
 	return false
 }
 
-// start starts waiting runs whose root is free, then runs for armed tasks while the caps allow.
-func (r *Runner) start(ctx context.Context, h Herdr) {
+// fail sets the run failed while it is in state from, with msg as its reason, then notes msg on its task and sets
+// the task blocked. A run that has left from (a kill took it) is left alone.
+func (r *Runner) fail(ctx context.Context, run model.Run, from, msg string) {
+	r.handBack(ctx, run, store.HandBack{From: from, To: model.RunFailed, Status: model.StatusBlocked,
+		Tags: []string{model.TagRunner}, Note: msg, Reason: msg}, nil)
+}
+
+// handBack is the one hand-back, over Store.HandBack. Without a cleanup it is one HandBack. With one, it claims the
+// run (HandBack{From, To}), runs the cleanup, whose answer is the note, then writes the note and the status from
+// To; once claimed, those writes go on even when ctx ends, so the task is not left started with no live run. A run
+// that is not its task's newest (stale-run) is nothing to do. A run that ends frees a slot, so StartWaiting runs.
+// A claimed hand-back is then reported: the run's row while the run stays live (a run that ends here had its pane
+// closed or found gone), and the coordinator's row. It returns the task and whether it claimed the run.
+func (r *Runner) handBack(ctx context.Context, run model.Run, hb store.HandBack, cleanup func(ctx context.Context) string) (model.Task, bool, error) {
+	write := hb
+	if cleanup != nil {
+		_, claimed, err := r.storeHandBack(ctx, run, store.HandBack{From: hb.From, To: hb.To})
+		if err != nil || !claimed {
+			return model.Task{}, false, err
+		}
+		ctx = context.WithoutCancel(ctx)
+		write.Note = cleanup(ctx)
+		if hb.To != "" {
+			write.From, write.To = hb.To, ""
+		}
+	}
+	t, claimed, err := r.storeHandBack(ctx, run, write)
+	if err != nil {
+		return t, cleanup != nil, err
+	}
+	if !claimed && cleanup == nil {
+		return t, false, nil
+	}
+	if model.RunFinal(hb.To) {
+		r.StartWaiting(ctx)
+	}
+	state := hb.To
+	if state == "" {
+		state = hb.From
+	}
+	r.report(ctx, run, model.RunLive(state))
+	return t, true, nil
+}
+
+// report shows the sidebar rows a change of the run can move: the run's own when row is set, then the
+// coordinator's. With no herdr there is no sidebar, and nothing is asked; a report herdr refuses is logged.
+func (r *Runner) report(ctx context.Context, run model.Run, row bool) {
+	h, err := r.findHerdr()
+	if err != nil {
+		return
+	}
+	if row {
+		r.reportRun(ctx, h, run)
+	}
+	r.reportCoordinator(ctx, h)
+}
+
+// reportRun shows the run's row on its pane, from the run and its task as the store holds them now. A run with no
+// pane yet, or killed or failed (its pane closed or closing), gets nothing; for a run that ended, herdr is asked
+// first whether its pane is still open.
+func (r *Runner) reportRun(ctx context.Context, h Herdr, run model.Run) {
+	cur, ok, err := r.o.Store.CurrentRun(ctx, run.Task)
+	if err != nil {
+		r.logErr("T%d: read its run for the sidebar", run.Task, err)
+		return
+	}
+	current := ok && cur.ID == run.ID
+	if current {
+		run = cur
+	}
+	if run.Pane == "" || run.State == model.RunKilled || run.State == model.RunFailed {
+		return
+	}
+	if !model.RunLive(run.State) {
+		p, found, err := h.Pane(ctx, run.Pane)
+		if err != nil {
+			r.logErr("T%d: read pane %s for the sidebar", run.Task, run.Pane, err)
+			return
+		}
+		if _, open := paneByID([]herdr.Pane{p}, runPane(run)); !found || !open {
+			return
+		}
+	}
+	d, err := r.o.Store.GetTask(ctx, run.Task)
+	if err != nil {
+		r.logErr("T%d: read the task for the sidebar", run.Task, err)
+		return
+	}
+	r.reportToken(ctx, h, run.Pane, sidebar.RunText(d.Task, run, current, handBackRef(d.History, run.ID), r.o.Now().Location()))
+}
+
+// reportCoordinator shows the desk's counts on the recorded coordinator's pane, when there is one.
+func (r *Runner) reportCoordinator(ctx context.Context, h Herdr) {
+	c, ok, err := r.o.Store.Coordinator(ctx)
+	if err != nil {
+		r.logErr("read the coordinator for the sidebar", err)
+		return
+	}
+	if !ok || c.Pane == "" {
+		return
+	}
+	need, err := r.o.Store.ListTasks(ctx, store.Filter{Statuses: []model.Status{model.StatusBlocked, model.StatusReview}})
+	if err != nil {
+		r.logErr("count the tasks that need a person", err)
+		return
+	}
 	live, err := r.o.Store.LiveRuns(ctx)
 	if err != nil {
 		r.logErr("read live runs", err)
 		return
 	}
-	busy := map[string]bool{} // roots with a running in-place run
+	running, waiting := 0, 0
 	for _, run := range live {
-		if run.State == model.RunRunning && run.Isolation == "in-place" {
-			busy[filepath.Clean(run.Root)] = true
+		switch {
+		case model.RunTakesSlot(run.State):
+			running++
+		case run.State == model.RunWaiting:
+			waiting++
 		}
 	}
-	for _, run := range live {
-		if run.State != model.RunWaiting || busy[filepath.Clean(run.Root)] {
-			continue
-		}
-		d, err := r.o.Store.GetTask(ctx, run.Task)
-		if err != nil {
-			r.logErr("T%d: read the task", run.Task, err)
-			continue
-		}
-		if r.spawn(ctx, h, d.Task, run, model.RunWaiting) {
-			busy[filepath.Clean(run.Root)] = true
-		}
-	}
+	r.reportToken(ctx, h, c.Pane, sidebar.CoordinatorText(len(need), running, waiting))
+}
 
-	now := r.o.Now()
-	y, m, d := now.Date()
-	today, err := r.o.Store.RunsSince(ctx, time.Date(y, m, d, 0, 0, 0, 0, now.Location()))
-	if err != nil {
-		r.logErr("count today's runs", err)
-		return
-	}
-	armed, err := r.o.Store.Armed(ctx)
-	if err != nil {
-		r.logErr("read armed tasks", err)
-		return
-	}
-	nlive := len(live)
-	for _, t := range armed {
-		if nlive >= r.o.Config.Runner.Cap || today >= r.o.Config.Runner.MaxRunsPerDay {
-			return
-		}
-		run, err := r.o.Store.StartRun(ctx, t.Number)
-		if errors.Is(err, store.ErrNotArmed) {
-			continue
-		}
-		if err != nil {
-			r.logErr("T%d: start a run", t.Number, err)
-			continue
-		}
-		nlive++
-		today++
-		if !r.route(ctx, t, &run) {
-			continue
-		}
-		if run.Isolation == "in-place" && busy[filepath.Clean(run.Root)] {
-			if _, err := r.o.Store.UpdateRun(ctx, run.ID, model.RunRouting, store.RunUpdate{State: model.RunWaiting}); err != nil {
-				r.logErr("T%d run %d: set waiting", t.Number, run.ID, err)
-			}
-			continue
-		}
-		if r.spawn(ctx, h, t, run, model.RunRouting) && run.Isolation == "in-place" {
-			busy[filepath.Clean(run.Root)] = true
-		}
+func (r *Runner) reportToken(ctx context.Context, h Herdr, pane, text string) {
+	if err := h.ReportToken(ctx, pane, sidebar.Source, sidebar.Token, text); err != nil {
+		r.logErr("show the sidebar row of pane %s", pane, err)
 	}
 }
 
-// fail sets the run failed while it is in state from, then notes msg on its task and sets the task blocked. A
-// run that has left from (a kill took it) is left alone.
-func (r *Runner) fail(ctx context.Context, run model.Run, from string, tags []string, msg string) {
-	r.handBack(ctx, run, flip{from: from, to: model.RunFailed, status: model.StatusBlocked, tags: tags, note: msg})
-}
-
-// flip is one hand-back: the run leaves from for to, and its task gets status and a runner note.
-type flip struct {
-	from, to string // to "" leaves the run in from: the claim only checks it is still there
-	status   model.Status
-	tags     []string
-	note     string
-	// cleanup runs once the run is claimed and returns the note, in place of note.
-	cleanup func(ctx context.Context) string
-}
-
-// handBack claims the run by moving it from f.from to f.to, runs f.cleanup, then writes the note and the task's
-// status as the runner, with the run's id. Once the run is claimed the writes go on even when ctx ends, so the
-// task is not left started with no live run. It returns the task and whether it claimed the run.
-func (r *Runner) handBack(ctx context.Context, run model.Run, f flip) (model.Task, bool, error) {
-	r.markHandBack(run.ID, 1)
-	defer r.markHandBack(run.ID, -1)
-	ok, err := r.o.Store.UpdateRun(ctx, run.ID, f.from, store.RunUpdate{State: f.to})
-	if err != nil {
-		r.logErr("T%d run %d: set %s", run.Task, run.ID, f.to, err)
-		return model.Task{}, false, err
+// handBackRef is the ref of the newest status write the run's worker made with one, "" when none did.
+func handBackRef(history []model.Event, run int64) string {
+	for i := len(history) - 1; i >= 0; i-- {
+		e := history[i]
+		var p model.Patch
+		if e.Kind != model.KindSet || e.Run != run || json.Unmarshal(e.Data, &p) != nil {
+			continue
+		}
+		if p.Ref != "" {
+			return p.Ref
+		}
 	}
-	if !ok {
+	return ""
+}
+
+// storeHandBack is Store.HandBack with a stale-run refusal read as no claim, and a withheld note logged as what it
+// is: the hand-back was written. Any other error is logged.
+func (r *Runner) storeHandBack(ctx context.Context, run model.Run, hb store.HandBack) (model.Task, bool, error) {
+	t, claimed, err := r.o.Store.HandBack(ctx, run, hb)
+	if errors.Is(err, store.ErrNoteWithheld) {
+		r.logErr("T%d run %d: hand back (%s → %s, task %s) with a fixed note", run.Task, run.ID, hb.From, hb.To, hb.Status, err)
+		return t, claimed, nil
+	}
+	if ref, ok := model.AsRefusal(err); ok && ref.Code == model.CodeStaleRun {
 		return model.Task{}, false, nil
 	}
-	ctx = context.WithoutCancel(ctx)
-	msg := f.note
-	if f.cleanup != nil {
-		msg = f.cleanup(ctx)
-	}
-	actor := store.Actor{Run: run.ID}
-	r.note(ctx, actor, run.Task, f.tags, msg)
-	t, err := r.o.Store.SetTask(ctx, actor, run.Task, model.Patch{Status: &f.status})
 	if err != nil {
-		r.logErr("T%d: set %s", run.Task, f.status, err)
+		r.logErr("T%d run %d: hand back (%s → %s, task %s)", run.Task, run.ID, hb.From, hb.To, hb.Status, err)
 	}
-	return t, true, err
-}
-
-// markHandBack adds n to the run's count of hand-backs in flight.
-func (r *Runner) markHandBack(run int64, n int) {
-	r.handMu.Lock()
-	defer r.handMu.Unlock()
-	if r.handing[run] += n; r.handing[run] <= 0 {
-		delete(r.handing, run)
-	}
-}
-
-// handingBack reports whether a hand-back of the run is in flight.
-func (r *Runner) handingBack(run int64) bool {
-	r.handMu.Lock()
-	defer r.handMu.Unlock()
-	return r.handing[run] > 0
+	return t, claimed, err
 }
 
 func (r *Runner) note(ctx context.Context, a store.Actor, task int, tags []string, text string) {
@@ -439,26 +488,22 @@ func (r *Runner) notify(ctx context.Context, title, body string) {
 		return
 	}
 	argv := config.Expand(r.o.Config.Notify.Command, map[string]string{"title": title, "body": body})
-	if _, err := runChild(ctx, argv, nil, notifyTimeout, nil); err != nil {
+	if err := runChild(ctx, argv, notifyTimeout); err != nil {
 		r.logErr("notify", err)
 	}
 }
 
-// runChild runs argv with stdin and the extra environment within timeout, in its own process group so a timeout
-// stops what it started too, and returns its stdout. An error quotes at most 80 characters of its stderr.
-func runChild(ctx context.Context, argv []string, stdin []byte, timeout time.Duration, env []string) ([]byte, error) {
+// runChild runs argv within timeout, in its own process group so a timeout stops what it started too. An error
+// quotes at most 80 characters of its stderr.
+func runChild(ctx context.Context, argv []string, timeout time.Duration) error {
 	if len(argv) == 0 || argv[0] == "" {
-		return nil, errors.New("the command is empty")
+		return errors.New("the command is empty")
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
-	if len(env) > 0 {
-		cmd.Env = append(os.Environ(), env...)
-	}
-	cmd.Stdin = bytes.NewReader(stdin)
-	var out, errOut bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errOut
+	var errOut strings.Builder
+	cmd.Stderr = &errOut
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = time.Second
@@ -467,11 +512,11 @@ func runChild(ctx context.Context, argv []string, stdin []byte, timeout time.Dur
 			err = fmt.Errorf("timed out after %s", timeout)
 		}
 		if msg := strings.TrimSpace(errOut.String()); msg != "" {
-			return nil, fmt.Errorf("%s: %w: %s", filepath.Base(argv[0]), err, clip(msg))
+			return fmt.Errorf("%s: %w: %s", filepath.Base(argv[0]), err, clip(msg))
 		}
-		return nil, fmt.Errorf("%s: %w", filepath.Base(argv[0]), err)
+		return fmt.Errorf("%s: %w", filepath.Base(argv[0]), err)
 	}
-	return out.Bytes(), nil
+	return nil
 }
 
 // clip cuts s to 80 characters, the most of a child's output a note may quote.

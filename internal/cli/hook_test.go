@@ -20,7 +20,7 @@ func TestClaudeHookWritesAPrivateJournalViewForEveryRenderingSource(t *testing.T
 			home := testutil.StartHome(t, testutil.HomeOptions{})
 			sessionID := "hook-" + source
 			input := fmt.Sprintf(`{"source":%q,"session_id":%q}`, source, sessionID)
-			result := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"hook", "start", "--format", "claude-code"}, input, nil, nil)
+			result := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"hook", "start", "--format", "claude-code"}, input, nil)
 			if result.exit != 0 {
 				t.Fatalf("hook %s exit = %d, stderr = %q", source, result.exit, result.stderr)
 			}
@@ -54,7 +54,7 @@ func TestClaudeHookWritesAPrivateJournalViewForEveryRenderingSource(t *testing.T
 func TestClaudeHookCompactAppendsBeforeWritingTheView(t *testing.T) {
 	home := testutil.StartHome(t, testutil.HomeOptions{})
 	input := `{"source":"compact","session_id":"hook-compact"}`
-	result := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"hook", "start", "--format", "claude-code"}, input, nil, nil)
+	result := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"hook", "start", "--format", "claude-code"}, input, nil)
 	if result.exit != 0 {
 		t.Fatalf("hook compact exit = %d, stderr = %q", result.exit, result.stderr)
 	}
@@ -76,7 +76,7 @@ func TestClaudeHookCompactAppendsBeforeWritingTheView(t *testing.T) {
 
 func TestClaudeHookOffSwitchDoesNotReadOrWriteAnything(t *testing.T) {
 	home := testutil.StartHome(t, testutil.HomeOptions{})
-	result := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"hook", "start", "--format", "claude-code"}, "not JSON", map[string]string{"DESK_HOOKS": "off"}, nil)
+	result := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"hook", "start", "--format", "claude-code"}, "not JSON", map[string]string{"DESK_HOOKS": "off"})
 	if result.exit != 0 || result.stdout != "" || result.stderr != "" {
 		t.Fatalf("disabled hook = (%d, %q, %q), want silent success", result.exit, result.stdout, result.stderr)
 	}
@@ -86,10 +86,10 @@ func TestClaudeHookOffSwitchDoesNotReadOrWriteAnything(t *testing.T) {
 }
 
 func TestClaudeHookUnreachableHomePrintsOneLineAndSucceeds(t *testing.T) {
-	home := testutil.StartHome(t, testutil.HomeOptions{Listen: true})
+	home := testutil.StartHome(t, testutil.HomeOptions{})
 	client := testutil.NewClientMachine(t, home)
 	home.Stop()
-	result := runDeskWithEnv(t, client, t.TempDir(), []string{"hook", "start", "--format", "claude-code"}, `{"source":"startup","session_id":"offline-hook"}`, nil, nil)
+	result := runDeskWithEnv(t, client, t.TempDir(), []string{"hook", "start", "--format", "claude-code"}, `{"source":"startup","session_id":"offline-hook"}`, nil)
 	lines := strings.Split(strings.TrimSuffix(result.stdout, "\n"), "\n")
 	if result.exit != 0 || len(lines) != 1 || !strings.Contains(lines[0], "did not answer") {
 		t.Fatalf("offline hook = (%d, %q, %q), want one unreachable line", result.exit, result.stdout, result.stderr)
@@ -111,7 +111,7 @@ func TestClaudeHookRejectsInvalidSessionIDsAndOtherFormatsWithoutWriting(t *test
 		{name: "other format", args: []string{"hook", "start", "--format", "other"}, input: `{"source":"startup","session_id":"valid-session"}`, file: "valid-session.md"},
 	} {
 		t.Run(item.name, func(t *testing.T) {
-			result := runDeskWithEnv(t, home.Machine, t.TempDir(), item.args, item.input, nil, nil)
+			result := runDeskWithEnv(t, home.Machine, t.TempDir(), item.args, item.input, nil)
 			if result.exit != 2 {
 				t.Fatalf("%s exit = %d, want 2; stderr = %q", item.name, result.exit, result.stderr)
 			}

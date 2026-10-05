@@ -99,7 +99,7 @@ func TestListProjectNarrowsEveryFilterAndResolvesNamesLikeAdd(t *testing.T) {
 }
 
 func TestOfflineListProjectResolvesNamesOverTheWholeSnapshotAndNeverRefusesWhatItCannotSee(t *testing.T) {
-	home := testutil.StartHome(t, testutil.HomeOptions{Listen: true})
+	home := testutil.StartHome(t, testutil.HomeOptions{})
 	getenv := testutil.NewClientMachine(t, home).Getenv(nil)
 	cwd := t.TempDir()
 	for _, args := range [][]string{

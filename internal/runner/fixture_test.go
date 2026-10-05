@@ -3,8 +3,6 @@ package runner_test
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -18,28 +16,38 @@ import (
 	"github.com/federbenjamin/herdr-desk/internal/testutil"
 )
 
-// fixture is the one runner test setup: a store whose clock is now, a runner config, the in-memory herdr, and a
-// router script that answers the root.
+// fixture is the one runner test setup: a store whose clock is now, a runner config, and the in-memory herdr.
 type fixture struct {
-	t       *testing.T
-	ctx     context.Context
-	paths   config.Paths
-	store   *store.Store
-	config  config.Config
-	herdr   *herdrtest.Herdr // nil → the runner gets no Herdr option and looks for herdr itself
-	now     time.Time        // the clock of the store and the runner
-	exe     string
-	root    string
-	router  string
-	timeout time.Duration
+	t     *testing.T
+	ctx   context.Context
+	paths config.Paths
+	store *store.Store
+	// config is read when runner or runnerWith makes a runner: a change after that does not reach it.
+	config config.Config
+	herdr  *herdrtest.Herdr // nil → the runner gets no Herdr option and looks for herdr itself
+	now    time.Time        // the clock of the store and the runner
+	exe    string
+	root   string
 
-	mu     sync.Mutex
-	states []string
-	logs   []string
+	mu   sync.Mutex
+	logs []string
+
+	// onNow, when set, runs once, at the runner's next clock read, and is then cleared: a test's way to change the
+	// store between two steps of one runner call.
+	onNow func()
+}
+
+// clock is the runner's clock: now, after onNow.
+func (f *fixture) clock() time.Time {
+	if hook := f.onNow; hook != nil {
+		f.onNow = nil
+		hook()
+	}
+	return f.now
 }
 
 // newFixture returns a fixture whose config is enabled with cap 3, 20 runs a day, a 10 minute limit, the model
-// model-a, and one root at root (a temp folder when "") with isolation. Its router answers that root.
+// model-a, and one root at root (a temp folder when "") with isolation.
 func newFixture(t *testing.T, root, isolation string) *fixture {
 	t.Helper()
 	if root == "" {
@@ -54,8 +62,6 @@ func newFixture(t *testing.T, root, isolation string) *fixture {
 		herdr: herdrtest.NewHerdr(),
 		exe:   "/opt/desk/bin/herdr-desk",
 		root:  root,
-		// Long enough for a loaded machine; a test of the router's timeout sets its own.
-		timeout: 10 * time.Second,
 	}
 	var err error
 	f.store, err = store.Open(f.paths.DB(), store.Options{Now: func() time.Time { return f.now }})
@@ -70,26 +76,7 @@ func newFixture(t *testing.T, root, isolation string) *fixture {
 	f.config.Runner.MaxRunMinutes = 10
 	f.config.Roots = []config.Root{{Path: root, About: "test root", Isolation: isolation}}
 	f.config.Agent.Models = []string{"model-a"}
-	f.router = f.writeRouter(`{"root":%q,"isolation":"` + isolation + `","model":"model-a","reason":"fits"}`)
-	f.config.Agent.Router = []string{f.router, "{system}", "{schema}"}
 	return f
-}
-
-// writeRouter writes a router script that prints format with the root and records its stdin, argv, and DESK_HOOKS
-// in the files ROUTER_STDIN, ROUTER_ARGV, and ROUTER_HOOKS name.
-func (f *fixture) writeRouter(format string) string {
-	f.t.Helper()
-	path := filepath.Join(f.t.TempDir(), "router")
-	answer := fmt.Sprintf(format, f.root)
-	text := "#!/bin/sh\n" +
-		"if [ -n \"$ROUTER_STDIN\" ]; then cat > \"$ROUTER_STDIN\"; fi\n" +
-		"if [ -n \"$ROUTER_ARGV\" ]; then printf '%s\\n' \"$@\" > \"$ROUTER_ARGV\"; fi\n" +
-		"if [ -n \"$ROUTER_HOOKS\" ]; then printf '%s' \"$DESK_HOOKS\" > \"$ROUTER_HOOKS\"; fi\n" +
-		"printf '%s\\n' '" + answer + "'\n"
-	if err := os.WriteFile(path, []byte(text), 0o700); err != nil {
-		f.t.Fatalf("write router: %v", err)
-	}
-	return path
 }
 
 // runner returns a runner over the fixture's herdr.
@@ -105,19 +92,13 @@ func (f *fixture) runner() *runner.Runner {
 func (f *fixture) runnerWith(h runner.Herdr) *runner.Runner {
 	f.t.Helper()
 	return runner.New(runner.Options{
-		Store:         f.store,
-		Config:        f.config,
-		Paths:         f.paths,
-		Herdr:         h,
-		Exe:           f.exe,
-		Now:           func() time.Time { return f.now },
-		RouterTimeout: f.timeout,
-		KillGrace:     10 * time.Millisecond,
-		OnState: func(state string) {
-			f.mu.Lock()
-			defer f.mu.Unlock()
-			f.states = append(f.states, state)
-		},
+		Store:     f.store,
+		Config:    f.config,
+		Paths:     f.paths,
+		Herdr:     h,
+		Exe:       f.exe,
+		Now:       f.clock,
+		KillGrace: 10 * time.Millisecond,
 		Logf: func(format string, args ...any) {
 			f.mu.Lock()
 			defer f.mu.Unlock()
@@ -147,8 +128,7 @@ func (f *fixture) armThread(title, thread string) model.Task {
 	return task
 }
 
-// armRoute adds a task on thread agent with its root, isolation, and model set, so no router is called, and sets
-// it ready as a person.
+// armRoute adds a task with its root, isolation, and model set and sets it ready as a person.
 func (f *fixture) armRoute(title, root, isolation string) model.Task {
 	f.t.Helper()
 	task, err := f.store.AddTask(f.ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{Title: title, Thread: "agent"}})
@@ -164,12 +144,24 @@ func (f *fixture) armRoute(title, root, isolation string) model.Task {
 	return task
 }
 
-// start arms a routed task on the fixture's root, ticks once, and returns the task, its running run, and the runner.
+// startRun starts a run of the task through r as a person, with the fixture's root given, and returns it. A task
+// with no root would otherwise run in the scratch root.
+func (f *fixture) startRun(r *runner.Runner, task int) model.Run {
+	f.t.Helper()
+	run, err := r.Start(f.ctx, store.Actor{}, task, store.RunRoute{Root: f.root})
+	if err != nil {
+		f.t.Fatalf("start T%d: %v; log:\n%s", task, err, f.logged())
+	}
+	return run
+}
+
+// start adds a routed task on the fixture's root, starts its run, and returns the task, its running run, and the
+// runner.
 func (f *fixture) start() (model.Task, model.Run, *runner.Runner) {
 	f.t.Helper()
 	task := f.armRoute("watch me", f.config.Roots[0].Path, f.config.Roots[0].Isolation)
 	r := f.runner()
-	r.Tick(f.ctx)
+	f.startRun(r, task.Number)
 	run := f.run(task.Number)
 	if run.State != model.RunRunning || run.Session == "" || run.Pane == "" {
 		f.t.Fatalf("started run = %#v, want running run with session and pane", run)

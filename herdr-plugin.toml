@@ -13,17 +13,41 @@ platforms = ["linux", "macos"]
 platforms = ["linux", "macos"]
 command = ["/bin/sh", "scripts/fetch-or-build.sh"]
 
-# Starts the daemon with herdr. A second start is a clean no-op, and on a client machine it
-# prints a note and exits 0.
+# Starts the ticker with herdr: the timed jobs of a home, once a minute. A second start is a clean
+# no-op, and on a client machine it prints a note and exits 0.
 [[startup]]
 platforms = ["linux", "macos"]
-command = ["herdr-desk", "daemon"]
+command = ["herdr-desk", "ticker"]
+
+# Tracks runs by herdr's pane events: the hook asks herdr for the pane's state now and hands the
+# run back when its agent stopped, waits on a prompt, resumed, or its pane is gone. A pane no run
+# owns, a client machine, or DESK_HOOKS=off exits 0 and writes nothing. herdr sends pane.closed
+# when a pane is closed, and pane.exited when the pane's process ends by itself, as a worker's does.
+[[events]]
+on = "pane.agent_status_changed"
+command = ["herdr-desk", "hook", "herdr-event"]
+
+[[events]]
+on = "pane.closed"
+command = ["herdr-desk", "hook", "herdr-event"]
+
+[[events]]
+on = "pane.exited"
+command = ["herdr-desk", "hook", "herdr-event"]
 
 [[panes]]
 id = "board"
 title = "herdr-desk"
 description = "The herdr-desk board"
 placement = "split"
+command = ["herdr-desk"]
+
+# The same board in a popup: it lays itself out to the size herdr gives it.
+[[panes]]
+id = "board-popup"
+title = "herdr-desk"
+description = "The herdr-desk board in a popup"
+placement = "popup"
 command = ["herdr-desk"]
 
 [[panes]]
@@ -41,15 +65,15 @@ contexts = ["global", "workspace"]
 command = ["sh", "scripts/open-pane.sh", "board"]
 
 [[actions]]
+id = "open-popup"
+title = "herdr-desk: open board in a popup"
+description = "Open the herdr-desk board in a popup over this workspace"
+contexts = ["global", "workspace"]
+command = ["sh", "scripts/open-pane.sh", "board-popup"]
+
+[[actions]]
 id = "capture"
 title = "herdr-desk: capture"
 description = "Add a task from one line in a popup"
 contexts = ["global", "workspace"]
 command = ["sh", "scripts/open-pane.sh", "capture"]
-
-[[actions]]
-id = "restart"
-title = "herdr-desk: restart daemon"
-description = "Stop the herdr-desk daemon and start a fresh one"
-contexts = ["global"]
-command = ["herdr-desk", "daemon", "restart"]

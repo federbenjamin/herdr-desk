@@ -4,6 +4,7 @@ package herdrtest
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"sync"
 
@@ -17,9 +18,9 @@ type Workspace struct {
 	Command              string   // what Run was given; "" until then
 }
 
-// Herdr has the five methods of herdr.Client, so it satisfies runner.Herdr. It is safe for concurrent use. A new
-// pane reports status "unknown" and no session. ClosePane removes the pane; Run, Processes, and ClosePane on an
-// unknown pane are errors.
+// Herdr has the methods of herdr.Client that runner.Herdr names, so it satisfies it. It is safe for concurrent use. A
+// new pane reports status "unknown" and no session. ClosePane removes the pane; Run, Processes, ClosePane, FocusPane,
+// and ReportToken on an unknown pane are errors, and Pane reports it not found.
 type Herdr struct {
 	mu         sync.Mutex
 	next       int
@@ -28,15 +29,18 @@ type Herdr struct {
 	panes      map[string]herdr.Pane
 	procs      map[string]herdr.Processes
 	closed     []string
+	focused    []string
+	tokens     map[string]map[string]string
 	fails      map[string]error
 }
 
 // NewHerdr returns an empty stand-in.
 func NewHerdr() *Herdr {
 	return &Herdr{
-		panes: map[string]herdr.Pane{},
-		procs: map[string]herdr.Processes{},
-		fails: map[string]error{},
+		panes:  map[string]herdr.Pane{},
+		procs:  map[string]herdr.Processes{},
+		tokens: map[string]map[string]string{},
+		fails:  map[string]error{},
 	}
 }
 
@@ -93,6 +97,17 @@ func (h *Herdr) Panes(_ context.Context) ([]herdr.Pane, error) {
 	return out, nil
 }
 
+// Pane returns the pane as Panes would list it; found is false when it is not open.
+func (h *Herdr) Pane(_ context.Context, id string) (herdr.Pane, bool, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if err := h.fails["Pane"]; err != nil {
+		return herdr.Pane{}, false, err
+	}
+	p, ok := h.panes[id]
+	return p, ok, nil
+}
+
 // Processes returns what SetProcesses gave for the pane, empty when it gave nothing.
 func (h *Herdr) Processes(_ context.Context, pane string) (herdr.Processes, error) {
 	h.mu.Lock()
@@ -122,6 +137,61 @@ func (h *Herdr) ClosePane(_ context.Context, pane string) error {
 	return nil
 }
 
+// FocusPane records the pane as focused. It checks the ids as herdr.FocusArgv does; an unknown pane is an error.
+func (h *Herdr) FocusPane(_ context.Context, workspace, pane string) error {
+	if _, err := herdr.FocusArgv("herdr", workspace, pane); err != nil {
+		return err
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if err := h.fails["FocusPane"]; err != nil {
+		return err
+	}
+	if _, ok := h.panes[pane]; !ok {
+		return fmt.Errorf("herdr pane zoom: unknown pane %q", pane)
+	}
+	h.focused = append(h.focused, pane)
+	return nil
+}
+
+// Focused returns the panes FocusPane was called for, in order.
+func (h *Herdr) Focused() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return slices.Clone(h.focused)
+}
+
+// ReportToken sets the pane's token name to value, or removes it when value is empty, as herdr's report-metadata does.
+func (h *Herdr) ReportToken(_ context.Context, pane, source, name, value string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if err := h.fails["ReportToken"]; err != nil {
+		return err
+	}
+	if _, ok := h.panes[pane]; !ok {
+		return fmt.Errorf("herdr pane report-metadata: unknown pane %q", pane)
+	}
+	if source == "" || name == "" {
+		return fmt.Errorf("herdr pane report-metadata: source %q or token name %q is empty", source, name)
+	}
+	if value == "" {
+		delete(h.tokens[pane], name)
+		return nil
+	}
+	if h.tokens[pane] == nil {
+		h.tokens[pane] = map[string]string{}
+	}
+	h.tokens[pane][name] = value
+	return nil
+}
+
+// Tokens returns the tokens last reported for the pane, kept after the pane closes so a test can read what it showed.
+func (h *Herdr) Tokens(pane string) map[string]string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return maps.Clone(h.tokens[pane])
+}
+
 // Workspaces returns every workspace created, in order.
 func (h *Herdr) Workspaces() []Workspace {
 	h.mu.Lock()
@@ -133,7 +203,7 @@ func (h *Herdr) Workspaces() []Workspace {
 	return out
 }
 
-// Set sets what Panes reports for the pane from now on.
+// Set sets what Panes and Pane report for the pane from now on.
 func (h *Herdr) Set(pane, session, status string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -146,7 +216,7 @@ func (h *Herdr) Set(pane, session, status string) {
 	h.panes[pane] = p
 }
 
-// Remove makes the pane gone from Panes.
+// Remove makes the pane gone from Panes and Pane.
 func (h *Herdr) Remove(pane string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -167,7 +237,8 @@ func (h *Herdr) Closed() []string {
 	return slices.Clone(h.closed)
 }
 
-// Fail makes the named method (CreateWorkspace, Run, Panes, Processes, or ClosePane) return err; nil clears it.
+// Fail makes the named method (CreateWorkspace, Run, Panes, Pane, Processes, ClosePane, FocusPane, or ReportToken)
+// return err; nil clears it.
 func (h *Herdr) Fail(method string, err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

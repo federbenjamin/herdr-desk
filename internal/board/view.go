@@ -55,10 +55,13 @@ const (
 	doneShown   = 20
 )
 
+// minHeight is the fewest rows the board draws in; below it the view is one line saying so.
+const minHeight = 10
+
 const (
-	boardFooter = "+ add  n ready  s start  b blocked  r review  x done  a #agent  f focus  k kill  P pause  / search  p project  t thread  d done  ? keys"
+	boardFooter = "+ add  n ready  S run  s start  b blocked  r review  x done  a #agent  f focus  k kill  P pause  / search  p project  t thread  d done  ? keys"
 	shortFooter = "? keys  q quit"
-	taskFooter  = "e notes  t steps  n ready  x done  o open  R root  I isolation  M model  f focus  esc back"
+	taskFooter  = "e notes  t steps  n ready  S run  x done  o open  R root  I isolation  M model  f focus  esc back"
 	stepsFooter = "space toggle  a add  r rename  x remove  esc back"
 	notesFooter = "ctrl+s save  esc cancel"
 	pickFooter  = "enter open  esc close"
@@ -188,7 +191,8 @@ func join(sep string, parts ...string) string {
 
 func taskID(n int) string { return "T" + strconv.Itoa(n) }
 
-// Text is the screen as plain text: no escape byte, lines joined by "\n", no line wider than the width.
+// Text is the screen as plain text: no escape byte, lines joined by "\n", no line wider than the width. Under 10
+// rows it is one line naming the rows the board needs.
 func (s State) Text() string { return s.view(plain) }
 
 // Render is the screen with styles, using only the terminal's 16 palette colours.
@@ -207,6 +211,9 @@ func (s State) bodyHeight(bottom int) int {
 
 func (s State) view(p palette) string {
 	w := s.width
+	if s.height < minHeight {
+		return cut(fmt.Sprintf("herdr-desk needs %d rows; this one has %d", minHeight, s.height), w)
+	}
 	bottom := s.bottom(p, w)
 	body := s.bodyHeight(len(bottom))
 	var top []string
@@ -330,7 +337,12 @@ func (s State) runnerLabel() string {
 	if d.Status.RunnerCap > 0 {
 		count += "/" + strconv.Itoa(d.Status.RunnerCap)
 	}
-	return "runner " + glyph + " " + word + " · " + count + " · " + where
+	line := "runner " + glyph + " " + word + " · " + count + " · " + where
+	if d.Status.NoTicker() {
+		// The board's width has room for the short form only; herdr-desk runner status says the rest.
+		line += " · no ticker"
+	}
+	return line
 }
 
 func (s State) liveRuns() int {
@@ -467,10 +479,7 @@ func (s State) rowLine(p palette, t model.Task, selected bool, w int, detail boo
 }
 
 func (s State) rowDetail(t model.Task) (tag, rest string) {
-	switch {
-	case t.Status == model.StatusReady && t.Thread == "agent":
-		tag = "#agent · queued"
-	case t.Thread != "":
+	if t.Thread != "" {
 		tag = "#" + oneLine(t.Thread)
 	}
 	if t.Status == model.StatusStarted {
@@ -525,6 +534,7 @@ var boardKeys = [][2]string{
 	{"enter", "open the task"},
 	{"+", "add a task"},
 	{"n", "ready (on a blocked task, answer first)"},
+	{"S", "start a run of the task"},
 	{"s", "started"},
 	{"b", "blocked"},
 	{"r", "review"},
@@ -547,6 +557,7 @@ var taskKeys = [][2]string{
 	{"e", "edit the notes (ctrl+s saves)"},
 	{"t", "steps: space toggles, a adds, r renames, x removes"},
 	{"n", "ready (on a blocked task, answer first)"},
+	{"S", "start a run of the task"},
 	{"s b r", "started · blocked · review"},
 	{"x", "done (asks unless in review)"},
 	{"a", "#agent on or off"},

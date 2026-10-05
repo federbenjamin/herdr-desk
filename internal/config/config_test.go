@@ -1,15 +1,14 @@
 package config_test
 
 import (
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/federbenjamin/herdr-desk/internal/config"
 )
@@ -30,11 +29,10 @@ func TestResolvePathsUsesEachXDGVariableAndConstructsNamedFiles(t *testing.T) {
 
 	files := map[string]struct{ got, want string }{
 		"ConfigFile":  {p.ConfigFile(), "/cfg/herdr-desk/config.toml"},
-		"TokenFile":   {p.TokenFile(), "/cfg/herdr-desk/token"},
-		"Socket":      {p.Socket(), "/state/herdr-desk/desk.sock"},
-		"LockFile":    {p.LockFile(), "/state/herdr-desk/daemon.lock"},
-		"DaemonInfo":  {p.DaemonInfo(), "/state/herdr-desk/daemon.json"},
-		"DaemonLog":   {p.DaemonLog(), "/state/herdr-desk/daemon.log"},
+		"TickerLock":  {p.TickerLock(), "/state/herdr-desk/ticker.lock"},
+		"TickerInfo":  {p.TickerInfo(), "/state/herdr-desk/ticker.json"},
+		"Log":         {p.Log(), "/state/herdr-desk/herdr-desk.log"},
+		"BackupLock":  {p.BackupLock(), "/state/herdr-desk/backup.lock"},
 		"Outbox":      {p.Outbox(), "/state/herdr-desk/outbox.jsonl"},
 		"SessionsDir": {p.SessionsDir(), "/state/herdr-desk/sessions"},
 		"BackupState": {p.BackupState(), "/state/herdr-desk/backup.json"},
@@ -47,6 +45,69 @@ func TestResolvePathsUsesEachXDGVariableAndConstructsNamedFiles(t *testing.T) {
 		if path.got != path.want {
 			t.Errorf("%s() = %q; want %q", name, path.got, path.want)
 		}
+	}
+}
+
+// stateDirOf returns a state folder path exactly n bytes long, ending in /herdr-desk as ResolvePaths makes it.
+func stateDirOf(t *testing.T, n int) string {
+	t.Helper()
+	const tail = "/herdr-desk"
+	dir := "/" + strings.Repeat("s", n-1-len(tail)) + tail
+	if len(dir) != n {
+		t.Fatalf("stateDirOf(%d) is %d bytes", n, len(dir))
+	}
+	return dir
+}
+
+// ssh binds the control socket at ControlPath plus a dot and 16 random characters, and macOS takes 103 bytes.
+func TestControlPathLeavesRoomForSSHsBindSuffixUpToA73ByteStateFolder(t *testing.T) {
+	t.Parallel()
+
+	sum := sha256.Sum256([]byte("you@home-host"))
+	for _, n := range []int{50, 60, 73} {
+		dir := stateDirOf(t, n)
+		got, err := config.Paths{StateDir: dir}.ControlPath("you@home-host")
+		if err != nil {
+			t.Fatalf("ControlPath under a %d-byte state folder: %v", n, err)
+		}
+		if want := dir + "/ssh-" + hex.EncodeToString(sum[:])[:8]; got != want {
+			t.Errorf("ControlPath under a %d-byte state folder = %q; want %q", n, got, want)
+		}
+		if bound := len(got) + 17; bound > 103 {
+			t.Errorf("ssh binds %d bytes under a %d-byte state folder; want at most 103", bound, n)
+		}
+	}
+}
+
+func TestControlPathRefusesA74ByteStateFolderNamingTheLengthLimitAndFixes(t *testing.T) {
+	t.Parallel()
+
+	_, err := config.Paths{StateDir: stateDirOf(t, 74)}.ControlPath("you@home-host")
+	if err == nil {
+		t.Fatal("ControlPath under a 74-byte state folder error = nil; want a refusal")
+	}
+	for _, part := range []string{"104 bytes", "103-byte limit", "XDG_STATE_HOME", "without {control}"} {
+		if !strings.Contains(err.Error(), part) {
+			t.Errorf("refusal %q does not name %q", err, part)
+		}
+	}
+}
+
+func TestControlPathGivesEachHomeItsOwnSocket(t *testing.T) {
+	t.Parallel()
+
+	p := config.Paths{StateDir: "/state/herdr-desk"}
+	one, err1 := p.ControlPath("you@home-one")
+	two, err2 := p.ControlPath("you@home-two")
+	again, err3 := p.ControlPath("you@home-one")
+	if err := errors.Join(err1, err2, err3); err != nil {
+		t.Fatal(err)
+	}
+	if one == two {
+		t.Errorf("two homes share the control path %q", one)
+	}
+	if one != again {
+		t.Errorf("one home's control path changed: %q then %q", one, again)
 	}
 }
 
@@ -74,8 +135,11 @@ func TestDefaultStartsRunnerWithPublishedLimits(t *testing.T) {
 	t.Parallel()
 
 	c := config.Default()
-	if c.Runner.Enabled || c.Runner.Cap != 1 || c.Runner.MaxRunsPerDay != 20 || c.Runner.MaxRunMinutes != 180 || c.Runner.PollSeconds != 30 || c.Runner.OnMerged != "review" {
+	if c.Runner.Enabled || c.Runner.Cap != 1 || c.Runner.MaxRunsPerDay != 20 || c.Runner.MaxRunMinutes != 180 || c.Runner.OnMerged != "review" {
 		t.Errorf("Default().Runner = %#v; want disabled runner with documented limits", c.Runner)
+	}
+	if c.Coordinator.StartRuns != config.StartRunsPropose {
+		t.Errorf("Default().Coordinator.StartRuns = %q; want propose", c.Coordinator.StartRuns)
 	}
 }
 
@@ -132,7 +196,7 @@ func TestSaveReplacesExistingFileSecurelyAndKeepsWarningWithItsField(t *testing.
 		t.Fatal(err)
 	}
 	c := config.Default()
-	c.Runner.AgentsMayArm = true
+	c.Coordinator.StartRuns = config.StartRunsAuto
 	if err := c.Save(path); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
@@ -156,13 +220,13 @@ func TestSaveReplacesExistingFileSecurelyAndKeepsWarningWithItsField(t *testing.
 		t.Fatal(err)
 	}
 	warning := strings.Index(string(text), "WARNING:")
-	field := strings.Index(string(text), "agents_may_arm")
+	field := strings.Index(string(text), "start_runs")
 	if warning < 0 || field < 0 || warning > field {
-		t.Fatalf("saved config does not put WARNING before agents_may_arm:\n%s", text)
+		t.Fatalf("saved config does not put WARNING before start_runs:\n%s", text)
 	}
 	between := string(text[warning:field])
 	if strings.Count(between, "\n") != 1 {
-		t.Errorf("WARNING is not directly above agents_may_arm: %q", between)
+		t.Errorf("WARNING is not directly above start_runs: %q", between)
 	}
 
 	blocked := filepath.Join(t.TempDir(), "not-a-directory")
@@ -208,19 +272,18 @@ func TestSaveLeavesAnUnchangedFileAlone(t *testing.T) {
 	}
 }
 
-func TestValidateRefusesWildcardListenAndInvalidEnumValues(t *testing.T) {
+func TestValidateRefusesAnOptionLikeClientHomeAndInvalidEnumValues(t *testing.T) {
 	for _, tt := range []struct {
 		name   string
 		adjust func(*config.Config)
 	}{
-		{"empty listen host", func(c *config.Config) { c.Home.Listen = ":8080" }},
-		{"IPv4 wildcard listen host", func(c *config.Config) { c.Home.Listen = "0.0.0.0:8080" }},
-		{"IPv6 wildcard listen host", func(c *config.Config) { c.Home.Listen = "[::]:8080" }},
+		{"client home starting with a dash", func(c *config.Config) { c.Client.Home = "-oProxyCommand=x" }},
+		{"client home with a space", func(c *config.Config) { c.Client.Home = "my home" }},
+		{"client home with a control character", func(c *config.Config) { c.Client.Home = "home\x07" }},
+		{"client home over 255 bytes", func(c *config.Config) { c.Client.Home = strings.Repeat("h", 256) }},
 		{"bad on merged value", func(c *config.Config) { c.Runner.OnMerged = "start" }},
 		{"bad root isolation", func(c *config.Config) { c.Roots = []config.Root{{Path: "/repo", Isolation: "container"}} }},
 		{"relative root path", func(c *config.Config) { c.Roots = []config.Root{{Path: "repo", Isolation: "self"}} }},
-		{"bad client home", func(c *config.Config) { c.Client.Home = "not-a-host-port" }},
-		{"bad port", func(c *config.Config) { c.Client.Home = "localhost:0" }},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			c := config.Default()
@@ -232,8 +295,7 @@ func TestValidateRefusesWildcardListenAndInvalidEnumValues(t *testing.T) {
 	}
 
 	c := config.Default()
-	c.Home.Listen = "127.0.0.1:8080"
-	c.Client.Home = "localhost:8081"
+	c.Client.Home = "me@home.example:2222"
 	c.Runner.OnMerged = "done"
 	c.Roots = []config.Root{{Path: "/repo", Isolation: "worktree"}, {Path: "/another", Isolation: "in-place"}}
 	if err := c.Validate(); err != nil {
@@ -248,7 +310,7 @@ func TestIsClientFollowsWhetherAHomeIsConfigured(t *testing.T) {
 		t.Error("Default().IsClient() = true; want false")
 	}
 	c := config.Default()
-	c.Client.Home = "127.0.0.1:8080"
+	c.Client.Home = "home"
 	if !c.IsClient() {
 		t.Error("Config with Client.Home.IsClient() = false; want true")
 	}
@@ -284,149 +346,5 @@ func TestRemoveRootRemovesOnlyKnownPath(t *testing.T) {
 	}
 	if err := c.RemoveRoot("/missing"); err == nil {
 		t.Fatal("RemoveRoot(missing path) error = nil; want error")
-	}
-}
-
-func TestTokenOperationsKeepSingleTokenFilePrivate(t *testing.T) {
-	paths := config.Paths{ConfigDir: t.TempDir()}
-	if _, err := config.ReadToken(paths); !errors.Is(err, fs.ErrNotExist) {
-		t.Fatalf("ReadToken(missing) error = %v; want wrapped fs.ErrNotExist", err)
-	}
-	if err := os.WriteFile(paths.TokenFile(), []byte(" \n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := config.ReadToken(paths); err == nil {
-		t.Fatal("ReadToken(empty) error = nil; want error")
-	}
-	if err := config.WriteToken(paths, "not a token"); err == nil {
-		t.Fatal("WriteToken(with whitespace) error = nil; want error")
-	}
-
-	if err := config.WriteToken(paths, "known-token"); err != nil {
-		t.Fatalf("WriteToken() error = %v", err)
-	}
-	if got, err := config.ReadToken(paths); err != nil || got != "known-token" {
-		t.Fatalf("ReadToken() = %q, %v; want known-token, nil", got, err)
-	}
-	info, err := os.Stat(paths.TokenFile())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := info.Mode().Perm(); got != 0o600 {
-		t.Errorf("token permissions after WriteToken = %04o; want 0600", got)
-	}
-
-	rotated, err := config.RotateToken(paths)
-	if err != nil {
-		t.Fatalf("RotateToken() error = %v", err)
-	}
-	if len(rotated) != 64 || rotated == "known-token" {
-		t.Errorf("RotateToken() = %q; want a new 32-byte hex token", rotated)
-	}
-	if _, err := hex.DecodeString(rotated); err != nil {
-		t.Errorf("RotateToken() = %q; want hexadecimal: %v", rotated, err)
-	}
-	stored, err := config.ReadToken(paths)
-	if err != nil || stored != rotated {
-		t.Errorf("ReadToken after rotation = %q, %v; want returned token", stored, err)
-	}
-	info, err = os.Stat(paths.TokenFile())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := info.Mode().Perm(); got != 0o600 {
-		t.Errorf("token permissions after RotateToken = %04o; want 0600", got)
-	}
-}
-
-func TestConfigChangedComparesWhatTheFileHoldsWithWhatTheDaemonStartedWith(t *testing.T) {
-	t.Parallel()
-
-	started := config.Default()
-	started.Backup.GitRemote = "somewhere:desk-backup.git"
-	digest := started.Digest()
-	longAgo := time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC)
-
-	for _, test := range []struct {
-		name  string
-		write func(t *testing.T, p config.Paths)
-		want  bool
-	}{
-		{"the file the daemon started with", func(t *testing.T, p config.Paths) { save(t, p, started) }, false},
-		{"touched", func(t *testing.T, p config.Paths) {
-			save(t, p, started)
-			if err := os.Chtimes(p.ConfigFile(), longAgo, longAgo); err != nil {
-				t.Fatal(err)
-			}
-		}, false},
-		{"rewritten with the same bytes", func(t *testing.T, p config.Paths) {
-			save(t, p, started)
-			b, err := os.ReadFile(p.ConfigFile())
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(p.ConfigFile(), b, 0o600); err != nil {
-				t.Fatal(err)
-			}
-		}, false},
-		{"reformatted to the same config", func(t *testing.T, p config.Paths) {
-			write(t, p, "# my notes\n[backup]\ngit_remote = 'somewhere:desk-backup.git'\n")
-		}, false},
-		{"changed straight after the start", func(t *testing.T, p config.Paths) {
-			save(t, p, started)
-			changed := started
-			changed.Runner.Cap = 2
-			save(t, p, changed)
-		}, true},
-		{"emptied back to the defaults", func(t *testing.T, p config.Paths) { save(t, p, config.Default()) }, true},
-		{"removed", func(t *testing.T, p config.Paths) {}, true},
-		{"no longer valid", func(t *testing.T, p config.Paths) { write(t, p, "no = [such key") }, true},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			p := config.Paths{ConfigDir: filepath.Join(t.TempDir(), "herdr-desk")}
-			test.write(t, p)
-			if got := p.ConfigChanged(digest); got != test.want {
-				t.Errorf("ConfigChanged = %t, want %t", got, test.want)
-			}
-		})
-	}
-
-	p := config.Paths{ConfigDir: filepath.Join(t.TempDir(), "herdr-desk")}
-	if p.ConfigChanged(config.Default().Digest()) {
-		t.Error("ConfigChanged(no file, daemon started on the defaults) = true, want false")
-	}
-	save(t, p, started)
-	if p.ConfigChanged("") {
-		t.Error("ConfigChanged(no digest recorded) = true, want false")
-	}
-}
-
-func save(t *testing.T, p config.Paths, c config.Config) {
-	t.Helper()
-	if err := c.Save(p.ConfigFile()); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func write(t *testing.T, p config.Paths, text string) {
-	t.Helper()
-	if err := os.MkdirAll(p.ConfigDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(p.ConfigFile(), []byte(text), 0o600); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestDigestSeparatesConfigsByContent(t *testing.T) {
-	t.Parallel()
-
-	a, b := config.Default(), config.Default()
-	if a.Digest() == "" || a.Digest() != b.Digest() {
-		t.Fatalf("Digest of equal configs = %q and %q, want one non-empty value", a.Digest(), b.Digest())
-	}
-	b.Home.Listen = "127.0.0.1:7411"
-	if a.Digest() == b.Digest() {
-		t.Error("Digest of configs with different listen addresses is equal")
 	}
 }

@@ -51,20 +51,25 @@ func (a *app) workerCmd() *cobra.Command {
 			argv := config.Expand(cfg.Agent.Worker, map[string]string{
 				"model": run.Model, "session": run.Session, "message": worker.FirstMessage(d),
 			})
-			bin, err := workerBinary(argv)
+			bin, err := agentBinary("worker", argv)
 			if err != nil {
 				return a.workerBlocked(c, actor, task, err)
 			}
-			exe := a.env.Exec
-			if exe == nil {
-				exe = execProcess
-			}
-			if err := exe(bin, argv); err != nil {
-				return &exitError{code: exitIO, msg: fmt.Sprintf("cannot start %s: %v", argv[0], err)}
-			}
-			return nil
+			return a.execAgent(bin, argv)
 		}),
 	}
+}
+
+// execAgent replaces this process with the agent argv names; bin is its first word's path.
+func (a *app) execAgent(bin string, argv []string) error {
+	exe := a.env.Exec
+	if exe == nil {
+		exe = execProcess
+	}
+	if err := exe(bin, argv); err != nil {
+		return &exitError{code: exitIO, msg: fmt.Sprintf("cannot start %s: %v", argv[0], err)}
+	}
+	return nil
 }
 
 // workerRun returns the run with this id when it is running on the task under the session; anything else is no-run.
@@ -84,14 +89,14 @@ func (a *app) workerRun(c *api.Client, id int64, task int, session string) (mode
 	return model.Run{}, &model.Refusal{Code: model.CodeNoRun, Msg: fmt.Sprintf("run %d is not a running run of T%d for this session", id, task)}
 }
 
-// workerBinary returns the path of the template's first word, or why there is none.
-func workerBinary(argv []string) (string, error) {
+// agentBinary returns the path of the first word of the [agent] <role> template, or why there is none.
+func agentBinary(role string, argv []string) (string, error) {
 	if len(argv) == 0 || argv[0] == "" {
-		return "", fmt.Errorf("worker: cannot start: no [agent] worker template is set")
+		return "", fmt.Errorf("%s: cannot start: no [agent] %s template is set", role, role)
 	}
 	bin, err := exec.LookPath(argv[0])
 	if err != nil {
-		return "", fmt.Errorf("worker: cannot start %s", argv[0])
+		return "", fmt.Errorf("%s: cannot start %s: %w", role, argv[0], err)
 	}
 	return bin, nil
 }

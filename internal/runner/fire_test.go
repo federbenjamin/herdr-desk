@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/federbenjamin/herdr-desk"
 	"github.com/federbenjamin/herdr-desk/internal/config"
 	"github.com/federbenjamin/herdr-desk/internal/herdr"
 	"github.com/federbenjamin/herdr-desk/internal/model"
@@ -20,476 +19,98 @@ import (
 	"github.com/federbenjamin/herdr-desk/internal/store"
 )
 
-func fireString(s string) *string { return &s }
-
-func TestTickStartsArmedTasksInArmingOrderUpToTheCap(t *testing.T) {
+func TestStartRunsUpToTheCapThenWaitsUntilAWorkerHandsBack(t *testing.T) {
 	f := newFixture(t, "", "self")
 	f.config.Runner.Cap = 3
-	first := f.armThread("first", "agent")
-	second := f.armThread("second", "agent")
-	third := f.armThread("third", "agent")
-	fourth := f.armThread("fourth", "agent")
-
-	f.runner().Tick(f.ctx)
-	runs := f.runs()
-	if len(runs) != 3 {
-		t.Fatalf("started runs = %#v, want three", runs)
+	r := f.runner()
+	var tasks []model.Task
+	for _, title := range []string{"first", "second", "third", "fourth"} {
+		task := f.armThread(title, "agent")
+		tasks = append(tasks, task)
+		f.startRun(r, task.Number)
 	}
-	if got, want := []int{runs[0].Task, runs[1].Task, runs[2].Task}, []int{first.Number, second.Number, third.Number}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("started task order = %v, want %v", got, want)
+	runs := f.runs()
+	if len(runs) != 4 {
+		t.Fatalf("runs = %#v, want four", runs)
+	}
+	for i, run := range runs {
+		want := model.RunRunning
+		if i == 3 {
+			want = model.RunWaiting
+		}
+		if run.Task != tasks[i].Number || run.State != want {
+			t.Fatalf("run %d = T%d %s, want T%d %s; runs = %#v; log:\n%s", i, run.Task, run.State, tasks[i].Number, want, runs, f.logged())
+		}
 	}
 	if got := f.herdr.Workspaces(); len(got) != 3 || got[0].Cwd != f.root || got[0].Command == "" {
-		t.Fatalf("workspaces = %#v, want one started workspace per run rooted at %q; runs = %#v; log:\n%s", got, f.root, runs, f.logged())
+		t.Fatalf("workspaces = %#v, want one started workspace per running run rooted at %q", got, f.root)
 	}
-	if got := f.task(fourth.Number).Task.Status; got != model.StatusReady {
-		t.Fatalf("fourth task status = %q, want ready while cap is full", got)
+	if got := f.task(tasks[3].Number).Task.Status; got != model.StatusStarted {
+		t.Fatalf("waiting task status = %q, want started", got)
 	}
-	if changed, err := f.store.UpdateRun(f.ctx, runs[0].ID, model.RunRunning, store.RunUpdate{State: model.RunEnded}); err != nil || !changed {
-		t.Fatalf("end first run = (%t, %v), want (true, nil)", changed, err)
+
+	review := model.StatusReview
+	if _, err := f.store.SetTask(f.ctx, store.Actor{Session: runs[0].Session, Run: runs[0].ID}, tasks[0].Number, model.Patch{Status: &review}); err != nil {
+		t.Fatalf("worker hands back: %v", err)
 	}
-	f.runner().Tick(f.ctx)
+	r.AfterSet(f.ctx, tasks[0].Number)
 	runs = f.runs()
-	if len(runs) != 4 || runs[3].Task != fourth.Number {
-		t.Fatalf("runs after a slot opens = %#v, want fourth task started", runs)
+	if runs[0].State != model.RunEnded || runs[3].State != model.RunRunning || runs[3].Workspace == "" {
+		t.Fatalf("runs after a hand-back = %#v, want the first ended and the fourth running", runs)
 	}
 }
 
-func TestTickDoesNotStartTasksThatAreNotArmed(t *testing.T) {
-	f := newFixture(t, "", "self")
-	if _, err := f.store.AddTask(f.ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{Title: "open", Thread: "agent"}}); err != nil {
-		t.Fatal(err)
-	}
-	f.armThread("other thread", "user")
-	archived := f.armThread("archived", "agent")
-	trueValue := true
-	if _, err := f.store.SetTask(f.ctx, store.Actor{}, archived.Number, model.Patch{Archived: &trueValue}); err != nil {
-		t.Fatalf("archive task: %v", err)
-	}
-
-	f.runner().Tick(f.ctx)
-	if got := f.runs(); len(got) != 0 {
-		t.Fatalf("runs = %#v, want none", got)
-	}
-}
-
-func TestTickCountsOnlyRunsStartedSinceLocalMidnight(t *testing.T) {
+func TestStartCountsOnlyRunsStartedSinceLocalMidnight(t *testing.T) {
 	f := newFixture(t, "", "self")
 	f.config.Runner.MaxRunsPerDay = 1
+	r := f.runner()
 	yesterday := f.armThread("yesterday", "agent")
-	f.runner().Tick(f.ctx)
-	runs := f.runs()
-	if len(runs) != 1 {
-		t.Fatalf("initial runs = %#v, want one", runs)
-	}
-	if changed, err := f.store.UpdateRun(f.ctx, runs[0].ID, model.RunRunning, store.RunUpdate{State: model.RunEnded}); err != nil || !changed {
-		t.Fatalf("end yesterday run = (%t, %v)", changed, err)
+	f.startRun(r, yesterday.Number)
+	today := f.armThread("today", "agent")
+	if _, err := r.Start(f.ctx, store.Actor{}, today.Number, store.RunRoute{}); fireCode(err) != model.CodeCapReached {
+		t.Fatalf("second start the same day error = %v, want cap-reached", err)
 	}
 	f.now = f.now.AddDate(0, 0, 1)
-	today := f.armThread("today", "agent")
-	f.runner().Tick(f.ctx)
-	runs = f.runs()
-	if len(runs) != 2 || runs[1].Task != today.Number || runs[0].Task != yesterday.Number {
+	f.startRun(r, today.Number)
+	runs := f.runs()
+	if len(runs) != 2 || runs[0].Task != yesterday.Number || runs[1].Task != today.Number {
 		t.Fatalf("runs across midnight = %#v, want yesterday then today", runs)
 	}
 }
 
-func TestTickPassesPromptSchemaInputAndHooksToTheRouter(t *testing.T) {
+func TestStartWritesOneRouteNoteAndRunsWithTheResolvedRoute(t *testing.T) {
 	f := newFixture(t, "", "self")
-	stdin := filepath.Join(t.TempDir(), "stdin")
-	argv := filepath.Join(t.TempDir(), "argv")
-	hooks := filepath.Join(t.TempDir(), "hooks")
-	t.Setenv("ROUTER_STDIN", stdin)
-	t.Setenv("ROUTER_ARGV", argv)
-	t.Setenv("ROUTER_HOOKS", hooks)
 	task := f.armThread("route me", "agent")
-
-	f.runner().Tick(f.ctx)
-	input, err := os.ReadFile(stdin)
-	if err != nil {
-		t.Fatalf("read router stdin: %v", err)
-	}
-	var gotInput struct {
-		Task struct {
-			Number int `json:"number"`
-		} `json:"task"`
-		Roots []struct {
-			Path string `json:"path"`
-		} `json:"roots"`
-		Models []string `json:"models"`
-	}
-	if err := json.Unmarshal(input, &gotInput); err != nil {
-		t.Fatalf("router stdin is not JSON: %v", err)
-	}
-	if gotInput.Task.Number != task.Number || len(gotInput.Roots) < 1 || gotInput.Roots[0].Path != f.root || !reflect.DeepEqual(gotInput.Models, f.config.Agent.Models) {
-		t.Fatalf("router input = %#v, want task, listed root, and models", gotInput)
-	}
-	arguments, err := os.ReadFile(argv)
-	if err != nil {
-		t.Fatalf("read router argv: %v", err)
-	}
-	parts := strings.Split(strings.TrimSpace(string(arguments)), "\n")
-	if len(parts) != 2 {
-		t.Fatalf("router argv = %q, want system path and schema text", arguments)
-	}
-	system, err := os.ReadFile(parts[0])
-	if err != nil {
-		t.Fatalf("read router system: %v", err)
-	}
-	if string(system) != herdrdesk.RouterSystem() {
-		t.Fatalf("router system = %q, want embedded router system", system)
-	}
-	if info, err := os.Stat(parts[0]); err != nil || info.Mode().Perm() != 0o600 {
-		t.Fatalf("router system mode = %v (%v), want 0600", info, err)
-	}
-	if !strings.Contains(parts[1], f.root) {
-		t.Fatalf("router schema = %q, want listed root", parts[1])
-	}
-	if got, err := os.ReadFile(hooks); err != nil || string(got) != "off" {
-		t.Fatalf("DESK_HOOKS = %q (%v), want off", got, err)
-	}
-
+	run := f.startRun(f.runner(), task.Number)
 	detail := f.task(task.Number)
-	run := f.runs()[0]
-	if detail.Task.Root != f.root || detail.Task.Isolation != "self" || detail.Task.Model != "model-a" || run.Root != f.root || run.Isolation != "self" || run.Model != "model-a" || run.Reason != "fits" {
-		t.Fatalf("task = %#v; run = %#v; want applied route", detail.Task, run)
+	if run.State != model.RunRunning || run.Root != f.root || run.Isolation != "self" || run.Model != "model-a" {
+		t.Fatalf("run = %#v, want running on the root with its isolation and the first model", run)
 	}
-	if !fireHasRouterNote(detail.History, "routed to "+f.root+" (self, model-a): fits") {
-		t.Fatalf("history = %#v, want tagged route note", detail.History)
+	if detail.Task.Root != f.root || detail.Task.Isolation != "self" || detail.Task.Model != "model-a" {
+		t.Fatalf("task = %#v, want the route recorded on it", detail.Task)
+	}
+	if want := fmt.Sprintf("run %d starting: %s (self, model-a)", run.ID, f.root); !fireHasNote(detail.History, want) {
+		t.Fatalf("history = %#v, want the note %q", detail.History, want)
 	}
 }
 
-func TestTickUsesConfiguredRouterPromptAndSchemaFiles(t *testing.T) {
+func TestStartRefusesARouteThatFailsItsCheckAndWritesNothing(t *testing.T) {
 	f := newFixture(t, "", "self")
-	systemFile := filepath.Join(t.TempDir(), "system.md")
-	schemaFile := filepath.Join(t.TempDir(), "schema.json")
-	if err := os.WriteFile(systemFile, []byte("custom system"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(schemaFile, []byte("custom schema"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	argv := filepath.Join(t.TempDir(), "argv")
-	t.Setenv("ROUTER_ARGV", argv)
-	f.config.Router = config.RouterFiles{System: systemFile, Schema: schemaFile}
-	f.armThread("custom prompt", "agent")
-
-	f.runner().Tick(f.ctx)
-	arguments, err := os.ReadFile(argv)
-	if err != nil {
-		t.Fatalf("read router argv: %v", err)
-	}
-	parts := strings.Split(strings.TrimSpace(string(arguments)), "\n")
-	if len(parts) != 2 || parts[0] != systemFile || parts[1] != "custom schema" {
-		t.Fatalf("router argv = %q, want configured system path and schema contents", arguments)
-	}
-}
-
-func TestTickBlocksTheTaskWhenRoutingFails(t *testing.T) {
-	cases := []struct {
-		name   string
-		router string
-		patch  model.Patch
-	}{
-		{name: "router exits non-zero", router: "#!/bin/sh\nexit 1\n"},
-		{name: "router times out", router: "#!/bin/sh\nsleep 1\n", patch: model.Patch{}},
-		{name: "router prints non-json", router: "#!/bin/sh\nprintf 'not json\\n'\n"},
-		{name: "router chooses an unlisted root", router: "#!/bin/sh\nprintf '%s\\n' '{\"root\":\"/not-listed\",\"isolation\":\"self\",\"model\":\"model-a\"}'\n"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			f := newFixture(t, "", "self")
-			path := filepath.Join(t.TempDir(), "router")
-			if err := os.WriteFile(path, []byte(tc.router), 0o700); err != nil {
-				t.Fatal(err)
-			}
-			f.config.Agent.Router = []string{path, "{system}", "{schema}"}
-			if tc.name == "router times out" {
-				f.config.Agent.Router = []string{path}
-				f.timeout = 100 * time.Millisecond
-			}
-			task := f.armThread("bad route", "agent")
-			f.runner().Tick(f.ctx)
-			run := f.runs()[0]
-			detail := f.task(task.Number)
-			if run.State != model.RunFailed || detail.Task.Status != model.StatusBlocked || !fireHasRouterFailure(detail.History) {
-				t.Fatalf("run = %#v; task = %#v; want failed run, blocked task, and router note", run, detail)
-			}
-		})
-	}
-}
-
-func TestTickBlocksTheTaskWhenItsOwnRouteIsInvalid(t *testing.T) {
-	f := newFixture(t, "", "self")
-	trace := filepath.Join(t.TempDir(), "router-trace")
-	t.Setenv("ROUTER_STDIN", trace)
 	task := f.armThread("bad decided route", "agent")
-	badRoot, isolation, selectedModel := "/not-listed", "self", "model-a"
-	if _, err := f.store.SetTask(f.ctx, store.Actor{}, task.Number, model.Patch{Root: &badRoot, Isolation: &isolation, Model: &selectedModel}); err != nil {
+	badRoot := "/not-listed"
+	if _, err := f.store.SetTask(f.ctx, store.Actor{}, task.Number, model.Patch{Root: &badRoot}); err != nil {
 		t.Fatalf("set bad root: %v", err)
 	}
-	f.runner().Tick(f.ctx)
-	run := f.runs()[0]
-	detail := f.task(task.Number)
-	if run.State != model.RunFailed || detail.Task.Status != model.StatusBlocked || !fireHasRouterFailure(detail.History) {
-		t.Fatalf("run = %#v; task = %#v; want failed route", run, detail)
+	before := len(f.task(task.Number).History)
+	if _, err := f.runner().Start(f.ctx, store.Actor{}, task.Number, store.RunRoute{}); fireCode(err) != model.CodeBadInput {
+		t.Fatalf("Start() error = %v, want bad-input", err)
 	}
-	if _, err := os.Stat(trace); !os.IsNotExist(err) {
-		t.Fatalf("router trace exists (%v), want Resolve failure before router runs", err)
+	if got := f.runs(); len(got) != 0 || len(f.task(task.Number).History) != before || len(f.herdr.Workspaces()) != 0 {
+		t.Fatalf("runs = %#v, history grew, or a workspace opened; want nothing written", got)
 	}
 }
 
-func TestTickSkipsRouterWhenTaskAlreadyDecidesEveryRouteField(t *testing.T) {
-	f := newFixture(t, "", "self")
-	trace := filepath.Join(t.TempDir(), "router-trace")
-	t.Setenv("ROUTER_STDIN", trace)
-	task := f.armThread("already routed", "agent")
-	if _, err := f.store.SetTask(f.ctx, store.Actor{}, task.Number, model.Patch{Root: fireString(f.root), Isolation: fireString("self"), Model: fireString("model-a")}); err != nil {
-		t.Fatalf("set route: %v", err)
-	}
-	f.runner().Tick(f.ctx)
-	if _, err := os.Stat(trace); !os.IsNotExist(err) {
-		t.Fatalf("router trace exists (%v), want no router invocation", err)
-	}
-	if run := f.runs()[0]; run.State != model.RunRunning || run.Root != f.root || run.Isolation != "self" || run.Model != "model-a" {
-		t.Fatalf("run = %#v, want directly spawned decided route", run)
-	}
-}
-
-func TestTickWaitsOnlyForConflictingInPlaceRoutes(t *testing.T) {
-	f := newFixture(t, "", "self")
-	f.config.Roots[0].Isolation = "in-place"
-	first := f.armThread("first", "agent")
-	second := f.armThread("second", "agent")
-	r := f.runner()
-	r.Tick(f.ctx)
-	runs := f.runs()
-	if len(runs) != 2 || runs[0].Task != first.Number || runs[1].Task != second.Number || runs[0].State != model.RunRunning || runs[1].State != model.RunWaiting || runs[1].Workspace != "" {
-		t.Fatalf("in-place runs = %#v, want running first and workspace-less waiting second", runs)
-	}
-	if changed, err := f.store.UpdateRun(f.ctx, runs[0].ID, model.RunRunning, store.RunUpdate{State: model.RunEnded}); err != nil || !changed {
-		t.Fatalf("end first run = (%t, %v)", changed, err)
-	}
-	r.Tick(f.ctx)
-	if run := f.runs()[1]; run.State != model.RunRunning || run.Workspace == "" {
-		t.Fatalf("waiting run after root frees = %#v, want running with workspace", run)
-	}
-}
-
-func TestTickDoesNotWaitForSelfOrWorktreeRoutes(t *testing.T) {
-	for _, isolation := range []string{"self", "worktree"} {
-		t.Run(isolation, func(t *testing.T) {
-			f := newFixture(t, "", "self")
-			f.config.Roots[0].Isolation = isolation
-			if isolation == "worktree" {
-				fireGitRoot(t, f.root)
-			}
-			f.armThread("first", "agent")
-			f.armThread("second", "agent")
-			f.runner().Tick(f.ctx)
-			runs := f.runs()
-			if len(runs) != 2 || runs[0].State != model.RunRunning || runs[1].State != model.RunRunning {
-				t.Fatalf("%s runs = %#v, want both running", isolation, runs)
-			}
-		})
-	}
-}
-
-func TestTickFailsRoutingRunsLeftByADaemonRestart(t *testing.T) {
-	f := newFixture(t, "", "self")
-	task := f.armThread("interrupted route", "agent")
-	if _, err := f.store.StartRun(f.ctx, task.Number); err != nil {
-		t.Fatalf("start routing run: %v", err)
-	}
-	f.runner().Tick(f.ctx)
-	run := f.runs()[0]
-	detail := f.task(task.Number)
-	if run.State != model.RunFailed || detail.Task.Status != model.StatusBlocked || !fireHasNote(detail.History, "daemon restarted") {
-		t.Fatalf("run = %#v; task = %#v; want failed stale routing run", run, detail)
-	}
-}
-
-func TestStateUsesTheDocumentedPrecedenceAndPreventsFiring(t *testing.T) {
-	cases := []struct {
-		name   string
-		adjust func(*fixture)
-		want   string
-	}{
-		{"off wins", func(f *fixture) { f.config.Runner.Enabled = false }, runner.StateOff},
-		{"paused beats missing herdr", func(f *fixture) { f.config.Runner.Enabled = true; f.herdr = nil; firePauseFile(t, f.paths) }, runner.StatePaused},
-		{"no herdr beats no router", func(f *fixture) { f.herdr = nil; f.config.Agent.Router = nil }, runner.StateNoHerdr},
-		{"no router", func(f *fixture) { f.config.Agent.Router = []string{"not-an-executable"} }, runner.StateNoRouter},
-		{"on", func(f *fixture) {}, runner.StateOn},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			f := newFixture(t, "", "self")
-			tc.adjust(f)
-			if tc.want == runner.StateNoHerdr {
-				if path, err := herdr.Find(); err == nil {
-					t.Fatalf("herdr found at %q under the seal", path)
-				}
-			}
-			f.armThread("not fired outside on", "agent")
-			r := f.runner()
-			if got := r.State(); got != tc.want {
-				t.Fatalf("State() = %q, want %q", got, tc.want)
-			}
-			r.Tick(f.ctx)
-			if tc.want != runner.StateOn && len(f.runs()) != 0 {
-				t.Fatalf("runs = %#v, want no spawn in %s", f.runs(), tc.want)
-			}
-		})
-	}
-}
-
-func TestPausePersistsPrivateFileRefusesAgentsAndResumesTicking(t *testing.T) {
-	f := newFixture(t, "", "self")
-	r := f.runner()
-	if err := r.Pause(f.ctx, store.Actor{Session: "agent"}, true); err == nil || !strings.Contains(err.Error(), "not-allowed") {
-		t.Fatalf("agent Pause() error = %v, want not-allowed", err)
-	}
-	if err := r.Pause(f.ctx, store.Actor{}, true); err != nil {
-		t.Fatalf("pause: %v", err)
-	}
-	if !r.Paused() || r.State() != runner.StatePaused {
-		t.Fatalf("paused = %t; state = %q, want true and paused", r.Paused(), r.State())
-	}
-	if info, err := os.Stat(f.paths.RunnerPause()); err != nil || info.Mode().Perm() != 0o600 {
-		t.Fatalf("pause file mode = %v (%v), want 0600", info, err)
-	}
-	f.armThread("wait while paused", "agent")
-	r.Tick(f.ctx)
-	if len(f.runs()) != 0 {
-		t.Fatalf("runs while paused = %#v, want none", f.runs())
-	}
-	if err := r.Pause(f.ctx, store.Actor{}, false); err != nil {
-		t.Fatalf("resume: %v", err)
-	}
-	if r.Paused() {
-		t.Fatal("Paused() = true after resume")
-	}
-	r.Tick(f.ctx)
-	if len(f.runs()) != 1 {
-		t.Fatalf("runs after resume = %#v, want one", f.runs())
-	}
-}
-
-func TestNotifyRunsForEachSpawnAndOnNoRouterStateTransition(t *testing.T) {
-	f := newFixture(t, "", "self")
-	notice := filepath.Join(t.TempDir(), "notice")
-	script := filepath.Join(t.TempDir(), "notify")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '%s|%s\\n' \"$1\" \"$2\" >> "+fmt.Sprintf("%q", notice)+"\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	f.config.Notify.Command = []string{script, "{title}", "{body}"}
-	first := f.armThread("first task", "agent")
-	second := f.armThread("second task", "agent")
-	r := f.runner()
-	r.Tick(f.ctx)
-	got, err := os.ReadFile(notice)
-	if err != nil {
-		t.Fatalf("read spawn notifications: %v", err)
-	}
-	want := "herdr-desk: T" + fmt.Sprint(first.Number) + " started|first task\n" + "herdr-desk: T" + fmt.Sprint(second.Number) + " started|second task\n"
-	if string(got) != want {
-		t.Fatalf("spawn notifications = %q, want %q", got, want)
-	}
-	if err := os.Remove(f.router); err != nil {
-		t.Fatalf("remove router to enter no-router: %v", err)
-	}
-	r.Tick(f.ctx)
-	afterTransition, err := os.ReadFile(notice)
-	if err != nil {
-		t.Fatalf("read state notification: %v", err)
-	}
-	if lines := strings.Split(strings.TrimSuffix(string(afterTransition), "\n"), "\n"); len(lines) != 3 {
-		t.Fatalf("notifications after no-router transition = %q, want exactly one additional notification", afterTransition)
-	}
-	r.Tick(f.ctx)
-	got, err = os.ReadFile(notice)
-	if err != nil {
-		t.Fatalf("read state notification: %v", err)
-	}
-	if string(got) != string(afterTransition) {
-		t.Fatalf("notifications after unchanged no-router tick = %q, want %q", got, afterTransition)
-	}
-}
-
-func TestNotifyFailureDoesNotPreventTheSpawn(t *testing.T) {
-	f := newFixture(t, "", "self")
-	f.config.Notify.Command = []string{filepath.Join(t.TempDir(), "missing-notify"), "{title}", "{body}"}
-	f.armThread("still starts", "agent")
-	f.runner().Tick(f.ctx)
-	if len(f.runs()) != 1 || f.runs()[0].State != model.RunRunning {
-		t.Fatalf("runs after notify failure = %#v, want started run", f.runs())
-	}
-}
-
-func TestOnStateReceivesInitialStateAndOnlyOrderedChanges(t *testing.T) {
-	f := newFixture(t, "", "self")
-	r := f.runner()
-	if got, want := f.states, []string{runner.StateOn}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("initial OnState calls = %v, want %v", got, want)
-	}
-	r.Tick(f.ctx)
-	r.Tick(f.ctx)
-	if got, want := f.states, []string{runner.StateOn}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("unchanged-state calls = %v, want %v", got, want)
-	}
-	if err := r.Pause(f.ctx, store.Actor{}, true); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.Pause(f.ctx, store.Actor{}, false); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(f.router); err != nil {
-		t.Fatalf("remove router to enter no-router: %v", err)
-	}
-	r.Tick(f.ctx)
-	if got, want := f.states, []string{runner.StateOn, runner.StatePaused, runner.StateOn, runner.StateNoRouter}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("OnState calls = %v, want %v", got, want)
-	}
-}
-
-func TestPauseFileThatCannotBeReadKeepsTheRunnerPaused(t *testing.T) {
-	f := newFixture(t, "", "self")
-	firePauseFile(t, f.paths)
-	dir := filepath.Dir(f.paths.RunnerPause())
-	if err := os.Chmod(dir, 0); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
-	if _, err := os.Stat(f.paths.RunnerPause()); err == nil || os.IsNotExist(err) {
-		t.Skipf("stat of a file in a mode 0 folder = %v, want a permission error (running as root?)", err)
-	}
-	f.armThread("not while the pause is unreadable", "agent")
-	r := f.runner()
-	if !r.Paused() || r.State() != runner.StatePaused {
-		t.Fatalf("paused = %t; state = %q, want paused when the pause file cannot be read", r.Paused(), r.State())
-	}
-	r.Tick(f.ctx)
-	if got := f.runs(); len(got) != 0 {
-		t.Fatalf("runs = %#v, want none while the pause file cannot be read", got)
-	}
-	if got := f.logged(); strings.Count(got, "pause file cannot be read") != 1 {
-		t.Fatalf("log = %q, want the unreadable pause file logged once", got)
-	}
-}
-
-func TestNoHerdrLogsWhyDeskHerdrCannotBeUsed(t *testing.T) {
-	f := newFixture(t, "", "self")
-	t.Setenv("DESK_HERDR", "herdr")
-	r := f.runnerWith(nil)
-	r.Tick(f.ctx)
-	if got := r.State(); got != runner.StateNoHerdr {
-		t.Fatalf("State() = %q, want no-herdr", got)
-	}
-	if got := f.logged(); strings.Count(got, `DESK_HERDR "herdr" is not an absolute path`) != 1 {
-		t.Fatalf("log = %q, want the DESK_HERDR reason logged once", got)
-	}
-}
-
-func TestTickBlocksTheTaskWhenItsRouteCannotBeSaved(t *testing.T) {
+func TestStartRefusesARouteTheScannerRefusesAndOpensNoPane(t *testing.T) {
 	f := newFixture(t, "", "self")
 	if err := f.store.Close(); err != nil {
 		t.Fatal(err)
@@ -509,15 +130,231 @@ func TestTickBlocksTheTaskWhenItsRouteCannotBeSaved(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = f.store.Close() })
 	task := f.armThread("route refused by the scanner", "agent")
-	f.runner().Tick(f.ctx)
-	run := f.run(task.Number)
-	detail := f.task(task.Number)
-	if run.State != model.RunFailed || detail.Task.Status != model.StatusBlocked || len(f.herdr.Workspaces()) != 0 || !fireHasRouterFailure(detail.History) {
-		t.Fatalf("run = %#v; task = %#v; workspaces = %#v, want a failed run, a blocked task with a router note, and no spawn", run, detail, f.herdr.Workspaces())
+	if _, err := f.runner().Start(f.ctx, store.Actor{}, task.Number, store.RunRoute{}); fireCode(err) != model.CodeSecretDetected {
+		t.Fatalf("Start() error = %v, want secret-detected", err)
+	}
+	if len(f.runs()) != 0 || len(f.herdr.Workspaces()) != 0 {
+		t.Fatalf("runs = %#v; workspaces = %#v, want none", f.runs(), f.herdr.Workspaces())
 	}
 }
 
-func TestTickMatchesARootAndAProjectWrittenThroughASymlink(t *testing.T) {
+func TestStartWaitsOnlyForConflictingInPlaceRoutes(t *testing.T) {
+	f := newFixture(t, "", "in-place")
+	r := f.runner()
+	first := f.armThread("first", "agent")
+	second := f.armThread("second", "agent")
+	f.startRun(r, first.Number)
+	f.startRun(r, second.Number)
+	runs := f.runs()
+	if len(runs) != 2 || runs[0].State != model.RunRunning || runs[1].State != model.RunWaiting || runs[1].Workspace != "" {
+		t.Fatalf("in-place runs = %#v, want running first and workspace-less waiting second", runs)
+	}
+	if changed, err := f.store.UpdateRun(f.ctx, runs[0].ID, model.RunRunning, store.RunUpdate{State: model.RunEnded}); err != nil || !changed {
+		t.Fatalf("end first run = (%t, %v)", changed, err)
+	}
+	r.Jobs(f.ctx)
+	if run := f.runs()[1]; run.State != model.RunRunning || run.Workspace == "" {
+		t.Fatalf("waiting run after the root frees = %#v, want running with a workspace", run)
+	}
+}
+
+func TestStartDoesNotWaitForSelfOrWorktreeRoutes(t *testing.T) {
+	for _, isolation := range []string{"self", "worktree"} {
+		t.Run(isolation, func(t *testing.T) {
+			f := newFixture(t, "", isolation)
+			if isolation == "worktree" {
+				fireGitRoot(t, f.root)
+			}
+			r := f.runner()
+			f.startRun(r, f.armThread("first", "agent").Number)
+			f.startRun(r, f.armThread("second", "agent").Number)
+			runs := f.runs()
+			if len(runs) != 2 || runs[0].State != model.RunRunning || runs[1].State != model.RunRunning {
+				t.Fatalf("%s runs = %#v, want both running; log:\n%s", isolation, runs, f.logged())
+			}
+		})
+	}
+}
+
+func TestJobsFailsARunLeftStartingForOverAMinute(t *testing.T) {
+	f := newFixture(t, "", "self")
+	task := f.armThread("interrupted start", "agent")
+	if _, err := f.store.StartRun(f.ctx, task.Number, store.RunRoute{Root: f.root, Isolation: "self"}, store.RunCaps{Slots: 3, PerDay: 1000}); err != nil {
+		t.Fatalf("start a run with no spawn: %v", err)
+	}
+	r := f.runner()
+	f.now = f.now.Add(30 * time.Second)
+	r.Jobs(f.ctx)
+	if run := f.runs()[0]; run.State != model.RunStarting {
+		t.Fatalf("run after 30 s = %#v, want still starting", run)
+	}
+	f.now = f.now.Add(time.Minute)
+	r.Jobs(f.ctx)
+	run := f.runs()[0]
+	detail := f.task(task.Number)
+	if run.State != model.RunFailed || detail.Task.Status != model.StatusBlocked || !fireHasNote(detail.History, "left starting") {
+		t.Fatalf("run = %#v; task = %#v; want a failed run and a blocked task with a note", run, detail)
+	}
+}
+
+func TestStateUsesTheDocumentedPrecedenceAndStartRefusesOutsideOn(t *testing.T) {
+	cases := []struct {
+		name   string
+		adjust func(*fixture)
+		want   string
+		code   string
+	}{
+		{"off wins", func(f *fixture) { f.config.Runner.Enabled = false; f.herdr = nil }, runner.StateOff, model.CodeRunnerOff},
+		{"paused beats missing herdr", func(f *fixture) { f.herdr = nil; firePauseFile(t, f.paths) }, runner.StatePaused, model.CodeRunnerPaused},
+		{"no herdr", func(f *fixture) { f.herdr = nil }, runner.StateNoHerdr, model.CodeNoHerdr},
+		{"on", func(f *fixture) {}, runner.StateOn, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t, "", "self")
+			tc.adjust(f)
+			if tc.want == runner.StateNoHerdr {
+				if path, err := herdr.Find(); err == nil {
+					t.Fatalf("herdr found at %q under the seal", path)
+				}
+			}
+			task := f.armThread("not started outside on", "agent")
+			r := f.runner()
+			if got := r.State(); got != tc.want {
+				t.Fatalf("State() = %q, want %q", got, tc.want)
+			}
+			_, err := r.Start(f.ctx, store.Actor{}, task.Number, store.RunRoute{})
+			if got := fireCode(err); got != tc.code {
+				t.Fatalf("Start() error = %v, want code %q", err, tc.code)
+			}
+			if tc.code != "" && len(f.runs()) != 0 {
+				t.Fatalf("runs = %#v, want none in %s", f.runs(), tc.want)
+			}
+		})
+	}
+}
+
+func TestStartRefusesAnAgentThatIsNotTheRecordedCoordinator(t *testing.T) {
+	f := newFixture(t, "", "self")
+	r := f.runner()
+	task := f.armThread("only a person or the coordinator", "agent")
+	for _, a := range []store.Actor{{Session: "worker-session", Run: 1}, {Session: "other-agent"}} {
+		if _, err := r.Start(f.ctx, a, task.Number, store.RunRoute{}); fireCode(err) != model.CodeNotAllowed {
+			t.Fatalf("Start(%#v) error = %v, want not-allowed", a, err)
+		}
+	}
+	if err := f.store.SetCoordinator(f.ctx, store.Actor{}, model.Coordinator{Session: "coordinator-session", Workspace: "w9", Pane: "w9-1"}); err != nil {
+		t.Fatalf("record the coordinator: %v", err)
+	}
+	run, err := r.Start(f.ctx, store.Actor{Session: "coordinator-session"}, task.Number, store.RunRoute{})
+	if err != nil || run.State != model.RunRunning {
+		t.Fatalf("coordinator Start() = %#v, %v; want a running run", run, err)
+	}
+}
+
+func TestPausePersistsPrivateFileRefusesAgentsAndResumesStarting(t *testing.T) {
+	f := newFixture(t, "", "self")
+	r := f.runner()
+	if err := r.Pause(f.ctx, store.Actor{Session: "agent"}, true); err == nil || !strings.Contains(err.Error(), "not-allowed") {
+		t.Fatalf("agent Pause() error = %v, want not-allowed", err)
+	}
+	if err := r.Pause(f.ctx, store.Actor{}, true); err != nil {
+		t.Fatalf("pause: %v", err)
+	}
+	if !r.Paused() || r.State() != runner.StatePaused {
+		t.Fatalf("paused = %t; state = %q, want true and paused", r.Paused(), r.State())
+	}
+	if info, err := os.Stat(f.paths.RunnerPause()); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("pause file mode = %v (%v), want 0600", info, err)
+	}
+	task := f.armThread("wait while paused", "agent")
+	if _, err := r.Start(f.ctx, store.Actor{}, task.Number, store.RunRoute{}); fireCode(err) != model.CodeRunnerPaused {
+		t.Fatalf("Start() while paused error = %v, want runner-paused", err)
+	}
+	if err := r.Pause(f.ctx, store.Actor{}, false); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if r.Paused() {
+		t.Fatal("Paused() = true after resume")
+	}
+	f.startRun(r, task.Number)
+	if len(f.runs()) != 1 {
+		t.Fatalf("runs after resume = %#v, want one", f.runs())
+	}
+}
+
+func TestNotifyRunsOnceForEachSpawn(t *testing.T) {
+	f := newFixture(t, "", "self")
+	notice := filepath.Join(t.TempDir(), "notice")
+	script := filepath.Join(t.TempDir(), "notify")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '%s|%s\\n' \"$1\" \"$2\" >> "+fmt.Sprintf("%q", notice)+"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	f.config.Notify.Command = []string{script, "{title}", "{body}"}
+	r := f.runner()
+	first := f.armThread("first task", "agent")
+	second := f.armThread("second task", "agent")
+	f.startRun(r, first.Number)
+	f.startRun(r, second.Number)
+	f.startRun(r, first.Number)
+	got, err := os.ReadFile(notice)
+	if err != nil {
+		t.Fatalf("read spawn notifications: %v", err)
+	}
+	want := "herdr-desk: T" + fmt.Sprint(first.Number) + " started|first task\n" + "herdr-desk: T" + fmt.Sprint(second.Number) + " started|second task\n"
+	if string(got) != want {
+		t.Fatalf("spawn notifications = %q, want %q: a start of a live run notifies nothing", got, want)
+	}
+}
+
+func TestNotifyFailureDoesNotPreventTheSpawn(t *testing.T) {
+	f := newFixture(t, "", "self")
+	f.config.Notify.Command = []string{filepath.Join(t.TempDir(), "missing-notify"), "{title}", "{body}"}
+	run := f.startRun(f.runner(), f.armThread("still starts", "agent").Number)
+	if run.State != model.RunRunning {
+		t.Fatalf("run after notify failure = %#v, want running", run)
+	}
+}
+
+func TestPauseFileThatCannotBeReadKeepsTheRunnerPaused(t *testing.T) {
+	f := newFixture(t, "", "self")
+	firePauseFile(t, f.paths)
+	dir := filepath.Dir(f.paths.RunnerPause())
+	if err := os.Chmod(dir, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	if _, err := os.Stat(f.paths.RunnerPause()); err == nil || os.IsNotExist(err) {
+		t.Skipf("stat of a file in a mode 0 folder = %v, want a permission error (running as root?)", err)
+	}
+	task := f.armThread("not while the pause is unreadable", "agent")
+	r := f.runner()
+	if !r.Paused() || r.State() != runner.StatePaused {
+		t.Fatalf("paused = %t; state = %q, want paused when the pause file cannot be read", r.Paused(), r.State())
+	}
+	_, err := r.Start(f.ctx, store.Actor{}, task.Number, store.RunRoute{})
+	if fireCode(err) != model.CodeRunnerPaused || !strings.Contains(err.Error(), "pause file cannot be read") {
+		t.Fatalf("Start() error = %v, want runner-paused naming the unreadable pause file", err)
+	}
+	if got := f.runs(); len(got) != 0 {
+		t.Fatalf("runs = %#v, want none while the pause file cannot be read", got)
+	}
+}
+
+func TestNoHerdrNamesWhyDeskHerdrCannotBeUsed(t *testing.T) {
+	f := newFixture(t, "", "self")
+	t.Setenv("DESK_HERDR", "herdr")
+	r := f.runnerWith(nil)
+	if got := r.State(); got != runner.StateNoHerdr {
+		t.Fatalf("State() = %q, want no-herdr", got)
+	}
+	_, err := r.Start(f.ctx, store.Actor{}, f.armThread("no herdr", "agent").Number, store.RunRoute{})
+	if fireCode(err) != model.CodeNoHerdr || !strings.Contains(err.Error(), `DESK_HERDR "herdr" is not an absolute path`) {
+		t.Fatalf("Start() error = %v, want no-herdr naming the DESK_HERDR reason", err)
+	}
+}
+
+func TestStartMatchesARootAndAProjectWrittenThroughASymlink(t *testing.T) {
 	real, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -527,34 +364,16 @@ func TestTickMatchesARootAndAProjectWrittenThroughASymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 	f := newFixture(t, link, "self")
-	stdin := filepath.Join(t.TempDir(), "stdin")
-	t.Setenv("ROUTER_STDIN", stdin)
-	project := filepath.Join(real, "sub")
-	routed, err := f.store.AddTask(f.ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{Title: "under the link", Thread: "agent", Project: project}})
+	r := f.runner()
+	byProject, err := f.store.AddTask(f.ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{Title: "project at the real path", Project: real}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	ready := model.StatusReady
-	if _, err := f.store.SetTask(f.ctx, store.Actor{}, routed.Number, model.Patch{Status: &ready}); err != nil {
-		t.Fatal(err)
+	if run := f.startRun(r, byProject.Number); run.State != model.RunRunning || run.Root != link {
+		t.Fatalf("run = %#v, want it running on the configured root %q", run, link)
 	}
-	f.runner().Tick(f.ctx)
-	input, err := os.ReadFile(stdin)
-	if err != nil {
-		t.Fatalf("read router stdin: %v", err)
-	}
-	var got struct {
-		Task struct {
-			Project string `json:"project"`
-		} `json:"task"`
-	}
-	if err := json.Unmarshal(input, &got); err != nil || got.Task.Project != filepath.Join(link, "sub") {
-		t.Fatalf("router project = %q (%v), want %q: the root's own path", got.Task.Project, err, filepath.Join(link, "sub"))
-	}
-
 	byReal := f.armRoute("root written by its real path", real, "self")
-	f.runner().Tick(f.ctx)
-	if run := f.run(byReal.Number); run.State != model.RunRunning || run.Root != link {
+	if run := f.startRun(r, byReal.Number); run.State != model.RunRunning || run.Root != link {
 		t.Fatalf("run = %#v, want it running on the configured root %q", run, link)
 	}
 }
@@ -582,36 +401,19 @@ func fireGitRoot(t *testing.T, root string) {
 	}
 }
 
-func fireHasRouterNote(history []model.Event, want string) bool {
-	for _, event := range history {
-		if event.Kind != model.KindNote || !reflect.DeepEqual(event.Tags, []string{model.TagRunner, model.TagRouter}) {
-			continue
-		}
-		var note model.NoteData
-		if json.Unmarshal(event.Data, &note) == nil && note.Text == want {
-			return true
-		}
+// fireCode is the refusal code of err, "" when err is nil or no refusal.
+func fireCode(err error) string {
+	if r, ok := model.AsRefusal(err); ok {
+		return r.Code
 	}
-	return false
-}
-
-func fireHasRouterFailure(history []model.Event) bool {
-	for _, event := range history {
-		if event.Kind != model.KindNote || !reflect.DeepEqual(event.Tags, []string{model.TagRunner, model.TagRouter}) {
-			continue
-		}
-		var note model.NoteData
-		if json.Unmarshal(event.Data, &note) == nil && strings.HasPrefix(note.Text, "router: ") {
-			return true
-		}
-	}
-	return false
+	return ""
 }
 
 func fireHasNote(history []model.Event, fragment string) bool {
 	for _, event := range history {
 		var note model.NoteData
-		if event.Kind == model.KindNote && json.Unmarshal(event.Data, &note) == nil && strings.Contains(note.Text, fragment) {
+		if event.Kind == model.KindNote && json.Unmarshal(event.Data, &note) == nil && strings.Contains(note.Text, fragment) &&
+			reflect.DeepEqual(event.Tags, []string{model.TagRunner}) {
 			return true
 		}
 	}

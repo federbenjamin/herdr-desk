@@ -1,17 +1,12 @@
 package api_test
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/federbenjamin/herdr-desk/internal/api"
 	"github.com/federbenjamin/herdr-desk/internal/backup"
@@ -20,38 +15,15 @@ import (
 	"github.com/federbenjamin/herdr-desk/internal/store"
 )
 
-const (
-	firstToken  = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	secondToken = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-)
-
-type apiHarness struct {
-	paths     config.Paths
-	trusted   http.Handler
-	untrusted http.Handler
-}
-
-type failingReadCloser struct{}
-
-func (failingReadCloser) Read([]byte) (int, error) { return 0, errors.New("request body failed") }
-
-func (failingReadCloser) Close() error { return nil }
-
-func newAPIHarness(t *testing.T, backupFn func(context.Context) (backup.Result, error)) apiHarness {
+func newServer(t *testing.T, backupFn func(context.Context) (backup.Result, error)) *api.Server {
 	t.Helper()
 
 	root := t.TempDir()
 	paths := config.Paths{
 		ConfigDir: filepath.Join(root, "config", "herdr-desk"),
+		StateDir:  filepath.Join(root, "state", "herdr-desk"),
 		DataDir:   filepath.Join(root, "data", "herdr-desk"),
 	}
-	if err := os.MkdirAll(paths.ConfigDir, 0o700); err != nil {
-		t.Fatalf("create config directory: %v", err)
-	}
-	if err := config.WriteToken(paths, firstToken); err != nil {
-		t.Fatalf("write token: %v", err)
-	}
-
 	st, err := store.Open(paths.DB(), store.Options{})
 	if err != nil {
 		t.Fatalf("open store: %v", err)
@@ -59,32 +31,23 @@ func newAPIHarness(t *testing.T, backupFn func(context.Context) (backup.Result, 
 	t.Cleanup(func() { _ = st.Close() })
 
 	cfg := config.Default()
-	cfg.Home.Listen = "127.0.0.1:48123"
 	cfg.Runner.Enabled = true
-	server := api.NewServer(api.ServerOptions{
-		Store:     st,
-		Config:    cfg,
-		Paths:     paths,
-		StartedTS: time.Date(2026, time.October, 3, 12, 0, 0, 0, time.UTC),
-		Backup:    backupFn,
-	})
-	return apiHarness{
-		paths:     paths,
-		trusted:   server.Handler(true),
-		untrusted: server.Handler(false),
-	}
+	return api.NewServer(api.ServerOptions{Store: st, Config: cfg, Paths: paths, Backup: backupFn})
 }
 
-func postAPI(t *testing.T, h http.Handler, token, method string, body []byte) *httptest.ResponseRecorder {
+// answer sends one request to srv and decodes its RPCResponse.
+func answer(t *testing.T, srv *api.Server, method string, params []byte) api.RPCResponse {
 	t.Helper()
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/"+method, bytes.NewReader(body))
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
+	b, err := srv.RoundTrip(context.Background(), method, params)
+	if err != nil {
+		t.Fatalf("RoundTrip(%s): %v", method, err)
 	}
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-	return rec
+	var resp api.RPCResponse
+	if err := json.Unmarshal(b, &resp); err != nil {
+		t.Fatalf("decode the response %s: %v", b, err)
+	}
+	return resp
 }
 
 func mustJSON(t *testing.T, v any) []byte {
@@ -97,210 +60,113 @@ func mustJSON(t *testing.T, v any) []byte {
 	return b
 }
 
-func requireStatus(t *testing.T, rec *httptest.ResponseRecorder, want int) {
+func requireResult(t *testing.T, resp api.RPCResponse) {
 	t.Helper()
-	if got := rec.Code; got != want {
-		t.Fatalf("status = %d, want %d; body: %s", got, want, rec.Body.String())
+	if resp.Refusal != nil || resp.Error != nil || !json.Valid(resp.Result) {
+		t.Fatalf("response = %+v (refusal %+v, error %+v), want a JSON result", resp, resp.Refusal, resp.Error)
 	}
 }
 
-func TestHandlerServesEveryDocumentedMethod(t *testing.T) {
+func requireBadRequest(t *testing.T, resp api.RPCResponse) {
+	t.Helper()
+	if resp.Error == nil || !resp.Error.BadRequest || resp.Result != nil || resp.Refusal != nil {
+		t.Fatalf("response = %+v (error %+v), want a bad-request error only", resp, resp.Error)
+	}
+}
+
+func requireRefusal(t *testing.T, resp api.RPCResponse, code string) {
+	t.Helper()
+	if resp.Refusal == nil || resp.Refusal.Code != code || resp.Result != nil || resp.Error != nil {
+		t.Fatalf("response = %+v (refusal %+v), want only the refusal %q", resp, resp.Refusal, code)
+	}
+}
+
+func TestServerAnswersEveryDocumentedMethod(t *testing.T) {
 	backupCalled := false
-	h := newAPIHarness(t, func(context.Context) (backup.Result, error) {
+	srv := newServer(t, func(context.Context) (backup.Result, error) {
 		backupCalled = true
 		return backup.Result{Events: 3, Committed: true, Pushed: true}, nil
 	})
 
-	cases := []struct {
-		name    string
-		method  string
-		body    []byte
-		handler http.Handler
+	for _, tc := range []struct {
+		name   string
+		method string
+		params []byte
 	}{
-		{name: "list tasks", method: api.MethodTasksList, body: []byte(`{}`), handler: h.untrusted},
-		{name: "add task", method: api.MethodTasksAdd, body: []byte(`{"actor":{},"input":{"title":"API task"}}`), handler: h.untrusted},
-		{name: "get task", method: api.MethodTasksGet, body: []byte(`{"number":1}`), handler: h.untrusted},
-		{name: "set task", method: api.MethodTasksSet, body: []byte(`{"actor":{},"number":1,"patch":{"title":"renamed"}}`), handler: h.untrusted},
-		{name: "change steps", method: api.MethodTasksSteps, body: []byte(`{"actor":{},"number":1,"op":{"op":"add","text":"check API"}}`), handler: h.untrusted},
-		{name: "append event", method: api.MethodEventsAppend, body: mustJSON(t, api.AppendRequest{
+		{name: "list tasks", method: api.MethodTasksList, params: []byte(`{}`)},
+		{name: "add task", method: api.MethodTasksAdd, params: []byte(`{"actor":{},"input":{"title":"API task"}}`)},
+		{name: "get task", method: api.MethodTasksGet, params: []byte(`{"number":1}`)},
+		{name: "set task", method: api.MethodTasksSet, params: []byte(`{"actor":{},"number":1,"patch":{"title":"renamed"}}`)},
+		{name: "change steps", method: api.MethodTasksSteps, params: []byte(`{"actor":{},"number":1,"op":{"op":"add","text":"check API"}}`)},
+		{name: "append event", method: api.MethodEventsAppend, params: mustJSON(t, api.AppendRequest{
 			Kind: model.KindNote,
 			Note: &store.NoteInput{NoteData: model.NoteData{Text: "journal entry"}},
-		}), handler: h.untrusted},
-		{name: "view session", method: api.MethodSessionView, body: []byte(`{"session":"session-one"}`), handler: h.untrusted},
-		{name: "list runs", method: api.MethodRunsList, body: []byte(`{}`), handler: h.untrusted},
-		{name: "read status", method: api.MethodStatus, body: []byte(`{}`), handler: h.untrusted},
-		{name: "run backup on trusted handler", method: api.MethodBackupRun, body: []byte(`{}`), handler: h.trusted},
-	}
-
-	for _, tc := range cases {
+		})},
+		{name: "view session", method: api.MethodSessionView, params: []byte(`{"session":"session-one"}`)},
+		{name: "list runs", method: api.MethodRunsList, params: []byte(`{}`)},
+		{name: "read status", method: api.MethodStatus, params: []byte(`{}`)},
+		{name: "run backup", method: api.MethodBackupRun, params: []byte(`{}`)},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
-			rec := postAPI(t, tc.handler, firstToken, tc.method, tc.body)
-			requireStatus(t, rec, http.StatusOK)
-			if !json.Valid(rec.Body.Bytes()) {
-				t.Fatalf("response is not JSON: %s", rec.Body.String())
-			}
+			requireResult(t, answer(t, srv, tc.method, tc.params))
 		})
 	}
 	if !backupCalled {
-		t.Fatal("trusted backup.run did not call the configured backup function")
+		t.Fatal("backup.run did not call the configured backup function")
 	}
 }
 
-func TestUntrustedHandlerRequiresTheCurrentExactToken(t *testing.T) {
-	h := newAPIHarness(t, nil)
-
-	for _, tc := range []struct {
-		name  string
-		token string
-	}{
-		{name: "missing token"},
-		{name: "wrong token", token: secondToken},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			rec := postAPI(t, h.untrusted, tc.token, api.MethodStatus, []byte(`{}`))
-			requireStatus(t, rec, http.StatusUnauthorized)
-		})
+func TestServerStatusShowsNoTickerWhenNoneHoldsTheLock(t *testing.T) {
+	resp := answer(t, newServer(t, nil), api.MethodStatus, []byte(`{}`))
+	requireResult(t, resp)
+	var st api.Status
+	if err := json.Unmarshal(resp.Result, &st); err != nil {
+		t.Fatal(err)
 	}
-
-	requireStatus(t, postAPI(t, h.untrusted, firstToken, api.MethodStatus, []byte(`{}`)), http.StatusOK)
-	if err := config.WriteToken(h.paths, secondToken); err != nil {
-		t.Fatalf("rotate token: %v", err)
-	}
-	requireStatus(t, postAPI(t, h.untrusted, firstToken, api.MethodStatus, []byte(`{}`)), http.StatusUnauthorized)
-	requireStatus(t, postAPI(t, h.untrusted, secondToken, api.MethodStatus, []byte(`{}`)), http.StatusOK)
-}
-
-func TestUntrustedHandlerNeverServesBackupRun(t *testing.T) {
-	backupCalled := false
-	h := newAPIHarness(t, func(context.Context) (backup.Result, error) {
-		backupCalled = true
-		return backup.Result{}, nil
-	})
-
-	rec := postAPI(t, h.untrusted, firstToken, api.MethodBackupRun, []byte(`{}`))
-	requireStatus(t, rec, http.StatusBadRequest)
-	if backupCalled {
-		t.Fatal("untrusted backup.run called the backup function")
+	if st.Ticker.Running || st.Ticker.PID != 0 || st.Ticker.StartedTS != nil || !st.RunnerOn {
+		t.Fatalf("status = %+v, want no ticker and the runner on", st)
 	}
 }
 
-func TestHandlerRejectsNonPostRequests(t *testing.T) {
-	h := newAPIHarness(t, nil)
-	req := httptest.NewRequest(http.MethodGet, "/v1/"+api.MethodStatus, nil)
-	rec := httptest.NewRecorder()
-
-	h.untrusted.ServeHTTP(rec, req)
-	requireStatus(t, rec, http.StatusMethodNotAllowed)
-}
-
-func TestUntrustedHandlerRejectsWhenTheTokenCannotBeRead(t *testing.T) {
-	h := newAPIHarness(t, nil)
-	if err := os.Remove(h.paths.TokenFile()); err != nil {
-		t.Fatalf("remove token: %v", err)
-	}
-
-	requireStatus(t, postAPI(t, h.untrusted, firstToken, api.MethodStatus, []byte(`{}`)), http.StatusUnauthorized)
-}
-
-func TestHandlerRejectsMalformedAndUnknownRequests(t *testing.T) {
-	h := newAPIHarness(t, nil)
+func TestServerRejectsMalformedAndUnknownRequests(t *testing.T) {
+	srv := newServer(t, nil)
 
 	for _, tc := range []struct {
 		name   string
 		method string
-		body   []byte
+		params []byte
 	}{
-		{name: "malformed JSON", method: api.MethodStatus, body: []byte(`{"unterminated"`)},
-		{name: "unknown method", method: "tasks.remove", body: []byte(`{}`)},
+		{name: "malformed JSON", method: api.MethodStatus, params: []byte(`{"unterminated"`)},
+		{name: "no params", method: api.MethodStatus},
+		{name: "unknown method", method: "tasks.remove", params: []byte(`{}`)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			rec := postAPI(t, h.untrusted, firstToken, tc.method, tc.body)
-			requireStatus(t, rec, http.StatusBadRequest)
+			requireBadRequest(t, answer(t, srv, tc.method, tc.params))
 		})
 	}
 }
 
-func TestHandlerRejectsUnreadableRequestBodies(t *testing.T) {
-	h := newAPIHarness(t, nil)
-	req := httptest.NewRequest(http.MethodPost, "/v1/"+api.MethodStatus, nil)
-	req.Header.Set("Authorization", "Bearer "+firstToken)
-	req.Body = failingReadCloser{}
-	rec := httptest.NewRecorder()
+func TestServerAnswersStoreRefusalsWithTheirStableCode(t *testing.T) {
+	srv := newServer(t, nil)
 
-	h.untrusted.ServeHTTP(rec, req)
-	requireStatus(t, rec, http.StatusBadRequest)
+	requireRefusal(t, answer(t, srv, api.MethodTasksGet, []byte(`{"number":999}`)), model.CodeUnknownTask)
+	requireRefusal(t, answer(t, srv, api.MethodTasksSet, []byte(`{"actor":{},"number":1,"patch":{"status":"not-a-status"}}`)), model.CodeBadInput)
 }
 
-func TestHandlerRejectsOnlyBodiesOverOneMiB(t *testing.T) {
-	h := newAPIHarness(t, nil)
-	const limit = 1 << 20
-	const prefix = `{"ignored":"`
-	const suffix = `"}`
-	atLimit := []byte(prefix + strings.Repeat("x", limit-len(prefix)-len(suffix)) + suffix)
+func TestServerAnswersBackupFailuresInTheirClasses(t *testing.T) {
+	requireRefusal(t, answer(t, newServer(t, nil), api.MethodBackupRun, []byte(`{}`)), model.CodeBackupOff)
 
-	withinLimit := postAPI(t, h.untrusted, firstToken, api.MethodStatus, atLimit)
-	if withinLimit.Code == http.StatusRequestEntityTooLarge {
-		t.Fatalf("exactly %d byte body was rejected as too large", limit)
-	}
-
-	overLimit := append(append([]byte(nil), atLimit...), 'x')
-	requireStatus(t, postAPI(t, h.untrusted, firstToken, api.MethodStatus, overLimit), http.StatusRequestEntityTooLarge)
-}
-
-func TestHandlerMapsStoreRefusalsToConflictWithTheirStableCode(t *testing.T) {
-	h := newAPIHarness(t, nil)
-
-	rec := postAPI(t, h.untrusted, firstToken, api.MethodTasksGet, []byte(`{"number":999}`))
-	requireStatus(t, rec, http.StatusConflict)
-	var refusal model.Refusal
-	if err := json.Unmarshal(rec.Body.Bytes(), &refusal); err != nil {
-		t.Fatalf("decode refusal: %v", err)
-	}
-	if refusal.Code != model.CodeUnknownTask {
-		t.Fatalf("refusal code = %q, want %q", refusal.Code, model.CodeUnknownTask)
-	}
-}
-
-func TestHandlerMapsBadInputStoreRefusalsToConflictWithTheirStableCode(t *testing.T) {
-	h := newAPIHarness(t, nil)
-
-	rec := postAPI(t, h.untrusted, firstToken, api.MethodTasksSet, []byte(`{
-		"actor": {},
-		"number": 1,
-		"patch": {"status": "not-a-status"}
-	}`))
-	requireStatus(t, rec, http.StatusConflict)
-
-	var refusal model.Refusal
-	if err := json.Unmarshal(rec.Body.Bytes(), &refusal); err != nil {
-		t.Fatalf("decode refusal: %v", err)
-	}
-	if refusal.Code != model.CodeBadInput {
-		t.Fatalf("refusal code = %q, want %q", refusal.Code, model.CodeBadInput)
-	}
-}
-
-func TestTrustedHandlerMapsBackupFailuresToTheirHTTPClasses(t *testing.T) {
-	withoutBackup := newAPIHarness(t, nil)
-	refusal := postAPI(t, withoutBackup.trusted, "", api.MethodBackupRun, []byte(`{}`))
-	requireStatus(t, refusal, http.StatusConflict)
-
-	var body model.Refusal
-	if err := json.Unmarshal(refusal.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode refusal: %v", err)
-	}
-	if body.Code != model.CodeBackupOff {
-		t.Fatalf("refusal code = %q, want %q", body.Code, model.CodeBackupOff)
-	}
-
-	withFailure := newAPIHarness(t, func(context.Context) (backup.Result, error) {
+	withFailure := newServer(t, func(context.Context) (backup.Result, error) {
 		return backup.Result{}, errors.New("backup failed")
 	})
-	requireStatus(t, postAPI(t, withFailure.trusted, "", api.MethodBackupRun, []byte(`{}`)), http.StatusInternalServerError)
+	resp := answer(t, withFailure, api.MethodBackupRun, []byte(`{}`))
+	if resp.Error == nil || resp.Error.BadRequest {
+		t.Fatalf("failed backup = %+v, want an error a retry may clear", resp)
+	}
 }
 
-func TestHandlerRejectsAppendRequestsWhoseSetFieldDoesNotMatchKind(t *testing.T) {
-	h := newAPIHarness(t, nil)
+func TestServerRejectsAppendRequestsWhoseSetFieldDoesNotMatchKind(t *testing.T) {
+	srv := newServer(t, nil)
 	note := &store.NoteInput{NoteData: model.NoteData{Text: "note"}}
 	decision := &store.DecisionInput{DecisionData: model.DecisionData{Text: "decision"}}
 	merged := &model.MergedData{Branch: "topic"}
@@ -324,14 +190,14 @@ func TestHandlerRejectsAppendRequestsWhoseSetFieldDoesNotMatchKind(t *testing.T)
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			rec := postAPI(t, h.untrusted, firstToken, api.MethodEventsAppend, mustJSON(t, tc.req))
-			requireStatus(t, rec, http.StatusBadRequest)
+			resp := answer(t, srv, api.MethodEventsAppend, mustJSON(t, tc.req))
+			requireBadRequest(t, resp)
 		})
 	}
 }
 
-func TestHandlerAppendsEachAllowedKindWithOnlyItsMatchingField(t *testing.T) {
-	h := newAPIHarness(t, nil)
+func TestServerAppendsEachAllowedKindWithOnlyItsMatchingField(t *testing.T) {
+	srv := newServer(t, nil)
 
 	cases := []struct {
 		name string
@@ -356,24 +222,32 @@ func TestHandlerAppendsEachAllowedKindWithOnlyItsMatchingField(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			rec := postAPI(t, h.untrusted, firstToken, api.MethodEventsAppend, mustJSON(t, tc.req))
-			requireStatus(t, rec, http.StatusOK)
+			resp := answer(t, srv, api.MethodEventsAppend, mustJSON(t, tc.req))
+			requireResult(t, resp)
 		})
 	}
 }
 
-func TestHandlerDerivesEventWhoFromActorSessionAndIgnoresJSONWho(t *testing.T) {
-	h := newAPIHarness(t, nil)
-	body := []byte(`{
+// who is never the caller's to say: a request that names it is refused whole, and the event's who comes from the
+// actor's session.
+func TestServerDerivesEventWhoFromActorSessionAndRefusesJSONWho(t *testing.T) {
+	srv := newServer(t, nil)
+	claimed := answer(t, srv, api.MethodEventsAppend, []byte(`{
 		"actor":{"session":"agent-session","who":"user"},
 		"kind":"note",
 		"note":{"text":"the actor is an agent"}
-	}`)
-
-	rec := postAPI(t, h.untrusted, firstToken, api.MethodEventsAppend, body)
-	requireStatus(t, rec, http.StatusOK)
+	}`))
+	if claimed.Error == nil || !claimed.Error.BadRequest || !strings.Contains(claimed.Error.Message, `unknown field "who"`) {
+		t.Fatalf("a request naming who = %+v, want a bad request naming the field", claimed)
+	}
+	resp := answer(t, srv, api.MethodEventsAppend, []byte(`{
+		"actor":{"session":"agent-session"},
+		"kind":"note",
+		"note":{"text":"the actor is an agent"}
+	}`))
+	requireResult(t, resp)
 	var event model.Event
-	if err := json.Unmarshal(rec.Body.Bytes(), &event); err != nil {
+	if err := json.Unmarshal(resp.Result, &event); err != nil {
 		t.Fatalf("decode event: %v", err)
 	}
 	if event.Who != model.WhoAgent {

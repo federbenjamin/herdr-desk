@@ -7,31 +7,18 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strings"
 
+	"github.com/federbenjamin/herdr-desk/internal/herdr"
 	"github.com/federbenjamin/herdr-desk/internal/model"
 )
 
-// herdrID is what a workspace or pane id must look like before it reaches herdr's argv.
-var herdrID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9:_.-]*$`)
-
 const viewerPlugin = "herdr-file-viewer"
 
-// focusArgvs are the commands that focus a run's pane. herdr focuses by id only a pane a plugin owns, and a run's
-// pane is an agent's, so zooming it on and off is what focuses it.
-func focusArgvs(herdr string, r model.Run) ([][]string, error) {
-	for _, id := range []string{r.Workspace, r.Pane} {
-		if !herdrID.MatchString(id) {
-			return nil, fmt.Errorf("the run's workspace or pane id %q is not one herdr gives", id)
-		}
-	}
-	return [][]string{
-		{herdr, "workspace", "focus", r.Workspace},
-		{herdr, "pane", "zoom", r.Pane, "--on"},
-		{herdr, "pane", "zoom", r.Pane, "--off"},
-	}, nil
+// focusArgvs are the commands that focus a run's pane, built by herdr.FocusArgv.
+func focusArgvs(bin string, r model.Run) ([][]string, error) {
+	return herdr.FocusArgv(bin, r.Workspace, r.Pane)
 }
 
 func refURL(ref string) (string, bool) {

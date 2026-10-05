@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
-# H1: a task added on the home shows on a client in one call.
+# H3: a task added on a client shows on the home, and one added on the home shows on the client.
 # shellcheck source=scripts/e2e/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 build
-PORT=$(free_port)
-home_with_listen home "$PORT"
+home_up home
 
 run 0 on home herdr-desk add -t "first task" --desk
 [ "$OUT" = "T1" ] || fail "add printed '$OUT', want T1"
 
-make_client cli home "$PORT"
+make_client cli home
 run 0 on cli herdr-desk list --json
 jq -e '.offline == false and (.tasks | length) == 1 and .tasks[0].number == 1
   and .tasks[0].title == "first task" and .tasks[0].status == "open"' <<<"$OUT" >/dev/null ||

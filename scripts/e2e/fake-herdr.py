@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """A stand-in for herdr, for tests. Standard library only.
 
-State lives under $FAKE_HERDR_DIR: state.json, one <pane>.log per pane, notifications.log, and calls.log, one
-line per call: the time it began and its arguments.
+State lives under $FAKE_HERDR_DIR: state.json (each pane's tokens from report-metadata included), one <pane>.log per
+pane, notifications.log, and calls.log, one line per call: the time it began and its arguments.
 FAKE_HERDR_FAIL=<subcommand words joined by ->, for example pane-run, makes that subcommand exit 1.
+FAKE_HERDR_EVENTS=1 runs `herdr-desk hook herdr-event` in the background, as herdr runs a plugin's [[events]] hook,
+for each event the repo's herdr-plugin.toml subscribes, as herdr 0.9.1 sends them: pane.agent_status_changed after a
+report-agent that changes a pane's status, pane.closed after a pane close, and pane.exited when a pane is reaped
+because its command ended by itself.
 DESK_HERDR names it, by its absolute path.
 """
 import argparse
@@ -14,6 +18,7 @@ import signal
 import subprocess
 import sys
 import time
+import tomllib
 
 def fail(msg):
     print("fake-herdr: " + msg, file=sys.stderr)
@@ -69,12 +74,51 @@ def group_procs(pgid):
     return procs
 
 
+EVENTS = []
+
+
+def event(name, data):
+    """Queue a plugin event as herdr 0.9.1 sends it; main fires the queue once the state is saved."""
+    EVENTS.append((name, {"event": name.replace(".", "_"), "data": dict(data, type=name.replace(".", "_"))}))
+
+
+def closed(pane, p, name="pane.closed"):
+    event(name, {"pane_id": pane, "workspace_id": p["workspace"]})
+
+
+def subscribed():
+    """The events the repo's plugin manifest runs a command on."""
+    manifest = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "herdr-plugin.toml")
+    with open(manifest, "rb") as f:
+        return {e["on"] for e in tomllib.load(f).get("events", [])}
+
+
+def fire():
+    if os.environ.get("FAKE_HERDR_EVENTS") != "1" or not EVENTS:
+        return
+    on = subscribed()
+    for name, payload in EVENTS:
+        if name not in on:
+            continue
+        env = dict(os.environ, HERDR_PLUGIN_EVENT=name, HERDR_PLUGIN_EVENT_JSON=json.dumps(payload))
+        env.pop("FAKE_HERDR_FAIL", None)
+        subprocess.Popen(
+            ["herdr-desk", "hook", "herdr-event"],
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+
+
 def reap(st):
     """A pane whose command has run and exited is gone."""
     for pid in list(st["panes"]):
         p = st["panes"][pid]
         if p.get("pgid") and not group_procs(p["pgid"]):
             del st["panes"][pid]
+            closed(pid, p, "pane.exited")
 
 
 def pane_or_fail(st, pane):
@@ -146,6 +190,16 @@ def cmd_pane_run(d, st, args):
     emit({"type": "pane_run", "pane_id": pane})
 
 
+def pane_info(pid, p):
+    return {
+        "pane_id": pid,
+        "workspace_id": p["workspace"],
+        "agent_status": p["status"],
+        "agent_session": {"value": p["session"]} if p["session"] else None,
+        "tokens": dict(p.get("tokens", {})),
+    }
+
+
 def cmd_pane_list(d, st, args):
     ap = Parser(prog="herdr pane list")
     ap.add_argument("--workspace", default=None)
@@ -154,15 +208,46 @@ def cmd_pane_list(d, st, args):
     for pid, p in st["panes"].items():
         if a.workspace and p["workspace"] != a.workspace:
             continue
-        panes.append(
-            {
-                "pane_id": pid,
-                "workspace_id": p["workspace"],
-                "agent_status": p["status"],
-                "agent_session": {"value": p["session"]} if p["session"] else None,
-            }
-        )
+        panes.append(pane_info(pid, p))
     emit({"type": "pane_list", "panes": panes})
+
+
+def cmd_pane_get(d, st, args):
+    if len(args) != 1:
+        fail("usage: herdr pane get <pane_id>")
+    pane = args[0]
+    if pane not in st["panes"]:
+        not_found(d, st, "pane_not_found", "pane", pane)
+    print(json.dumps({"id": "cli:pane:get", "result": {"type": "pane_info", "pane": pane_info(pane, st["panes"][pane])}}))
+
+
+def not_found(d, st, code, what, ident):
+    """herdr 0.9.1's refusal: JSON on stderr, exit 1."""
+    print(json.dumps({"error": {"code": code, "message": "%s %s not found" % (what, ident)}}), file=sys.stderr)
+    save(d, st)
+    fire()
+    sys.exit(1)
+
+
+def cmd_workspace_focus(d, st, args):
+    if len(args) != 1:
+        fail("usage: herdr workspace focus <workspace_id>")
+    if args[0] not in st["workspaces"]:
+        not_found(d, st, "workspace_not_found", "workspace", args[0])
+    emit({"type": "ok"})
+
+
+def cmd_pane_zoom(d, st, args):
+    ap = Parser(prog="herdr pane zoom")
+    ap.add_argument("pane")
+    ap.add_argument("--on", action="store_true")
+    ap.add_argument("--off", action="store_true")
+    a = ap.parse_args(args)
+    if a.on == a.off:
+        fail("pane zoom wants one of --on or --off")
+    if a.pane not in st["panes"]:
+        not_found(d, st, "pane_not_found", "pane", a.pane)
+    emit({"type": "ok"})
 
 
 def cmd_pane_process_info(d, st, args):
@@ -198,6 +283,7 @@ def cmd_pane_close(d, st, args):
         except ProcessLookupError:
             pass
     del st["panes"][pane]
+    closed(pane, p)
     emit({"type": "ok"})
 
 
@@ -213,9 +299,15 @@ def cmd_report_agent(d, st, args):
     ap.add_argument("--agent-session-path", default=None)
     a = ap.parse_args(args)
     p = pane_or_fail(st, a.pane)
+    changed = p["status"] != a.state
     p["status"] = a.state
     if a.agent_session_id:
         p["session"] = a.agent_session_id
+    if changed:
+        event(
+            "pane.agent_status_changed",
+            {"pane_id": a.pane, "workspace_id": p["workspace"], "agent_status": a.state, "agent": a.agent},
+        )
     emit({"type": "ok"})
 
 
@@ -235,6 +327,30 @@ def cmd_report_agent_session(d, st, args):
     emit({"type": "ok"})
 
 
+def cmd_report_metadata(d, st, args):
+    # herdr 0.9.1 reads the pane id only as the first argument.
+    if not args or args[0].startswith("-"):
+        fail("usage: herdr pane report-metadata <PANE_ID> --source <ID> [--token NAME=VALUE]... [--clear-token NAME]...")
+    ap = Parser(prog="herdr pane report-metadata")
+    ap.add_argument("--source", required=True)
+    ap.add_argument("--token", action="append", default=[])
+    ap.add_argument("--clear-token", action="append", default=[])
+    ap.add_argument("--seq", default=None)
+    a = ap.parse_args(args[1:])
+    pane = args[0]
+    if pane not in st["panes"]:
+        not_found(d, st, "pane_not_found", "pane", pane)
+    tokens = st["panes"][pane].setdefault("tokens", {})
+    for t in a.token:
+        name, sep, value = t.partition("=")
+        if not sep or not name:
+            fail("--token wants NAME=VALUE: " + t)
+        tokens[name] = value
+    for name in a.clear_token:
+        tokens.pop(name, None)
+    emit({"type": "ok"})
+
+
 def cmd_notification_show(d, st, args):
     ap = Parser(prog="herdr notification show")
     ap.add_argument("title")
@@ -250,12 +366,16 @@ def cmd_notification_show(d, st, args):
 
 HANDLERS = {
     ("workspace", "create"): cmd_workspace_create,
+    ("workspace", "focus"): cmd_workspace_focus,
+    ("pane", "zoom"): cmd_pane_zoom,
     ("pane", "run"): cmd_pane_run,
     ("pane", "list"): cmd_pane_list,
+    ("pane", "get"): cmd_pane_get,
     ("pane", "process-info"): cmd_pane_process_info,
     ("pane", "close"): cmd_pane_close,
     ("pane", "report-agent"): cmd_report_agent,
     ("pane", "report-agent-session"): cmd_report_agent_session,
+    ("pane", "report-metadata"): cmd_report_metadata,
     ("notification", "show"): cmd_notification_show,
 }
 
@@ -276,6 +396,7 @@ def main(argv):
         reap(st)
         HANDLERS[key](d, st, argv[2:])
         save(d, st)
+    fire()
 
 
 if __name__ == "__main__":

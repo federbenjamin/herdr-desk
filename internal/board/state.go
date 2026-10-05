@@ -76,6 +76,8 @@ type (
 	}
 	// KillRun kills the task's live run.
 	KillRun struct{ Task int }
+	// StartRun starts a run of the task, as run start does with no flags.
+	StartRun struct{ Task int }
 	// PauseRunner pauses or resumes the runner.
 	PauseRunner struct{ Paused bool }
 	// FocusRun focuses the run's pane.
@@ -96,6 +98,7 @@ func (AddTask) effect()     {}
 func (StepTask) effect()    {}
 func (Rearm) effect()       {}
 func (KillRun) effect()     {}
+func (StartRun) effect()    {}
 func (PauseRunner) effect() {}
 func (FocusRun) effect()    {}
 func (OpenRef) effect()     {}
@@ -154,7 +157,7 @@ type State struct {
 	add       CaptureState
 	editing   bool
 	notes     textarea.Model
-	notesFrom string // the task's notes when the editor opened, or when ctrl+s last warned that they changed
+	notesFrom string // the notes a save says it read: the task's when the editor opened, or the home's after a stale refusal
 	notesTop  int    // the editor's first drawn line
 	picking   bool
 	pickSel   int
@@ -269,6 +272,7 @@ func answers(m Failed, match func(Effect) bool) bool {
 func (s State) failed(m Failed) (State, []Effect) {
 	text := errText(m.Err)
 	shown := false
+	var eff []Effect
 	var named effectErr
 	switch {
 	case s.adding && s.add.busy && answers(m, func(e Effect) bool { _, ok := e.(AddTask); return ok }):
@@ -279,6 +283,26 @@ func (s State) failed(m Failed) (State, []Effect) {
 		var ok bool
 		if s, u, ok = s.typed(named.effect); ok {
 			u.failed = text
+			if r, isRefusal := model.AsRefusal(m.Err); isRefusal && r.Code == model.CodeStale && !u.answer {
+				// The executor read the home's notes as the refusal came back; without them, the notes as last loaded.
+				// Only notes other than the ones the refused save named let the next ctrl+s replace them.
+				refused := u.from
+				u.from = s.loaded(u.task).Notes
+				why := ""
+				var home staleNotes
+				if errors.As(m.Err, &home) {
+					if home.readErr == nil {
+						u.from = home.notes
+					} else {
+						why = " (reading them again failed: " + errText(home.readErr) + ")"
+					}
+				}
+				u.failed = taskID(u.task) + "'s notes changed while you edited: ctrl+s replaces them, esc keeps them"
+				if u.from == refused {
+					u.failed = taskID(u.task) + "'s notes changed while you edited: ctrl+s tries again, esc keeps them" + why
+				}
+				text = u.failed
+			}
 			s.back = append(slices.Clip(s.back), u)
 		}
 	}
@@ -286,9 +310,11 @@ func (s State) failed(m Failed) (State, []Effect) {
 		s.status = text
 	}
 	if s.waiting && answers(m, func(e Effect) bool { _, ok := e.(Refresh); return ok }) {
-		return s.answered()
+		var more []Effect
+		s, more = s.answered()
+		eff = append(eff, more...)
 	}
-	return s, nil
+	return s, eff
 }
 
 // typed is the typed text that the failed write e carried: a notes save still in s.sent, which it drops, or a
@@ -341,8 +367,9 @@ func (s State) held(tasks []model.Task) State {
 
 // giveBack opens the notes editor or the answer prompt again, with its typed text and its error on the status
 // line, when its write failed and no other input has the keys. Text whose write failed while another input was
-// open waits for that input to close. The editor keeps the notes it started from, so a save over notes loaded
-// since still warns.
+// open waits for that input to close. The editor keeps the notes it started from, so a save over notes written
+// since is still refused stale; after a stale refusal it starts from the home's notes the refusal came back with,
+// so the next ctrl+s replaces them, or from the notes as last loaded when the executor could not read them.
 func (s State) giveBack() State {
 	if s.inputOpen() || len(s.back) == 0 {
 		return s
@@ -573,7 +600,7 @@ func (s State) boardKey(k string) (State, []Effect) {
 		return s, []Effect{Quit{}}
 	case "P":
 		return s.act(k, model.Task{})
-	case "n", "s", "b", "r", "x", "a", "f", "k":
+	case "n", "s", "b", "r", "x", "a", "f", "k", "S":
 		t, ok := s.selected()
 		if !ok {
 			if k != "f" {
@@ -625,7 +652,7 @@ func (s State) act(k string, t model.Task) (State, []Effect) {
 	}
 	status := func(st model.Status) model.Patch { return model.Patch{Status: &st} }
 	switch k {
-	case "n", "s", "b", "r", "x", "a", "k", "P":
+	case "n", "s", "b", "r", "x", "a", "k", "P", "S":
 		if s.refuse(k) {
 			return s, nil
 		}
@@ -668,6 +695,8 @@ func (s State) act(k string, t model.Task) (State, []Effect) {
 			return s, []Effect{FocusRun{Run: r}}
 		}
 		return s, nil
+	case "S":
+		return s, []Effect{StartRun{Task: t.Number}}
 	case "k":
 		if _, ok := s.liveRun(t.Number); !ok {
 			s.status = taskID(t.Number) + " has no live run"

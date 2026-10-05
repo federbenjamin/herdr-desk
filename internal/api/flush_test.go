@@ -3,9 +3,6 @@ package api_test
 import (
 	"context"
 	"encoding/json"
-	"io"
-	"net"
-	"net/http"
 	"os"
 	"strings"
 	"sync"
@@ -18,21 +15,33 @@ import (
 	"github.com/federbenjamin/herdr-desk/internal/testutil"
 )
 
-// fakeHome serves h on a machine's socket, as a home's daemon does.
-func fakeHome(t *testing.T, h http.HandlerFunc) *testutil.Machine {
+// fakeTransport answers each request with what answer returns for it.
+type fakeTransport func(method string, params []byte) api.RPCResponse
+
+func (f fakeTransport) RoundTrip(_ context.Context, method string, params []byte) ([]byte, error) {
+	return json.Marshal(f(method, params))
+}
+
+func (fakeTransport) Close() error { return nil }
+
+// fakeClient is a client machine whose home answers through answer.
+func fakeClient(t *testing.T, answer fakeTransport, o api.ClientOptions) (*testutil.Machine, *api.Client) {
 	t.Helper()
 	m := testutil.NewMachine(t)
 	if err := os.MkdirAll(m.Paths.StateDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	ln, err := net.Listen("unix", m.Paths.Socket())
+	o.Paths, o.Config, o.Transport = m.Paths, config.Default(), answer
+	return m, api.NewClient(o)
+}
+
+func result(t *testing.T, v any) api.RPCResponse {
+	t.Helper()
+	b, err := json.Marshal(v)
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := &http.Server{Handler: h}
-	go func() { _ = srv.Serve(ln) }()
-	t.Cleanup(func() { _ = srv.Close() })
-	return m
+	return api.RPCResponse{Result: b}
 }
 
 func queue(t *testing.T, p config.Paths, texts ...string) {
@@ -51,11 +60,11 @@ func queue(t *testing.T, p config.Paths, texts ...string) {
 	}
 }
 
-func appendText(t *testing.T, body []byte) string {
+func appendText(t *testing.T, params []byte) string {
 	t.Helper()
 	var r api.AppendRequest
-	if err := json.Unmarshal(body, &r); err != nil || r.Note == nil {
-		t.Fatalf("append body %q: %v", body, err)
+	if err := json.Unmarshal(params, &r); err != nil || r.Note == nil {
+		t.Fatalf("append params %q: %v", params, err)
 	}
 	return r.Note.Text
 }
@@ -63,30 +72,24 @@ func appendText(t *testing.T, body []byte) string {
 func TestFlushKeepsWhatARetryMayDeliverAndDropsWhatTheHomeNeverAccepts(t *testing.T) {
 	for _, test := range []struct {
 		name   string
-		status int
-		body   string
+		answer api.RPCResponse
 		keep   bool
 		code   string
 	}{
-		{"scan failed", http.StatusConflict, `{"code":"scan-failed","message":"the scanner did not start"}`, true, ""},
-		{"server error", http.StatusInternalServerError, `{"message":"an internal error"}`, true, ""},
-		{"secret", http.StatusConflict, `{"code":"secret-detected","message":"aws-access-key"}`, false, model.CodeSecretDetected},
-		{"bad request", http.StatusBadRequest, `{"message":"does not parse"}`, false, model.CodeBadInput},
-		{"too large", http.StatusRequestEntityTooLarge, `{"message":"over 1 MiB"}`, false, model.CodeBadInput},
+		{"scan failed", api.RPCResponse{Refusal: &model.Refusal{Code: model.CodeScanFailed, Msg: "the scanner did not start"}}, true, ""},
+		{"home error", api.RPCResponse{Error: &api.RPCError{Message: "the store is locked"}}, true, ""},
+		{"secret", api.RPCResponse{Refusal: &model.Refusal{Code: model.CodeSecretDetected, Msg: "aws-access-key"}}, false, model.CodeSecretDetected},
+		{"bad request", api.RPCResponse{Error: &api.RPCError{BadRequest: true, Message: "over 1 MiB"}}, false, model.CodeBadInput},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			m := fakeHome(t, func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/v1/"+api.MethodEventsAppend {
-					w.WriteHeader(test.status)
-					_, _ = io.WriteString(w, test.body)
-					return
-				}
-				_, _ = io.WriteString(w, `{"tasks":[]}`)
-			})
-			queue(t, m.Paths, "the queued note")
 			var codes []string
-			c := api.NewClient(api.ClientOptions{Paths: m.Paths, Config: config.Default(),
-				Refused: func(_ model.Kind, r *model.Refusal) { codes = append(codes, r.Code) }})
+			m, c := fakeClient(t, func(method string, _ []byte) api.RPCResponse {
+				if method == api.MethodEventsAppend {
+					return test.answer
+				}
+				return result(t, api.TaskList{Tasks: []model.Task{}})
+			}, api.ClientOptions{Refused: func(_ model.Kind, r *model.Refusal) { codes = append(codes, r.Code) }})
+			queue(t, m.Paths, "the queued note")
 
 			_, err := c.ListTasks(context.Background(), store.Filter{All: true})
 			left, rerr := os.ReadFile(m.Paths.Outbox())
@@ -109,62 +112,49 @@ func TestFlushKeepsWhatARetryMayDeliverAndDropsWhatTheHomeNeverAccepts(t *testin
 	}
 }
 
-func TestFlushReportsAnOversizedEntryAndSendsTheOnesBehindIt(t *testing.T) {
+func TestFlushReportsABadRequestEntryAndSendsTheOnesBehindIt(t *testing.T) {
 	var mu sync.Mutex
 	var delivered []string
-	m := fakeHome(t, func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		if r.URL.Path != "/v1/"+api.MethodEventsAppend {
-			_, _ = io.WriteString(w, `{"tasks":[]}`)
-			return
-		}
-		if len(body) > 1<<20 {
-			w.WriteHeader(http.StatusRequestEntityTooLarge)
-			_, _ = io.WriteString(w, `{"message":"the body is over 1048576 bytes"}`)
-			return
+	var codes []string
+	m, c := fakeClient(t, func(_ string, params []byte) api.RPCResponse {
+		text := appendText(t, params)
+		if text == "too big" {
+			return api.RPCResponse{Error: &api.RPCError{BadRequest: true, Message: "the request is over 1048576 bytes"}}
 		}
 		mu.Lock()
-		delivered = append(delivered, appendText(t, body))
+		delivered = append(delivered, text)
 		mu.Unlock()
-		_, _ = io.WriteString(w, `{"id":1}`)
-	})
-	queue(t, m.Paths, strings.Repeat("x", 1<<20+10), "behind the big one")
-	var codes []string
-	c := api.NewClient(api.ClientOptions{Paths: m.Paths, Config: config.Default(),
-		Refused: func(_ model.Kind, r *model.Refusal) { codes = append(codes, r.Code) }})
+		return result(t, model.Event{ID: 1})
+	}, api.ClientOptions{Refused: func(_ model.Kind, r *model.Refusal) { codes = append(codes, r.Code) }})
+	queue(t, m.Paths, "too big", "behind the big one")
 
 	sent, err := c.Flush(context.Background())
 	if err != nil || sent != 1 {
 		t.Fatalf("Flush() = (%d, %v), want 1 sent", sent, err)
 	}
 	if len(codes) != 1 || codes[0] != model.CodeBadInput {
-		t.Fatalf("refused = %v, want the oversized entry reported as bad-input", codes)
+		t.Fatalf("refused = %v, want the bad-request entry reported as bad-input", codes)
 	}
 	if len(delivered) != 1 || delivered[0] != "behind the big one" {
-		t.Fatalf("delivered = %v, want the entry behind the oversized one", delivered)
+		t.Fatalf("delivered = %v, want the entry behind the bad one", delivered)
 	}
 }
 
 func TestFlushLeavesTheOutboxWholeWhenTheRewriteFails(t *testing.T) {
-	m := fakeHome(t, func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		if appendText(t, body) == "refused for good" {
-			w.WriteHeader(http.StatusConflict)
-			_, _ = io.WriteString(w, `{"code":"secret-detected","message":"aws-access-key"}`)
-			return
+	var m *testutil.Machine
+	m, c := fakeClient(t, func(_ string, params []byte) api.RPCResponse {
+		if appendText(t, params) == "refused for good" {
+			return api.RPCResponse{Refusal: &model.Refusal{Code: model.CodeSecretDetected, Msg: "aws-access-key"}}
 		}
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = io.WriteString(w, `{"message":"try later"}`)
-	})
+		return api.RPCResponse{Error: &api.RPCError{Message: "try later"}}
+	}, api.ClientOptions{Refused: func(model.Kind, *model.Refusal) {
+		// The state dir stops taking new files, so the rewrite that drops the refused entry fails.
+		if err := os.Chmod(m.Paths.StateDir, 0o500); err != nil {
+			t.Error(err)
+		}
+	}})
 	queue(t, m.Paths, "refused for good", "not sent yet")
 	t.Cleanup(func() { _ = os.Chmod(m.Paths.StateDir, 0o700) })
-	c := api.NewClient(api.ClientOptions{Paths: m.Paths, Config: config.Default(),
-		Refused: func(model.Kind, *model.Refusal) {
-			// The state dir stops taking new files, so the rewrite that drops the refused entry fails.
-			if err := os.Chmod(m.Paths.StateDir, 0o500); err != nil {
-				t.Error(err)
-			}
-		}})
 
 	if _, err := c.Flush(context.Background()); err == nil {
 		t.Fatal("Flush() error = nil, want the failed rewrite reported")

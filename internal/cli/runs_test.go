@@ -1,44 +1,45 @@
 package cli_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/federbenjamin/herdr-desk/internal/api"
 	"github.com/federbenjamin/herdr-desk/internal/config"
 	"github.com/federbenjamin/herdr-desk/internal/model"
 	"github.com/federbenjamin/herdr-desk/internal/testutil"
+	"github.com/federbenjamin/herdr-desk/internal/ticker"
 )
 
-func runnerHome(t *testing.T, listen bool, worker []string) (*testutil.Home, string) {
+// runnerHome is a home with the runner on and a ticker that ticks every 50 ms.
+func runnerHome(t *testing.T, worker []string) (*testutil.Home, string) {
 	t.Helper()
 	root := t.TempDir()
-	bin := t.TempDir()
-	router := filepath.Join(bin, "router")
-	if err := os.WriteFile(router, []byte("#!/bin/sh\nprintf '%s\\n' '{\"root\":\""+root+"\",\"isolation\":\"in-place\",\"reason\":\"test\"}'\n"), 0o700); err != nil {
-		t.Fatalf("write router: %v", err)
-	}
 	testutil.FakeHerdr(t)
 	cfg := config.Default()
 	cfg.Runner.Enabled = true
 	cfg.Runner.Cap = 2
-	cfg.Runner.PollSeconds = 1
 	cfg.Roots = []config.Root{{Path: root, About: "test root", Isolation: "in-place"}}
-	cfg.Agent.Router = []string{router}
 	cfg.Agent.Models = []string{"test-model"}
 	cfg.Agent.Worker = worker
-	return testutil.StartHome(t, testutil.HomeOptions{Config: cfg, Listen: listen}), root
+	home := testutil.StartHome(t, testutil.HomeOptions{Config: cfg})
+	tk, err := ticker.Start(context.Background(), ticker.Options{Paths: home.Paths, Every: 50 * time.Millisecond, Logf: t.Logf})
+	if err != nil {
+		t.Fatalf("start the ticker: %v", err)
+	}
+	t.Cleanup(func() { tk.Close() })
+	return home, root
 }
 
 func startLiveRun(t *testing.T, home *testutil.Home, root, title string) (int, model.Run) {
 	t.Helper()
 	task := addTask(t, home, title, "--thread", "agent")
-	requireSuccess(t, runHomeDesk(t, home, "set", fmt.Sprintf("T%d", task), "ready", "--root", root, "--isolation", "in-place", "--model", "test-model"))
+	requireSuccess(t, runHomeDesk(t, home, "run", "start", fmt.Sprintf("T%d", task), "--root", root, "--isolation", "in-place", "--model", "test-model"))
 	deadline := time.NewTimer(2 * time.Second)
 	defer deadline.Stop()
 	tick := time.NewTicker(10 * time.Millisecond)
@@ -83,7 +84,7 @@ func TestRunsPrintsEmptyTextAndJSONArray(t *testing.T) {
 }
 
 func TestRunsPrintsLiveRunsAndAllIncludesKilledRuns(t *testing.T) {
-	home, root := runnerHome(t, false, []string{"worker"})
+	home, root := runnerHome(t, []string{"worker"})
 	task, run := startLiveRun(t, home, root, "live run")
 
 	result := runHomeDesk(t, home, "runs")
@@ -119,14 +120,14 @@ func TestRunsKillReportsEveryRefusalAndRejectsBadTaskIDs(t *testing.T) {
 		t.Fatalf("bad task id exit = %d, want 2; stderr=%q", badID.exit, badID.stderr)
 	}
 
-	runner, root := runnerHome(t, false, []string{"worker"})
+	runner, root := runnerHome(t, []string{"worker"})
 	task, _ := startLiveRun(t, runner, root, "agent cannot kill")
-	denied := runDeskWithEnv(t, runner.Machine, t.TempDir(), []string{"runs", "kill", fmt.Sprintf("T%d", task)}, "", map[string]string{"DESK_SESSION": "agent-session"}, nil)
+	denied := runDeskWithEnv(t, runner.Machine, t.TempDir(), []string{"runs", "kill", fmt.Sprintf("T%d", task)}, "", map[string]string{"DESK_SESSION": "agent-session"})
 	requireRefusal(t, denied, "runs kill", model.CodeNotAllowed, 1)
 }
 
 func TestRunnerStatusAndControlShowLiveCapacityAndRejectAgents(t *testing.T) {
-	home, root := runnerHome(t, false, []string{"worker"})
+	home, root := runnerHome(t, []string{"worker"})
 	_, _ = startLiveRun(t, home, root, "runner status")
 
 	status := runHomeDesk(t, home, "runner")
@@ -150,22 +151,43 @@ func TestRunnerStatusAndControlShowLiveCapacityAndRejectAgents(t *testing.T) {
 		t.Fatalf("runner resume = %q, want on state and live capacity", resumed.stdout)
 	}
 	for _, action := range []string{"pause", "resume"} {
-		denied := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"runner", action}, "", map[string]string{"DESK_SESSION": "agent-session"}, nil)
+		denied := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"runner", action}, "", map[string]string{"DESK_SESSION": "agent-session"})
 		requireRefusal(t, denied, "runner "+action, model.CodeNotAllowed, 1)
 	}
 }
 
+// With no ticker, max_run_minutes and the checks of live runs wait; runner status and context must say so rather
+// than read as all well.
+func TestRunnerStatusAndContextSayWhenNoTickerRuns(t *testing.T) {
+	home, _ := startOnlyHome(t, nil)
+	status := runHomeDesk(t, home, "runner", "status")
+	requireSuccess(t, status)
+	if status.stdout != "runner on · 0/2 live · "+api.NoTickerText+"\n" {
+		t.Fatalf("runner status with no ticker = %q, want the live count then that no ticker runs", status.stdout)
+	}
+	ctx := runHomeDesk(t, home, "context")
+	requireSuccess(t, ctx)
+	if !strings.Contains(ctx.stdout, "\n"+api.NoTickerText+"\n") {
+		t.Fatalf("context with no ticker = %q, want the no-ticker line", ctx.stdout)
+	}
+	asJSON := runHomeDesk(t, home, "context", "--json")
+	requireSuccess(t, asJSON)
+	if !strings.Contains(asJSON.stdout, `"no_ticker":true`) {
+		t.Fatalf("context --json with no ticker = %q, want no_ticker true", asJSON.stdout)
+	}
+}
+
 func TestRunsKillAndRunnerPauseReachTheHomeFromAClientMachine(t *testing.T) {
-	home, root := runnerHome(t, true, []string{"worker"})
+	home, root := runnerHome(t, []string{"worker"})
 	task, _ := startLiveRun(t, home, root, "client controls run")
 	client := testutil.NewClientMachine(t, home)
 
-	paused := runDeskWithEnv(t, client, t.TempDir(), []string{"runner", "pause"}, "", nil, nil)
+	paused := runDeskWithEnv(t, client, t.TempDir(), []string{"runner", "pause"}, "", nil)
 	requireSuccess(t, paused)
 	if paused.stdout != "runner paused · 1/2 live\n" {
 		t.Fatalf("client runner pause = %q, want paused state and live capacity", paused.stdout)
 	}
-	killed := runDeskWithEnv(t, client, t.TempDir(), []string{"runs", "kill", fmt.Sprintf("T%d", task)}, "", nil, nil)
+	killed := runDeskWithEnv(t, client, t.TempDir(), []string{"runs", "kill", fmt.Sprintf("T%d", task)}, "", nil)
 	requireSuccess(t, killed)
 	if killed.stdout != fmt.Sprintf("T%d blocked\n", task) {
 		t.Fatalf("client runs kill = %q, want blocked task", killed.stdout)
@@ -173,7 +195,7 @@ func TestRunsKillAndRunnerPauseReachTheHomeFromAClientMachine(t *testing.T) {
 }
 
 func TestRunsOnlyListsLiveRunsWithoutAll(t *testing.T) {
-	home, root := runnerHome(t, false, []string{"worker"})
+	home, root := runnerHome(t, []string{"worker"})
 	task, _ := startLiveRun(t, home, root, "hide ended runs")
 	requireSuccess(t, runHomeDesk(t, home, "runs", "kill", fmt.Sprintf("T%d", task)))
 	result := runHomeDesk(t, home, "runs")

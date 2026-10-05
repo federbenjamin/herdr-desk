@@ -3,10 +3,10 @@ package cli_test
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
-	"net/http"
-	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -16,71 +16,93 @@ import (
 	"github.com/federbenjamin/herdr-desk/internal/testutil"
 )
 
-// clientOf returns a client machine of a home served by h on 127.0.0.1.
-func clientOf(t *testing.T, h http.HandlerFunc) *testutil.Machine {
+// clientOf returns a client machine whose [client] command answers each method with the RPCResponse answers names,
+// and the file it logs each method to, one line per request.
+func clientOf(t *testing.T, answers map[string]api.RPCResponse) (*testutil.Machine, string) {
 	t.Helper()
-	srv := httptest.NewServer(h)
-	t.Cleanup(srv.Close)
 	m := testutil.NewMachine(t)
+	dir := t.TempDir()
+	calls := filepath.Join(dir, "calls")
+	var script strings.Builder
+	script.WriteString("req=$(cat)\ncase \"$req\" in\n")
+	for method, resp := range answers {
+		b, err := json.Marshal(resp)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fmt.Fprintf(&script, "*'\"method\":\"%s\"'*) echo %s >> '%s'; echo '%s' ;;\n", method, method, calls, b)
+	}
+	script.WriteString("*) exit 9 ;;\nesac\n")
+	path := filepath.Join(dir, "home.sh")
+	if err := os.WriteFile(path, []byte(script.String()), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	cfg := config.Default()
-	cfg.Client.Home = strings.TrimPrefix(srv.URL, "http://")
+	cfg.Client.Home = "home"
+	cfg.Client.Command = []string{"/bin/sh", path}
 	if err := cfg.Save(m.Paths.ConfigFile()); err != nil {
 		t.Fatal(err)
 	}
-	if err := config.WriteToken(m.Paths, "test-token"); err != nil {
+	return m, calls
+}
+
+// callCount is how many requests of method the clientOf home answered.
+func callCount(t *testing.T, calls, method string) int {
+	t.Helper()
+	b, err := os.ReadFile(calls)
+	if errors.Is(err, fs.ErrNotExist) {
+		return 0
+	}
+	if err != nil {
 		t.Fatal(err)
 	}
-	return m
+	n := 0
+	for _, line := range strings.Split(string(b), "\n") {
+		if line == method {
+			n++
+		}
+	}
+	return n
 }
 
 func TestBoardJSONNeedsOnlyTheTaskListAndTheTextBoardAsksStatus(t *testing.T) {
-	statusCalls := 0
-	machine := clientOf(t, func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/" + api.MethodTasksList:
-			_ = json.NewEncoder(w).Encode(api.TaskList{Tasks: []model.Task{{Number: 1, Title: "listed", Status: model.StatusOpen}}})
-		case "/v1/" + api.MethodStatus:
-			statusCalls++
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte(`{"message":"status is down"}`))
-		default:
-			http.NotFound(w, r)
-		}
+	list, err := json.Marshal(api.TaskList{Tasks: []model.Task{{Number: 1, Title: "listed", Status: model.StatusOpen}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	machine, calls := clientOf(t, map[string]api.RPCResponse{
+		api.MethodTasksList: {Result: list},
+		api.MethodStatus:    {Error: &api.RPCError{Message: "status is down"}},
 	})
 
-	result := runDeskWithEnv(t, machine, t.TempDir(), []string{"--json"}, "", nil, nil)
+	result := runDeskWithEnv(t, machine, t.TempDir(), []string{"--json"}, "", nil)
 	var tl api.TaskList
 	if err := json.Unmarshal([]byte(result.stdout), &tl); err != nil || result.exit != 0 {
 		t.Fatalf("herdr-desk --json = (%d, %q, %q): %v", result.exit, result.stdout, result.stderr, err)
 	}
-	if len(tl.Tasks) != 1 || tl.Tasks[0].Title != "listed" || statusCalls != 0 {
-		t.Fatalf("herdr-desk --json = %+v with %d status calls, want the list and no status call", tl, statusCalls)
+	if n := callCount(t, calls, api.MethodStatus); len(tl.Tasks) != 1 || tl.Tasks[0].Title != "listed" || n != 0 {
+		t.Fatalf("herdr-desk --json = %+v with %d status calls, want the list and no status call", tl, n)
 	}
 
-	text := runDeskWithEnv(t, machine, t.TempDir(), nil, "", nil, nil)
-	if text.exit != 3 || statusCalls != 1 {
-		t.Fatalf("herdr-desk = (%d, %q, %q) with %d status calls, want the failed status to end it", text.exit, text.stdout, text.stderr, statusCalls)
+	text := runDeskWithEnv(t, machine, t.TempDir(), nil, "", nil)
+	if n := callCount(t, calls, api.MethodStatus); text.exit != 3 || n != 1 {
+		t.Fatalf("herdr-desk = (%d, %q, %q) with %d status calls, want the failed status to end it", text.exit, text.stdout, text.stderr, n)
 	}
 }
 
 func TestSetupAndClientAddRefuseBadValuesAsUsageWithoutWriting(t *testing.T) {
 	machine := testutil.NewMachine(t)
-	for _, test := range []struct {
-		args  []string
-		stdin string
-	}{
-		{[]string{"setup", "--profile", "other", "--no-herdr"}, ""},
-		{[]string{"setup", "--listen", "no-port", "--no-herdr"}, ""},
-		{[]string{"client", "add", "no-port"}, "a-token\n"},
+	for _, args := range [][]string{
+		{"setup", "--profile", "other", "--no-herdr"},
+		{"client", "add", "--", "-oProxyCommand=sh"},
+		{"client", "add", "two words"},
 	} {
-		result := runDeskWithEnv(t, machine, t.TempDir(), test.args, test.stdin, nil, nil)
+		result := runDeskWithEnv(t, machine, t.TempDir(), args, "", nil)
 		if result.exit != 2 || !strings.Contains(result.stderr, model.CodeBadInput) {
-			t.Errorf("%v = (%d, %q), want exit 2 with bad-input", test.args, result.exit, result.stderr)
+			t.Errorf("%v = (%d, %q), want exit 2 with bad-input", args, result.exit, result.stderr)
 		}
-		for _, f := range []string{machine.Paths.ConfigFile(), machine.Paths.TokenFile()} {
-			if _, err := os.Stat(f); !errors.Is(err, fs.ErrNotExist) {
-				t.Errorf("%v wrote %s: %v", test.args, f, err)
-			}
+		if _, err := os.Stat(machine.Paths.ConfigFile()); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("%v wrote %s: %v", args, machine.Paths.ConfigFile(), err)
 		}
 	}
 }

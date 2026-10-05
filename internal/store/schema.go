@@ -65,24 +65,51 @@ var migrations = []string{
 		id TEXT PRIMARY KEY,
 		continues TEXT NULL
 	);`,
+	`UPDATE runs SET state = 'starting' WHERE state = 'routing';
+	ALTER TABLE runs ADD COLUMN left_open INTEGER NOT NULL DEFAULT 0;
+	CREATE INDEX runs_pane ON runs(pane);
+	CREATE TABLE coordinator(
+		id INTEGER PRIMARY KEY CHECK (id = 1),
+		session TEXT NOT NULL,
+		workspace TEXT NOT NULL,
+		pane TEXT NOT NULL,
+		cursor INTEGER NOT NULL DEFAULT 0
+	);`,
 }
 
-// migrate applies the migrations the file has not had, in one transaction.
+func schemaVersion(ctx context.Context, q querier) (int, error) {
+	var v int
+	err := q.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&v)
+	return v, err
+}
+
+// migrate applies the migrations the file has not had, in one transaction. A file that is current costs one read
+// and takes no write lock; a file that is behind is read again inside the transaction, since another process may
+// have migrated it meanwhile.
 func migrate(ctx context.Context, db *sql.DB) error {
+	v, err := schemaVersion(ctx, db)
+	if err != nil {
+		return err
+	}
+	if v == len(migrations) {
+		return nil
+	}
+	if err := checkVersion(v); err != nil {
+		return err
+	}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	var v int
-	if err := tx.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&v); err != nil {
+	if v, err = schemaVersion(ctx, tx); err != nil {
 		return err
-	}
-	if v > len(migrations) {
-		return fmt.Errorf("the store is schema version %d; this desk knows up to %d", v, len(migrations))
 	}
 	if v == len(migrations) {
 		return nil
+	}
+	if err := checkVersion(v); err != nil {
+		return err
 	}
 	for _, m := range migrations[v:] {
 		if _, err := tx.ExecContext(ctx, m); err != nil {
@@ -93,4 +120,11 @@ func migrate(ctx context.Context, db *sql.DB) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+func checkVersion(v int) error {
+	if v > len(migrations) {
+		return fmt.Errorf("the store is schema version %d; this desk knows up to %d", v, len(migrations))
+	}
+	return nil
 }

@@ -228,8 +228,8 @@ func TestFetchOrBuildReplacesTheDeskItInstalledBefore(t *testing.T) {
 	if os.SameFile(before, after) {
 		t.Error("the installed herdr-desk was written in place; want a new file renamed over it")
 	}
-	if !strings.Contains(out, "updated "+old) || !strings.Contains(out, "herdr-desk daemon restart") {
-		t.Errorf("output does not say the herdr-desk was updated and the daemon needs a restart:\n%s", out)
+	if !strings.Contains(out, "updated "+old) || !strings.Contains(out, "Run `herdr-desk ticker stop`; herdr's next start runs the new ticker.") {
+		t.Errorf("output does not say the herdr-desk was updated and the ticker needs a stop:\n%s", out)
 	}
 }
 
