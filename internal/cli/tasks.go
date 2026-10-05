@@ -414,6 +414,9 @@ func (a *app) editCmd() *cobra.Command {
 		if p.Title == nil && p.Notes == nil && !appending {
 			return usage("give --title, --notes, or --append-notes")
 		}
+		if appending && strings.TrimSpace(appendNotes) == "" {
+			return &model.Refusal{Code: model.CodeEmptyText, Msg: "--append-notes needs text"}
+		}
 		actor, err := a.actor()
 		if err != nil {
 			return err

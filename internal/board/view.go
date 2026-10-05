@@ -482,14 +482,12 @@ func (s State) rowDetail(t model.Task) (tag, rest string) {
 	if t.Thread != "" {
 		tag = "#" + oneLine(t.Thread)
 	}
-	if t.Status == model.StatusStarted {
-		if r, ok := s.liveRun(t.Number); ok {
-			age := ""
-			if !r.StartedTS.IsZero() {
-				age = Age(s.now().Sub(r.StartedTS))
-			}
-			return tag, join(" · ", base(r.Root), oneLine(r.Isolation), oneLine(r.Model), age)
+	if r, ok := s.liveRun(t.Number); ok {
+		age := ""
+		if !r.StartedTS.IsZero() {
+			age = Age(s.now().Sub(r.StartedTS))
 		}
+		return tag, join(" · ", oneLine(r.State), base(r.Root), oneLine(r.Isolation), oneLine(r.Model), age)
 	}
 	return tag, join(" · ", base(t.Project), Age(s.now().Sub(t.UpdatedTS))+" ago")
 }
