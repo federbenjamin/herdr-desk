@@ -56,9 +56,9 @@ const (
 )
 
 const (
-	boardFooter = "+ add  n ready  s start  b blocked  r review  x done  a #agent  f focus  k kill  P pause  / search  p project  t thread  d done  ? keys"
+	boardFooter = "+ add  n ready  S run  s start  b blocked  r review  x done  a #agent  f focus  k kill  P pause  / search  p project  t thread  d done  ? keys"
 	shortFooter = "? keys  q quit"
-	taskFooter  = "e notes  t steps  n ready  x done  o open  R root  I isolation  M model  f focus  esc back"
+	taskFooter  = "e notes  t steps  n ready  S run  x done  o open  R root  I isolation  M model  f focus  esc back"
 	stepsFooter = "space toggle  a add  r rename  x remove  esc back"
 	notesFooter = "ctrl+s save  esc cancel"
 	pickFooter  = "enter open  esc close"
@@ -467,10 +467,7 @@ func (s State) rowLine(p palette, t model.Task, selected bool, w int, detail boo
 }
 
 func (s State) rowDetail(t model.Task) (tag, rest string) {
-	switch {
-	case t.Status == model.StatusReady && t.Thread == "agent":
-		tag = "#agent · queued"
-	case t.Thread != "":
+	if t.Thread != "" {
 		tag = "#" + oneLine(t.Thread)
 	}
 	if t.Status == model.StatusStarted {
@@ -525,6 +522,7 @@ var boardKeys = [][2]string{
 	{"enter", "open the task"},
 	{"+", "add a task"},
 	{"n", "ready (on a blocked task, answer first)"},
+	{"S", "start a run of the task"},
 	{"s", "started"},
 	{"b", "blocked"},
 	{"r", "review"},
@@ -547,6 +545,7 @@ var taskKeys = [][2]string{
 	{"e", "edit the notes (ctrl+s saves)"},
 	{"t", "steps: space toggles, a adds, r renames, x removes"},
 	{"n", "ready (on a blocked task, answer first)"},
+	{"S", "start a run of the task"},
 	{"s b r", "started · blocked · review"},
 	{"x", "done (asks unless in review)"},
 	{"a", "#agent on or off"},

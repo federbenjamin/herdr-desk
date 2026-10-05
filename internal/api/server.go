@@ -21,7 +21,7 @@ type ServerOptions struct {
 	Config config.Config
 	Paths  config.Paths
 	Backup func(ctx context.Context) (backup.Result, error) // nil → backup.run refuses backup-off
-	Runner RunnerControl                                    // nil → runs.kill and runner.pause are unknown methods; runner_state is "off"
+	Runner RunnerControl                                    // nil → runs.start, runs.kill, and runner.pause are unknown methods; runner_state is "off"
 }
 
 // RunnerControl is what the server needs from the runner. *runner.Runner satisfies it.
@@ -30,6 +30,8 @@ type RunnerControl interface {
 	Paused() bool
 	Pause(ctx context.Context, a store.Actor, paused bool) error
 	Kill(ctx context.Context, a store.Actor, task int) (model.Task, error)
+	Start(ctx context.Context, a store.Actor, task int, route store.RunRoute) (model.Run, error)
+	AfterSet(ctx context.Context, task int)
 }
 
 var _ RunnerControl = (*runner.Runner)(nil)
@@ -88,7 +90,11 @@ func NewServer(o ServerOptions) *Server {
 			return st.AddTask(ctx, r.Actor, r.Input)
 		}),
 		MethodTasksSet: bind(func(ctx context.Context, r setRequest) (any, error) {
-			return st.SetTask(ctx, r.Actor, r.Number, r.Patch)
+			t, err := st.SetTask(ctx, r.Actor, r.Number, r.Patch)
+			if err == nil && r.Patch.Status != nil && o.Runner != nil {
+				o.Runner.AfterSet(ctx, r.Number)
+			}
+			return t, err
 		}),
 		MethodTasksSteps: bind(func(ctx context.Context, r stepsRequest) (any, error) {
 			return st.Step(ctx, r.Actor, r.Number, r.Op)
@@ -116,6 +122,9 @@ func NewServer(o ServerOptions) *Server {
 	if rn := o.Runner; rn != nil {
 		s.methods[MethodRunsKill] = bind(func(ctx context.Context, r killRequest) (any, error) {
 			return rn.Kill(ctx, r.Actor, r.Task)
+		})
+		s.methods[MethodRunsStart] = bind(func(ctx context.Context, r startRequest) (any, error) {
+			return rn.Start(ctx, r.Actor, r.Task, r.Route)
 		})
 		s.methods[MethodRunnerPause] = bind(func(ctx context.Context, r pauseRequest) (any, error) {
 			if err := rn.Pause(ctx, r.Actor, r.Paused); err != nil {

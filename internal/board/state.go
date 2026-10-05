@@ -76,6 +76,8 @@ type (
 	}
 	// KillRun kills the task's live run.
 	KillRun struct{ Task int }
+	// StartRun starts a run of the task, as run start does with no flags.
+	StartRun struct{ Task int }
 	// PauseRunner pauses or resumes the runner.
 	PauseRunner struct{ Paused bool }
 	// FocusRun focuses the run's pane.
@@ -96,6 +98,7 @@ func (AddTask) effect()     {}
 func (StepTask) effect()    {}
 func (Rearm) effect()       {}
 func (KillRun) effect()     {}
+func (StartRun) effect()    {}
 func (PauseRunner) effect() {}
 func (FocusRun) effect()    {}
 func (OpenRef) effect()     {}
@@ -578,7 +581,7 @@ func (s State) boardKey(k string) (State, []Effect) {
 		return s, []Effect{Quit{}}
 	case "P":
 		return s.act(k, model.Task{})
-	case "n", "s", "b", "r", "x", "a", "f", "k":
+	case "n", "s", "b", "r", "x", "a", "f", "k", "S":
 		t, ok := s.selected()
 		if !ok {
 			if k != "f" {
@@ -630,7 +633,7 @@ func (s State) act(k string, t model.Task) (State, []Effect) {
 	}
 	status := func(st model.Status) model.Patch { return model.Patch{Status: &st} }
 	switch k {
-	case "n", "s", "b", "r", "x", "a", "k", "P":
+	case "n", "s", "b", "r", "x", "a", "k", "P", "S":
 		if s.refuse(k) {
 			return s, nil
 		}
@@ -673,6 +676,8 @@ func (s State) act(k string, t model.Task) (State, []Effect) {
 			return s, []Effect{FocusRun{Run: r}}
 		}
 		return s, nil
+	case "S":
+		return s, []Effect{StartRun{Task: t.Number}}
 	case "k":
 		if _, ok := s.liveRun(t.Number); !ok {
 			s.status = taskID(t.Number) + " has no live run"

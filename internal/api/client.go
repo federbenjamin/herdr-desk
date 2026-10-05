@@ -231,6 +231,13 @@ func (c *Client) KillRun(ctx context.Context, a store.Actor, task int) (model.Ta
 	return t, err
 }
 
+// StartRun starts a run of the task; a field of route left empty is not given.
+func (c *Client) StartRun(ctx context.Context, a store.Actor, task int, route store.RunRoute) (model.Run, error) {
+	var r model.Run
+	err := c.call(ctx, MethodRunsStart, startRequest{Actor: a, Task: task, Route: route}, &r)
+	return r, err
+}
+
 // PauseRunner pauses or resumes the runner and returns the status after.
 func (c *Client) PauseRunner(ctx context.Context, a store.Actor, paused bool) (Status, error) {
 	var s Status

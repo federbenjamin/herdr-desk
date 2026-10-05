@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -17,22 +15,15 @@ import (
 	"github.com/federbenjamin/herdr-desk/internal/ticker"
 )
 
-// runnerHome is a home with the runner on and a ticker that ticks every 50 ms, so an armed task starts at once.
+// runnerHome is a home with the runner on and a ticker that ticks every 50 ms.
 func runnerHome(t *testing.T, worker []string) (*testutil.Home, string) {
 	t.Helper()
 	root := t.TempDir()
-	bin := t.TempDir()
-	router := filepath.Join(bin, "router")
-	if err := os.WriteFile(router, []byte("#!/bin/sh\nprintf '%s\\n' '{\"root\":\""+root+"\",\"isolation\":\"in-place\",\"reason\":\"test\"}'\n"), 0o700); err != nil {
-		t.Fatalf("write router: %v", err)
-	}
 	testutil.FakeHerdr(t)
 	cfg := config.Default()
 	cfg.Runner.Enabled = true
 	cfg.Runner.Cap = 2
-	cfg.Runner.PollSeconds = 1
 	cfg.Roots = []config.Root{{Path: root, About: "test root", Isolation: "in-place"}}
-	cfg.Agent.Router = []string{router}
 	cfg.Agent.Models = []string{"test-model"}
 	cfg.Agent.Worker = worker
 	home := testutil.StartHome(t, testutil.HomeOptions{Config: cfg})
@@ -47,7 +38,7 @@ func runnerHome(t *testing.T, worker []string) (*testutil.Home, string) {
 func startLiveRun(t *testing.T, home *testutil.Home, root, title string) (int, model.Run) {
 	t.Helper()
 	task := addTask(t, home, title, "--thread", "agent")
-	requireSuccess(t, runHomeDesk(t, home, "set", fmt.Sprintf("T%d", task), "ready", "--root", root, "--isolation", "in-place", "--model", "test-model"))
+	requireSuccess(t, runHomeDesk(t, home, "run", "start", fmt.Sprintf("T%d", task), "--root", root, "--isolation", "in-place", "--model", "test-model"))
 	deadline := time.NewTimer(2 * time.Second)
 	defer deadline.Stop()
 	tick := time.NewTicker(10 * time.Millisecond)

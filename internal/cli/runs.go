@@ -8,6 +8,7 @@ import (
 
 	"github.com/federbenjamin/herdr-desk/internal/api"
 	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/store"
 )
 
 func (a *app) runsCmd() *cobra.Command {
@@ -46,8 +47,7 @@ func (a *app) runsCmd() *cobra.Command {
 			if !r.EndedTS.IsZero() {
 				end = r.EndedTS
 			}
-			a.say("run %d  T%d  %s  %s  %s  %s  %s", r.ID, r.Task, r.State,
-				dash(r.Root), dash(r.Isolation), dash(r.Model), elapsed(end.Sub(r.StartedTS)))
+			a.say("%s  %s", runLine(r), elapsed(end.Sub(r.StartedTS)))
 		}
 		return nil
 	})
@@ -81,6 +81,56 @@ func (a *app) runsCmd() *cobra.Command {
 		return nil
 	})
 	cmd.AddCommand(kill)
+	return cmd
+}
+
+// runLine is a run as herdr-desk runs and herdr-desk run start print it: run <id>  T<n>  <state>  <root>  <isolation>  <model>.
+func runLine(r model.Run) string {
+	return fmt.Sprintf("run %d  T%d  %s  %s  %s  %s", r.ID, r.Task, r.State, dash(r.Root), dash(r.Isolation), dash(r.Model))
+}
+
+func (a *app) runCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "run",
+		Short: "Start a run of a task",
+		Args:  cobra.NoArgs,
+	}
+	var route store.RunRoute
+	var asJSON bool
+	start := &cobra.Command{
+		Use:   "start <task> [--root <r>] [--isolation <i>] [--model <m>] [--json]",
+		Short: "Start a run of the task now, or queue it as waiting; a task with a live run prints that run",
+		Args:  cobra.ExactArgs(1),
+	}
+	start.RunE = a.do(func(_ *cobra.Command, args []string) error {
+		n, err := parseTask(args[0])
+		if err != nil {
+			return err
+		}
+		actor, err := a.actor()
+		if err != nil {
+			return err
+		}
+		c, err := a.client()
+		if err != nil {
+			return err
+		}
+		r, err := c.StartRun(a.ctx, actor, n, route)
+		if err != nil {
+			return err
+		}
+		if asJSON {
+			return a.printJSON(r)
+		}
+		a.say("%s", runLine(r))
+		return nil
+	})
+	f := start.Flags()
+	f.StringVar(&route.Root, "root", "", "the root to run in (default: the task's, else its project's root, else the scratch root)")
+	f.StringVar(&route.Isolation, "isolation", "", "self, worktree, or in-place (default: the task's, else the root's)")
+	f.StringVar(&route.Model, "model", "", "one of [agent] models (default: the task's, else the first)")
+	f.BoolVar(&asJSON, "json", false, "print the run as JSON")
+	cmd.AddCommand(start)
 	return cmd
 }
 

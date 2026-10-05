@@ -138,7 +138,6 @@ func TestW1RunnerStateConstantsKeepPublishedWireValues(t *testing.T) {
 		{name: "off", got: api.RunnerStateOff, want: "off"},
 		{name: "on", got: api.RunnerStateOn, want: "on"},
 		{name: "paused", got: api.RunnerStatePaused, want: "paused"},
-		{name: "no router", got: api.RunnerStateNoRouter, want: "no-router"},
 		{name: "no herdr", got: api.RunnerStateNoHerdr, want: "no-herdr"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

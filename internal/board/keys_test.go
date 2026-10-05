@@ -334,7 +334,7 @@ func TestKeysAgentFocusKillAndRunnerStatusMessagesExplainUnavailableActions(t *t
 		eff   board.Effect
 	}{
 		{api.RunnerStatePaused, "", board.PauseRunner{Paused: false}},
-		{api.RunnerStateNoRouter, "the runner is no-router", nil},
+		{api.RunnerStateNoHerdr, "the runner is no-herdr", nil},
 		{"", "the runner is off", nil},
 	} {
 		t.Run(test.state+test.want, func(t *testing.T) {

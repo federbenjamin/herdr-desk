@@ -22,6 +22,7 @@ const (
 	MethodSessionView  = "session.view"
 	MethodRunsList     = "runs.list"
 	MethodRunsKill     = "runs.kill"
+	MethodRunsStart    = "runs.start"
 	MethodRunnerPause  = "runner.pause"
 	MethodStatus       = "status"
 	MethodBackupRun    = "backup.run"
@@ -29,11 +30,10 @@ const (
 
 // The values of Status.RunnerState.
 const (
-	RunnerStateOff      = "off"
-	RunnerStateOn       = "on"
-	RunnerStatePaused   = "paused"
-	RunnerStateNoRouter = "no-router"
-	RunnerStateNoHerdr  = "no-herdr"
+	RunnerStateOff     = "off"
+	RunnerStateOn      = "on"
+	RunnerStatePaused  = "paused"
+	RunnerStateNoHerdr = "no-herdr"
 )
 
 // maxBody is the largest request rpc reads.
@@ -96,7 +96,7 @@ type Status struct {
 	Ticker   TickerStatus         `json:"ticker"`
 	RunnerOn bool                 `json:"runner_on"`
 	Tasks    map[model.Status]int `json:"tasks"`
-	// RunnerState is off, paused, no-herdr, no-router, or on.
+	// RunnerState is off, paused, no-herdr, or on.
 	RunnerState  string `json:"runner_state"`
 	RunnerPaused bool   `json:"runner_paused"`
 	RunnerCap    int    `json:"runner_cap"` // runner.cap
@@ -145,6 +145,11 @@ type (
 	killRequest struct {
 		Actor store.Actor `json:"actor"`
 		Task  int         `json:"task"`
+	}
+	startRequest struct {
+		Actor store.Actor    `json:"actor"`
+		Task  int            `json:"task"`
+		Route store.RunRoute `json:"route"`
 	}
 	pauseRequest struct {
 		Actor  store.Actor `json:"actor"`
