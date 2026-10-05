@@ -135,8 +135,6 @@ func (s *Store) UpdateRun(ctx context.Context, id int64, from string, u RunUpdat
 	if u.State == model.RunRunning {
 		started = formatTS(s.now())
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	res, err := s.db.ExecContext(ctx, `UPDATE runs SET
 		state = COALESCE(NULLIF(?, ''), state),
 		root = COALESCE(NULLIF(?, ''), root),

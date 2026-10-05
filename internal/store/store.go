@@ -1,6 +1,7 @@
-// Package store is herdr-desk's SQLite store. The daemon is its one user; every event goes through one private
-// append that scans for secrets, inserts the event, and updates the state tables in one transaction. Run rows
-// are runner state, outside the event log: UpdateRun writes them directly.
+// Package store is herdr-desk's SQLite store. Every command on the home opens it, so several processes may write
+// at once: every write transaction begins IMMEDIATE, and a second writer waits on the busy timeout. Every event
+// goes through one private append that scans for secrets, inserts the event, and updates the state tables in one
+// transaction. Run rows are runner state, outside the event log: UpdateRun writes them directly.
 package store
 
 import (
@@ -13,7 +14,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/federbenjamin/herdr-desk/internal/model"
@@ -37,17 +37,20 @@ type Store struct {
 	now          func() time.Time
 	agentsMayArm bool
 	onMerged     model.Status
-	// mu serializes writes: a deferred SQLite transaction that reads then writes fails with SQLITE_BUSY
-	// when another connection wrote first, and busy_timeout does not retry that.
-	mu sync.Mutex
 }
 
-// Open opens the store at path. It creates the parent dir 0700 and the file 0600, uses WAL, and applies
-// migrations.
-func Open(path string, o Options) (*Store, error) {
+var (
+	// ErrNoStore is OpenReadOnly finding no store file.
+	ErrNoStore = errors.New("no store")
+	// ErrSchema is OpenReadOnly finding a schema version other than this binary's.
+	ErrSchema = errors.New("the store's schema version is not this binary's")
+)
+
+// withDefaults checks o and fills its unset fields.
+func (o Options) withDefaults() (Options, error) {
 	onMerged, ok := model.OnMergedStatus(string(o.OnMerged))
 	if !ok {
-		return nil, fmt.Errorf("on_merged must be review or done, not %q", o.OnMerged)
+		return o, fmt.Errorf("on_merged must be review or done, not %q", o.OnMerged)
 	}
 	o.OnMerged = onMerged
 	if o.Scanner == nil {
@@ -55,6 +58,20 @@ func Open(path string, o Options) (*Store, error) {
 	}
 	if o.Now == nil {
 		o.Now = time.Now
+	}
+	return o, nil
+}
+
+func newStore(db *sql.DB, o Options) *Store {
+	return &Store{db: db, scan: o.Scanner, now: o.Now, agentsMayArm: o.AgentsMayArm, onMerged: o.OnMerged}
+}
+
+// Open opens the store at path. It creates the parent dir 0700 and the file 0600, uses WAL, and applies
+// migrations, writing nothing when the schema is current. Every write transaction begins IMMEDIATE.
+func Open(path string, o Options) (*Store, error) {
+	o, err := o.withDefaults()
+	if err != nil {
+		return nil, err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
@@ -67,7 +84,9 @@ func Open(path string, o Options) (*Store, error) {
 	if err := private(path); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)")
+	// _txlock=immediate: a deferred transaction that reads then writes fails with SQLITE_BUSY when another
+	// connection wrote first, and the busy timeout does not retry that; an IMMEDIATE one waits at its BEGIN.
+	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_txlock=immediate")
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +94,35 @@ func Open(path string, o Options) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
-	return &Store{db: db, scan: o.Scanner, now: o.Now, agentsMayArm: o.AgentsMayArm, onMerged: o.OnMerged}, nil
+	return newStore(db, o), nil
+}
+
+// OpenReadOnly opens an existing store for reading. It never creates the file or its folder, never changes a
+// mode, and never migrates: a missing file is ErrNoStore and a schema version other than this binary's is
+// ErrSchema. Every write through it fails.
+func OpenReadOnly(path string, o Options) (*Store, error) {
+	o, err := o.withDefaults()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("open %s: %w", path, ErrNoStore)
+	} else if err != nil {
+		return nil, err
+	}
+	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=query_only(1)")
+	if err != nil {
+		return nil, err
+	}
+	v, err := schemaVersion(context.Background(), db)
+	if err == nil && v != len(migrations) {
+		err = fmt.Errorf("%w: the file is version %d, this binary's is %d", ErrSchema, v, len(migrations))
+	}
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("open %s: %w", path, err)
+	}
+	return newStore(db, o), nil
 }
 
 // private sets the store's folder to 0700 and its files to 0600, whoever created them first and with what mode.
@@ -128,8 +175,6 @@ func (s *Store) append(ctx context.Context, a Actor, w write) (model.Event, bool
 	if err := s.scanText(ctx, w.scan); err != nil {
 		return model.Event{}, false, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return model.Event{}, false, err
