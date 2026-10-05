@@ -92,7 +92,8 @@ func TestTaskPageTextShowsTaskFieldsNotesStepsHistoryAndFiles(t *testing.T) {
 		"FILES",
 		"https://example.test/pr/42",
 		"docs/task.md",
-		"e notes  t steps  n ready  x done  o open  R root  I isolation  M model  f focus  esc back",
+		"e notes  t steps  n ready  S run  x done  o open  R root  I isolation  M model  f focus",
+		"esc back",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("task page text missing %q:\n%s", want, text)
