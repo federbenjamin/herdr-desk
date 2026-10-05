@@ -213,7 +213,7 @@ func TestClientKillRunReturnsTheTaskTheRunnerKilled(t *testing.T) {
 		t.Fatalf("open store to make a live run: %v", err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if _, err := st.StartRun(ctx, task.Number, store.RunRoute{Root: t.TempDir(), Isolation: "in-place"}, 1); err != nil {
+	if _, err := st.StartRun(ctx, task.Number, store.RunRoute{Root: t.TempDir(), Isolation: "in-place"}, store.RunCaps{Slots: 1, PerDay: 1000}); err != nil {
 		t.Fatalf("start run: %v", err)
 	}
 

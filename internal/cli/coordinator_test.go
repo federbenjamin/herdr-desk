@@ -316,6 +316,8 @@ func TestCoordinatorSkillStatesEachRuleThePlanLists(t *testing.T) {
 		{"propose waits for a message that names the runs", "names or plainly approves"},
 		{"a ready task is a go-ahead", "`ready` is a go-ahead"},
 		{"the cap is stated, not worked around", "say so"},
+		{"at cap, approved work still queues as waiting", "still gets `run start` when `cap` runs are live"},
+		{"a failed spawn exits 1 and is reported", "exits 1 with `run <id> failed: <reason>`"},
 		{"how to start a run", "herdr-desk run start"},
 		{"how to add a task", "herdr-desk add"},
 		{"auto mode", "`auto`"},
@@ -493,7 +495,7 @@ func TestContextReconcilesOnceSoAVanishedPaneIsNotALiveRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	run, err := st.StartRun(context.Background(), task, store.RunRoute{Root: t.TempDir(), Isolation: "in-place", Model: "m"}, 5)
+	run, err := st.StartRun(context.Background(), task, store.RunRoute{Root: t.TempDir(), Isolation: "in-place", Model: "m"}, store.RunCaps{Slots: 5, PerDay: 1000})
 	if err == nil {
 		_, err = st.UpdateRun(context.Background(), run.ID, run.State, store.RunUpdate{State: model.RunRunning, Session: "worker-session", Workspace: "w99", Pane: "p99"})
 	}

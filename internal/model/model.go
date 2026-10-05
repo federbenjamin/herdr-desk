@@ -92,10 +92,26 @@ const (
 	RunKilled   = "killed"   // killed by a person or by the time limit
 )
 
-// RunLive reports whether state is starting, waiting, running, or idle.
-func RunLive(state string) bool {
-	return state == RunStarting || state == RunWaiting || state == RunRunning || state == RunIdle
-}
+// LiveRunStates are the states of a live run: starting, waiting, running, idle.
+func LiveRunStates() []string { return []string{RunStarting, RunWaiting, RunRunning, RunIdle} }
+
+// FinalRunStates are the states a run never leaves: ended, failed, killed.
+func FinalRunStates() []string { return []string{RunEnded, RunFailed, RunKilled} }
+
+// SlotRunStates are the states of a run that takes one of the runner's cap slots: starting, running.
+func SlotRunStates() []string { return []string{RunStarting, RunRunning} }
+
+// RootRunStates are the states in which an in-place run holds its root: starting, running, idle.
+func RootRunStates() []string { return []string{RunStarting, RunRunning, RunIdle} }
+
+// RunLive reports whether state is one of LiveRunStates.
+func RunLive(state string) bool { return slices.Contains(LiveRunStates(), state) }
+
+// RunFinal reports whether state is one of FinalRunStates.
+func RunFinal(state string) bool { return slices.Contains(FinalRunStates(), state) }
+
+// RunTakesSlot reports whether state is one of SlotRunStates.
+func RunTakesSlot(state string) bool { return slices.Contains(SlotRunStates(), state) }
 
 // Coordinator is the desk's one coordinator session, its herdr workspace and pane, and the id of the newest event
 // its last context showed.

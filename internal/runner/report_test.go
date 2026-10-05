@@ -2,7 +2,9 @@ package runner_test
 
 import (
 	"context"
+	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/federbenjamin/herdr-desk/internal/herdr/herdrtest"
@@ -64,6 +66,24 @@ func TestAfterSetReportsTheCurrentRunAndCoordinatorRows(t *testing.T) {
 		{pane: run.Pane, source: sidebar.Source, name: sidebar.Token, value: "T1 running · since 15:00"},
 		{pane: coordinator.Pane, source: sidebar.Source, name: sidebar.Token, value: "1 need you · 1 running"},
 	})
+}
+
+// A row left on an ended run's pane must not be stale in silence: herdr failing to answer for the pane is logged.
+func TestAfterSetLogsAPaneReadThatFailsForAnEndedRun(t *testing.T) {
+	f := newFixture(t, "", "self")
+	task := f.armThread("hand back while herdr is slow", "agent")
+	r := f.runner()
+	run := f.startRun(r, task.Number)
+	if ok, err := f.store.UpdateRun(f.ctx, run.ID, model.RunRunning, store.RunUpdate{State: model.RunEnded}); err != nil || !ok {
+		t.Fatalf("end the run = (%t, %v)", ok, err)
+	}
+	f.herdr.Fail("Pane", errors.New("herdr timed out"))
+
+	r.AfterSet(f.ctx, task.Number)
+
+	if got := f.logged(); !strings.Contains(got, "read pane "+run.Pane) || !strings.Contains(got, "herdr timed out") {
+		t.Fatalf("log = %q, want the failed pane read named with its error", got)
+	}
 }
 
 func TestKillReportsOnlyTheCoordinatorAfterAWaitingRunEnds(t *testing.T) {

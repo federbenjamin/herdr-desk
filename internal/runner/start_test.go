@@ -3,6 +3,7 @@ package runner_test
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -16,7 +17,7 @@ import (
 func stBreak(f *fixture, task int) {
 	f.t.Helper()
 	f.config.Runner.MaxRunsPerDay = 1
-	if _, err := f.store.StartRun(f.ctx, task, store.RunRoute{Root: f.root, Isolation: "self"}, 3); err != nil {
+	if _, err := f.store.StartRun(f.ctx, task, store.RunRoute{Root: f.root, Isolation: "self"}, store.RunCaps{Slots: 3, PerDay: 1000}); err != nil {
 		f.t.Fatalf("spend the day's cap: %v", err)
 	}
 }
@@ -126,6 +127,38 @@ func TestStartEndsAnIdleRunAndStartsANewOne(t *testing.T) {
 	runs := f.runs()
 	if len(runs) != 2 || runs[0].State != model.RunEnded || runs[1].ID != got.ID {
 		t.Fatalf("runs = %#v, want the idle run ended and the new one running", runs)
+	}
+	// The idle worker is still at its prompt: left open, it could go on working in the root beside the new run.
+	if closed := f.herdr.Closed(); !slices.Contains(closed, old.Pane) || slices.Contains(closed, got.Pane) {
+		t.Fatalf("closed panes = %v, want the idle run's pane %s closed and the new pane %s open", closed, old.Pane, got.Pane)
+	}
+}
+
+// A kill whose note the secret scan refuses must still block the task: a broken scanner may not leave a task
+// started behind a killed run.
+func TestKillBlocksTheTaskWhenTheScanRefusesItsNote(t *testing.T) {
+	f := newFixture(t, "", "self")
+	task, run, _ := f.start()
+	_ = f.store.Close()
+	var err error
+	f.store, err = store.Open(f.paths.DB(), store.Options{Now: func() time.Time { return f.now }, Scanner: func(_ context.Context, text string) (string, error) {
+		if strings.Contains(text, "killed") {
+			return "", fmt.Errorf("the scanner is broken")
+		}
+		return "", nil
+	}})
+	if err != nil {
+		t.Fatalf("reopen the store: %v", err)
+	}
+	got, err := f.runner().Kill(f.ctx, store.Actor{}, task.Number)
+	if err != nil || got.Status != model.StatusBlocked {
+		t.Fatalf("Kill() = %#v, %v; want the task blocked and no error", got, err)
+	}
+	if cur := f.run(task.Number); cur.ID != run.ID || cur.State != model.RunKilled {
+		t.Fatalf("run = %#v, want run %d killed", cur, run.ID)
+	}
+	if !strings.Contains(f.logged(), "with a fixed note") {
+		t.Fatalf("log = %q, want the withheld note logged", f.logged())
 	}
 }
 
@@ -347,7 +380,7 @@ func TestJobsStartsWhatWaitsAndFailsStaleStartingRunsInOnePass(t *testing.T) {
 	// A run another process left starting: the spawn happens within one call, so a minute on it is dead.
 	stuck := f.armThread("stuck", "agent")
 	f.config.Runner.Cap = 5
-	if _, err := f.store.StartRun(f.ctx, stuck.Number, store.RunRoute{Root: f.root, Isolation: "self"}, 5); err != nil {
+	if _, err := f.store.StartRun(f.ctx, stuck.Number, store.RunRoute{Root: f.root, Isolation: "self"}, store.RunCaps{Slots: 5, PerDay: 1000}); err != nil {
 		t.Fatalf("leave a run starting: %v", err)
 	}
 	f.now = f.now.Add(2 * time.Minute)

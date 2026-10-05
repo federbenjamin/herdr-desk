@@ -78,6 +78,22 @@ func TestRunStartOfALiveRunPrintsThatRunAndExitsZero(t *testing.T) {
 	}
 }
 
+// A spawn that fails in the call is not a start: the coordinator reads the exit code, so it is 1, with the reason.
+func TestRunStartWhoseSpawnFailsExitsOneWithTheReason(t *testing.T) {
+	home, root := startOnlyHome(t, nil)
+	task := addTask(t, home, "no git here")
+	for _, json := range []bool{false, true} {
+		args := []string{"run", "start", fmt.Sprintf("T%d", task), "--root", root, "--isolation", "worktree"}
+		if json {
+			args = append(args, "--json")
+		}
+		result := runHomeDesk(t, home, args...)
+		if result.exit != 1 || !strings.Contains(result.stdout, "failed") || !regexp.MustCompile(`run \d+ failed: spawn: \S`).MatchString(result.stderr) {
+			t.Fatalf("run start (json %t) = exit %d, stdout %q, stderr %q; want exit 1, the failed run, and its reason", json, result.exit, result.stdout, result.stderr)
+		}
+	}
+}
+
 func TestRunStartJSONPrintsTheRunObject(t *testing.T) {
 	home, root := startOnlyHome(t, nil)
 	task := addTask(t, home, "json")

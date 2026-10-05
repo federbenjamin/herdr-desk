@@ -293,11 +293,11 @@ func startedBy(history []model.Event, run int64) bool {
 	return false
 }
 
-// fail sets the run failed while it is in state from, then notes msg on its task and sets the task blocked. A
-// run that has left from (a kill took it) is left alone.
+// fail sets the run failed while it is in state from, with msg as its reason, then notes msg on its task and sets
+// the task blocked. A run that has left from (a kill took it) is left alone.
 func (r *Runner) fail(ctx context.Context, run model.Run, from, msg string) {
 	r.handBack(ctx, run, store.HandBack{From: from, To: model.RunFailed, Status: model.StatusBlocked,
-		Tags: []string{model.TagRunner}, Note: msg}, nil)
+		Tags: []string{model.TagRunner}, Note: msg, Reason: msg}, nil)
 }
 
 // handBack is the one hand-back, over Store.HandBack. Without a cleanup it is one HandBack. With one, it claims the
@@ -326,7 +326,7 @@ func (r *Runner) handBack(ctx context.Context, run model.Run, hb store.HandBack,
 	if !claimed && cleanup == nil {
 		return t, false, nil
 	}
-	if runEnded(hb.To) {
+	if model.RunFinal(hb.To) {
 		r.StartWaiting(ctx)
 	}
 	state := hb.To
@@ -368,7 +368,11 @@ func (r *Runner) reportRun(ctx context.Context, h Herdr, run model.Run) {
 	}
 	if !model.RunLive(run.State) {
 		p, found, err := h.Pane(ctx, run.Pane)
-		if err != nil || !found || p.Workspace != run.Workspace {
+		if err != nil {
+			r.logErr("T%d: read pane %s for the sidebar", run.Task, run.Pane, err)
+			return
+		}
+		if !found || p.Workspace != run.Workspace {
 			return
 		}
 	}
@@ -402,10 +406,10 @@ func (r *Runner) reportCoordinator(ctx context.Context, h Herdr) {
 	}
 	running, waiting := 0, 0
 	for _, run := range live {
-		switch run.State {
-		case model.RunStarting, model.RunRunning:
+		switch {
+		case model.RunTakesSlot(run.State):
 			running++
-		case model.RunWaiting:
+		case run.State == model.RunWaiting:
 			waiting++
 		}
 	}
@@ -433,9 +437,14 @@ func handBackRef(history []model.Event, run int64) string {
 	return ""
 }
 
-// storeHandBack is Store.HandBack with a stale-run refusal read as no claim; any other error is logged.
+// storeHandBack is Store.HandBack with a stale-run refusal read as no claim, and a withheld note logged as what it
+// is: the hand-back was written. Any other error is logged.
 func (r *Runner) storeHandBack(ctx context.Context, run model.Run, hb store.HandBack) (model.Task, bool, error) {
 	t, claimed, err := r.o.Store.HandBack(ctx, run, hb)
+	if errors.Is(err, store.ErrNoteWithheld) {
+		r.logErr("T%d run %d: hand back (%s → %s, task %s) with a fixed note", run.Task, run.ID, hb.From, hb.To, hb.Status, err)
+		return t, claimed, nil
+	}
 	if ref, ok := model.AsRefusal(err); ok && ref.Code == model.CodeStaleRun {
 		return model.Task{}, false, nil
 	}
@@ -443,11 +452,6 @@ func (r *Runner) storeHandBack(ctx context.Context, run model.Run, hb store.Hand
 		r.logErr("T%d run %d: hand back (%s → %s, task %s)", run.Task, run.ID, hb.From, hb.To, hb.Status, err)
 	}
 	return t, claimed, err
-}
-
-// runEnded reports whether state is one a run never leaves.
-func runEnded(state string) bool {
-	return state == model.RunEnded || state == model.RunFailed || state == model.RunKilled
 }
 
 func (r *Runner) note(ctx context.Context, a store.Actor, task int, tags []string, text string) {

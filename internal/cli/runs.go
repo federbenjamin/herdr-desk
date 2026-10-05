@@ -119,10 +119,15 @@ func (a *app) runCmd() *cobra.Command {
 			return err
 		}
 		if asJSON {
-			return a.printJSON(r)
+			err = a.printJSON(r)
+		} else {
+			a.say("%s", runLine(r))
 		}
-		a.say("%s", runLine(r))
-		return nil
+		if err == nil && r.State == model.RunFailed {
+			// The spawn failed in this call: a caller that reads only the exit code must not take it for a start.
+			return &exitError{code: exitRefused, msg: fmt.Sprintf("run %d failed: %s", r.ID, r.Reason)}
+		}
+		return err
 	})
 	f := start.Flags()
 	f.StringVar(&route.Root, "root", "", "the root to run in (default: the task's, else its project's root, else the scratch root)")

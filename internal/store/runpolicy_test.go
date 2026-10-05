@@ -73,9 +73,6 @@ func TestUpdateRunChangesOnlyItsExpectedStateAndKeepsZeroFields(t *testing.T) {
 	now = now.Add(time.Minute)
 	changed, err := st.UpdateRun(ctx, run.ID, model.RunStarting, store.RunUpdate{
 		State:     model.RunRunning,
-		Root:      "/work/desk",
-		Isolation: "worktree",
-		Model:     "model-a",
 		Reason:    "matched the repository",
 		Session:   "session-a",
 		Workspace: "/work/desk/.worktrees/task",
@@ -112,7 +109,7 @@ func TestUpdateRunChangesOnlyItsExpectedStateAndKeepsZeroFields(t *testing.T) {
 	if !ok {
 		t.Fatal("CurrentRun() found no run")
 	}
-	if got.State != model.RunWaiting || got.Root != "/work/desk" || got.Isolation != "worktree" || got.Model != "model-a" || got.Reason != "matched the repository" || got.Session != "session-a" || got.Workspace != "/work/desk/.worktrees/task" || got.Pane != "pane-a" {
+	if got.State != model.RunWaiting || got.Root != run.Root || got.Isolation != run.Isolation || got.Model != run.Model || got.Reason != "matched the repository" || got.Session != "session-a" || got.Workspace != "/work/desk/.worktrees/task" || got.Pane != "pane-a" {
 		t.Errorf("run after zero-field and old-state updates = %#v, want waiting with original fields", got)
 	}
 	if !got.EndedTS.IsZero() {
@@ -190,7 +187,10 @@ func TestRunMethodsReturnTheStoreErrorOnceClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, call := range map[string]func() error{
-		"StartRun":   func() error { _, err := st.StartRun(ctx, 1, policyRoute, 1); return err },
+		"StartRun": func() error {
+			_, err := st.StartRun(ctx, 1, policyRoute, store.RunCaps{Slots: 1, PerDay: 1000})
+			return err
+		},
 		"UpdateRun":  func() error { _, err := st.UpdateRun(ctx, 1, model.RunStarting, store.RunUpdate{}); return err },
 		"ListRuns":   func() error { _, err := st.ListRuns(ctx); return err },
 		"CurrentRun": func() error { _, _, err := st.CurrentRun(ctx, 1); return err },
@@ -468,7 +468,7 @@ func startRunPolicy(t *testing.T, st *store.Store, title string) (model.Task, mo
 func startRunPolicyOnTask(t *testing.T, st *store.Store, task int) (model.Run, error) {
 	t.Helper()
 	// A cap no test reaches, so every run starts.
-	return st.StartRun(context.Background(), task, policyRoute, 100)
+	return st.StartRun(context.Background(), task, policyRoute, store.RunCaps{Slots: 100, PerDay: 1000})
 }
 
 func assertRunPolicyRefusal(t *testing.T, err error, want string) {

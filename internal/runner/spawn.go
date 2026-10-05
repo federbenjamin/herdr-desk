@@ -100,7 +100,7 @@ func (r *Runner) spawn(ctx context.Context, h Herdr, t model.Task, run model.Run
 		// The run may have been killed while its command was typed: nothing says it started until the store does.
 		return failSpawn(undo, model.RunRunning, "could not confirm the run: "+err.Error(), &pane)
 	}
-	if !ok || cur.ID != run.ID || runEnded(cur.State) {
+	if !ok || cur.ID != run.ID || model.RunFinal(cur.State) {
 		// A kill took the run while its command was typed: no worker stays, and nothing says it started. A run an
 		// early blocked event set idle keeps its pane.
 		r.close(undo, h, run, pane)

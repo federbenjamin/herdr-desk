@@ -102,7 +102,7 @@ func trackedEventRun(t *testing.T, home *testutil.Home, pane string) (model.Task
 	if err != nil {
 		t.Fatalf("add task: %v", err)
 	}
-	run, err := st.StartRun(ctx, task.Number, store.RunRoute{}, 1)
+	run, err := st.StartRun(ctx, task.Number, store.RunRoute{}, store.RunCaps{Slots: 1, PerDay: 1000})
 	if err != nil {
 		t.Fatalf("start run: %v", err)
 	}

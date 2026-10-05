@@ -2,7 +2,10 @@ package store_test
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -85,7 +88,7 @@ func TestStartRunEndsAnIdleRunAndWaitsWhenTheCapIsFull(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add first task: %v", err)
 	}
-	idle, err := st.StartRun(ctx, first.Number, policyRoute, 1)
+	idle, err := st.StartRun(ctx, first.Number, policyRoute, store.RunCaps{Slots: 1, PerDay: 1000})
 	if err != nil {
 		t.Fatalf("start first run: %v", err)
 	}
@@ -94,7 +97,7 @@ func TestStartRunEndsAnIdleRunAndWaitsWhenTheCapIsFull(t *testing.T) {
 	}
 
 	now = now.Add(time.Minute)
-	replacement, err := st.StartRun(ctx, first.Number, policyRoute, 1)
+	replacement, err := st.StartRun(ctx, first.Number, policyRoute, store.RunCaps{Slots: 1, PerDay: 1000})
 	if err != nil {
 		t.Fatalf("start replacement run: %v", err)
 	}
@@ -113,7 +116,7 @@ func TestStartRunEndsAnIdleRunAndWaitsWhenTheCapIsFull(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add second task: %v", err)
 	}
-	waiting, err := st.StartRun(ctx, second.Number, policyRoute, 1)
+	waiting, err := st.StartRun(ctx, second.Number, policyRoute, store.RunCaps{Slots: 1, PerDay: 1000})
 	if err != nil {
 		t.Fatalf("start capped run: %v", err)
 	}
@@ -140,7 +143,7 @@ func TestClaimWaitingStartsTheOldestRunOnceASlotOpens(t *testing.T) {
 		if err != nil {
 			t.Fatalf("add %s task: %v", title, err)
 		}
-		run, err := st.StartRun(ctx, task.Number, policyRoute, 0)
+		run, err := st.StartRun(ctx, task.Number, policyRoute, store.RunCaps{Slots: 0, PerDay: 1000})
 		if err != nil {
 			t.Fatalf("start %s run: %v", title, err)
 		}
@@ -182,7 +185,7 @@ func TestUpdateRunFromIdleKeepsTheOriginalStartTime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add task: %v", err)
 	}
-	run, err := st.StartRun(ctx, task.Number, policyRoute, 1)
+	run, err := st.StartRun(ctx, task.Number, policyRoute, store.RunCaps{Slots: 1, PerDay: 1000})
 	if err != nil {
 		t.Fatalf("start run: %v", err)
 	}
@@ -211,7 +214,7 @@ func TestHandBackWithALostClaimWritesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add task: %v", err)
 	}
-	run, err := st.StartRun(ctx, task.Number, policyRoute, 1)
+	run, err := st.StartRun(ctx, task.Number, policyRoute, store.RunCaps{Slots: 1, PerDay: 1000})
 	if err != nil {
 		t.Fatalf("start run: %v", err)
 	}
@@ -245,5 +248,128 @@ func TestHandBackWithALostClaimWritesNothing(t *testing.T) {
 	}
 	if current.State != model.RunStarting {
 		t.Errorf("run state after lost claim = %q, want starting", current.State)
+	}
+}
+
+// The day cap holds against processes that start runs at once: each opens its own store, as each `run start` does,
+// and the count and the insert share one IMMEDIATE transaction, so one start past PerDay-1 wins and the rest are
+// refused cap-reached with no run row.
+func TestStartRunHoldsTheDayCapAgainstConcurrentProcesses(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "state", "desk.db")
+	seed := newStoreAt(t, path)
+	caps := store.RunCaps{Slots: 100, PerDay: 3}
+	for range 2 {
+		task := mustAdd(t, seed, "spent", model.StatusReady, "")
+		if _, err := seed.StartRun(ctx, task.Number, policyRoute, caps); err != nil {
+			t.Fatalf("spend the day: %v", err)
+		}
+	}
+	const racers = 12
+	var tasks []int
+	for range racers {
+		tasks = append(tasks, mustAdd(t, seed, "racer", model.StatusReady, "").Number)
+	}
+	stores := make([]*store.Store, racers)
+	for i := range stores {
+		stores[i] = newStoreAt(t, path)
+	}
+	errs := make([]error, racers)
+	var gate, done sync.WaitGroup
+	gate.Add(1)
+	for i := range racers {
+		done.Go(func() {
+			gate.Wait()
+			_, errs[i] = stores[i].StartRun(ctx, tasks[i], policyRoute, caps)
+		})
+	}
+	gate.Done()
+	done.Wait()
+	won, refused := 0, 0
+	for i, err := range errs {
+		switch r, ok := model.AsRefusal(err); {
+		case err == nil:
+			won++
+		case ok && r.Code == model.CodeCapReached:
+			refused++
+		default:
+			t.Errorf("racer %d: StartRun() error = %v, want a run or cap-reached", i, err)
+		}
+	}
+	runs, err := seed.ListRuns(ctx)
+	if err != nil {
+		t.Fatalf("list runs: %v", err)
+	}
+	if won != 1 || refused != racers-1 || len(runs) != caps.PerDay {
+		t.Fatalf("%d racers won, %d refused, %d runs; want 1 won, %d refused, %d runs", won, refused, len(runs), racers-1, caps.PerDay)
+	}
+}
+
+// A hand-back's own text that the scan refuses must not leave its task started behind an ended run: the claim, the
+// status, and a fixed note land, and the refusal comes back wrapped for the runner to log.
+func TestHandBackLandsWithAFixedNoteWhenTheScanRefusesItsText(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		scan func(context.Context, string) (string, error)
+		code string
+	}{
+		{"secret found", func(context.Context, string) (string, error) { return "token", nil }, model.CodeSecretDetected},
+		{"scanner broken", func(context.Context, string) (string, error) { return "", errors.New("exit status 2") }, model.CodeScanFailed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			refuse := false
+			st := openStore(t, store.Options{Scanner: func(ctx context.Context, text string) (string, error) {
+				if refuse {
+					return tc.scan(ctx, text)
+				}
+				return "", nil
+			}})
+			task := mustAdd(t, st, "hand back", model.StatusReady, "")
+			run, err := st.StartRun(ctx, task.Number, policyRoute, store.RunCaps{Slots: 1, PerDay: 1000})
+			if err != nil {
+				t.Fatalf("start run: %v", err)
+			}
+			refuse = true
+			got, claimed, err := st.HandBack(ctx, run, store.HandBack{From: model.RunStarting, To: model.RunFailed,
+				Status: model.StatusBlocked, Tags: []string{model.TagRunner}, Note: "spawn: git said secret", Reason: "spawn: git said secret"})
+			if r, ok := model.AsRefusal(err); !errors.Is(err, store.ErrNoteWithheld) || !ok || r.Code != tc.code {
+				t.Fatalf("HandBack() error = %v, want ErrNoteWithheld wrapping %s", err, tc.code)
+			}
+			if !claimed || got.Status != model.StatusBlocked {
+				t.Fatalf("HandBack() = (%#v, %t), want the task blocked and the claim held", got, claimed)
+			}
+			cur, _, err := st.CurrentRun(ctx, task.Number)
+			if err != nil {
+				t.Fatalf("read run: %v", err)
+			}
+			detail, err := st.GetTask(ctx, task.Number)
+			if err != nil {
+				t.Fatalf("read task: %v", err)
+			}
+			last := detail.History[len(detail.History)-2]
+			if cur.State != model.RunFailed || strings.Contains(cur.Reason, "said") || !strings.Contains(cur.Reason, tc.code) ||
+				last.Kind != model.KindNote || strings.Contains(string(last.Data), "said") || !strings.Contains(string(last.Data), "withheld") {
+				t.Fatalf("run %#v, note %s; want the run failed and a fixed note and reason naming %s", cur, last.Data, tc.code)
+			}
+		})
+	}
+}
+
+// A run's reason is what the runner said when it failed it: herdr-desk run start prints it.
+func TestHandBackWritesItsReasonOnTheRun(t *testing.T) {
+	ctx := context.Background()
+	st := openStore(t, store.Options{})
+	task := mustAdd(t, st, "fails", model.StatusReady, "")
+	run, err := st.StartRun(ctx, task.Number, policyRoute, store.RunCaps{Slots: 1, PerDay: 1000})
+	if err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	if _, claimed, err := st.HandBack(ctx, run, store.HandBack{From: model.RunStarting, To: model.RunFailed, Reason: "spawn: no herdr"}); err != nil || !claimed {
+		t.Fatalf("HandBack() = (%t, %v), want a claim", claimed, err)
+	}
+	cur, _, err := st.CurrentRun(ctx, task.Number)
+	if err != nil || cur.Reason != "spawn: no herdr" {
+		t.Fatalf("run = %#v, %v; want reason %q", cur, err, "spawn: no herdr")
 	}
 }

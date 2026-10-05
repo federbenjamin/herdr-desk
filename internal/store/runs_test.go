@@ -23,7 +23,7 @@ func TestStartRunCreatesAStartingRunAndMarksTaskStartedWithItsRoute(t *testing.T
 		t.Fatalf("add ready task: %v", err)
 	}
 
-	run, err := st.StartRun(ctx, task.Number, startRoute, 100)
+	run, err := st.StartRun(ctx, task.Number, startRoute, store.RunCaps{Slots: 100, PerDay: 1000})
 	if err != nil {
 		t.Fatalf("StartRun() error = %v", err)
 	}
@@ -81,7 +81,7 @@ func TestStartRunRefusesDoneArchivedAndUnknownTasks(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			before := eventCount(t, st)
-			_, err := st.StartRun(ctx, tc.task, startRoute, 100)
+			_, err := st.StartRun(ctx, tc.task, startRoute, store.RunCaps{Slots: 100, PerDay: 1000})
 			if got := refusalCode(t, err); got != tc.code {
 				t.Errorf("StartRun(T%d) refusal = %q, want %q", tc.task, got, tc.code)
 			}
@@ -109,7 +109,7 @@ func TestCurrentRunReturnsTheTaskRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add ready task: %v", err)
 	}
-	want, err := st.StartRun(ctx, task.Number, startRoute, 100)
+	want, err := st.StartRun(ctx, task.Number, startRoute, store.RunCaps{Slots: 100, PerDay: 1000})
 	if err != nil {
 		t.Fatalf("StartRun() error = %v", err)
 	}
@@ -129,14 +129,14 @@ func TestCurrentRunReturnsTheNewestRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add ready task: %v", err)
 	}
-	first, err := st.StartRun(ctx, task.Number, startRoute, 100)
+	first, err := st.StartRun(ctx, task.Number, startRoute, store.RunCaps{Slots: 100, PerDay: 1000})
 	if err != nil {
 		t.Fatalf("start first run: %v", err)
 	}
 	if _, err := st.UpdateRun(ctx, first.ID, model.RunStarting, store.RunUpdate{State: model.RunEnded}); err != nil {
 		t.Fatalf("end first run: %v", err)
 	}
-	want, err := st.StartRun(ctx, task.Number, startRoute, 100)
+	want, err := st.StartRun(ctx, task.Number, startRoute, store.RunCaps{Slots: 100, PerDay: 1000})
 	if err != nil {
 		t.Fatalf("start second run: %v", err)
 	}
@@ -156,7 +156,7 @@ func TestRunWroteRequiresAnEventWithBothRunAndSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add ready task: %v", err)
 	}
-	run, err := st.StartRun(ctx, task.Number, startRoute, 100)
+	run, err := st.StartRun(ctx, task.Number, startRoute, store.RunCaps{Slots: 100, PerDay: 1000})
 	if err != nil {
 		t.Fatalf("StartRun() error = %v", err)
 	}

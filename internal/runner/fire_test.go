@@ -179,7 +179,7 @@ func TestStartDoesNotWaitForSelfOrWorktreeRoutes(t *testing.T) {
 func TestJobsFailsARunLeftStartingForOverAMinute(t *testing.T) {
 	f := newFixture(t, "", "self")
 	task := f.armThread("interrupted start", "agent")
-	if _, err := f.store.StartRun(f.ctx, task.Number, store.RunRoute{Root: f.root, Isolation: "self"}, 3); err != nil {
+	if _, err := f.store.StartRun(f.ctx, task.Number, store.RunRoute{Root: f.root, Isolation: "self"}, store.RunCaps{Slots: 3, PerDay: 1000}); err != nil {
 		t.Fatalf("start a run with no spawn: %v", err)
 	}
 	r := f.runner()
