@@ -29,16 +29,17 @@ func TestWriteHerdrSidebarAddsOneFencedDefaultRowAndIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestWriteHerdrSidebarRuleMatchesEveryNeedsYouRow(t *testing.T) {
+func TestWriteHerdrSidebarBoldsNeedsYouRunRows(t *testing.T) {
 	out, _ := sidebar.WriteHerdrSidebar("")
 	match := regexp.MustCompile(`contains\s*=\s*"([^"]+)"`).FindStringSubmatch(out)
 	if len(match) != 2 {
 		t.Fatalf("sidebar block has no contains rule:\n%s", out)
 	}
-	for _, row := range []string{"T23 needs you · blocked", "2 need you · 2 running"} {
-		if !strings.Contains(row, match[1]) {
-			t.Errorf("sidebar rule %q does not match row %q", match[1], row)
-		}
+	if match[1] != "needs you" {
+		t.Fatalf("sidebar rule = %q, want %q", match[1], "needs you")
+	}
+	if !strings.Contains("T23 needs you · blocked", match[1]) {
+		t.Errorf("sidebar rule %q does not match a blocked run row", match[1])
 	}
 	if strings.Contains("2 running", match[1]) {
 		t.Errorf("sidebar rule %q matches a row with nobody needing attention", match[1])

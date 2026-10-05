@@ -67,7 +67,7 @@ func runStoreAccessHelper() int {
 			fmt.Fprintf(os.Stderr, "parse run id: %v\n", err)
 			return 2
 		}
-		updated, err := st.UpdateRun(context.Background(), id, model.RunRouting, store.RunUpdate{State: model.RunRunning})
+		updated, err := st.UpdateRun(context.Background(), id, model.RunStarting, store.RunUpdate{State: model.RunRunning})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "UpdateRun: %v\n", err)
 			return 1
@@ -174,6 +174,9 @@ func TestOpenReadOnlyLeavesTheFilesystemAndSchemaUntouched(t *testing.T) {
 	if err := st.Close(); err != nil {
 		t.Fatalf("close initialized store: %v", err)
 	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatalf("make existing store mode observable: %v", err)
+	}
 	readonly, err := store.OpenReadOnly(path, store.Options{})
 	if err != nil {
 		t.Fatalf("open current store read-only: %v", err)
@@ -186,6 +189,13 @@ func TestOpenReadOnlyLeavesTheFilesystemAndSchemaUntouched(t *testing.T) {
 	}
 	if err := readonly.Close(); err != nil {
 		t.Fatalf("close read-only store: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat store after read-only open: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o644 {
+		t.Errorf("store mode after OpenReadOnly = %o, want 644", got)
 	}
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -231,7 +241,7 @@ func TestConcurrentUpdateRunWritesWaitInsteadOfReturningBusy(t *testing.T) {
 			st.Close()
 			t.Fatalf("add ready task %d: %v", i, err)
 		}
-		run, err := st.StartRun(context.Background(), task.Number)
+		run, err := st.StartRun(context.Background(), task.Number, store.RunRoute{}, 100)
 		if err != nil {
 			st.Close()
 			t.Fatalf("start run for task %d: %v", task.Number, err)
@@ -294,6 +304,9 @@ func runStoreAccessHelpers(t *testing.T, path, mode string, extra func(int) map[
 		children = append(children, c)
 	}
 	for _, c := range children {
+		if _, err := c.start.Write([]byte{1}); err != nil {
+			t.Fatalf("release child start barrier: %v", err)
+		}
 		if err := c.start.Close(); err != nil {
 			t.Fatalf("release child start barrier: %v", err)
 		}

@@ -5,7 +5,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
+	"time"
 
 	"github.com/federbenjamin/herdr-desk/internal/config"
 	"github.com/federbenjamin/herdr-desk/internal/testutil"
@@ -24,6 +26,9 @@ func TestLockHeldLeavesAMissingLockPathUntouched(t *testing.T) {
 	}
 	if _, err := os.Stat(path); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("LockHeld(missing) created %q: stat error = %v; want not exist", path, err)
+	}
+	if _, err := os.Stat(filepath.Dir(path)); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("LockHeld(missing) created parent %q: stat error = %v; want not exist", filepath.Dir(path), err)
 	}
 }
 
@@ -107,6 +112,15 @@ func TestLockWaitsForTheHolderAndThenAcquires(t *testing.T) {
 		result <- err
 	}()
 	<-entered
+	deadline := time.Now().Add(100 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		select {
+		case err := <-result:
+			t.Fatalf("Lock() returned while its holder still had the lock: %v", err)
+		default:
+			runtime.Gosched()
+		}
+	}
 
 	if err := holder(); err != nil {
 		t.Fatalf("holder unlock() error = %v", err)

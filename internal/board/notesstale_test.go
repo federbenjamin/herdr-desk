@@ -17,9 +17,10 @@ func TestTaskPageAStaleNotesSaveReopensAgainstTheNotesLastLoaded(t *testing.T) {
 	s, _ = s.Update(press('e'))
 	s, _ = s.Update(tea.PasteMsg{Content: " mine"})
 	s, save := s.Update(ctrl('s'))
-	if len(save) != 1 {
-		t.Fatalf("notes save effects = %#v, want one SetTask", save)
-	}
+	wantEffects(t, save, []board.Effect{board.SetTask{Task: 41, Patch: model.Patch{
+		Notes:     w4String("before mine"),
+		NotesWere: w4String("before"),
+	}}})
 
 	theirs := task
 	theirs.Notes = "theirs"

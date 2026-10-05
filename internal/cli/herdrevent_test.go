@@ -14,39 +14,36 @@ import (
 	"github.com/federbenjamin/herdr-desk/internal/testutil"
 )
 
-func TestHerdrEventHookDoesNotCreateStateForDisabledOrInvalidEvents(t *testing.T) {
-	for _, test := range []struct {
-		name  string
-		extra map[string]string
-	}{
-		{
-			name: "disabled",
-			extra: map[string]string{
-				"DESK_HOOKS":              "off",
-				"HERDR_PLUGIN_EVENT_JSON": `{"data":{"pane_id":"p-disabled"}}`,
-			},
-		},
-		{
-			name: "invalid event payload",
-			extra: map[string]string{
-				"HERDR_PLUGIN_EVENT_JSON": "not JSON",
-			},
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			home := testutil.StartHome(t, testutil.HomeOptions{})
-			fake := testutil.FakeHerdr(t)
+func TestHerdrEventHookDisabledDoesNotTrackAnOwnedPane(t *testing.T) {
+	home := testutil.StartHome(t, testutil.HomeOptions{})
+	fake := testutil.FakeHerdr(t)
+	task, run := trackedEventRun(t, home, "p-owned")
 
-			result := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"hook", "herdr-event"}, "", test.extra)
-			if result.exit != 0 || result.stdout != "" || result.stderr != "" {
-				t.Fatalf("hook result = (%d, %q, %q), want silent success", result.exit, result.stdout, result.stderr)
-			}
-			if _, err := os.Stat(home.Paths.DB()); !errors.Is(err, fs.ErrNotExist) {
-				t.Fatalf("hook created a store for %s: %v", test.name, err)
-			}
-			assertNoHerdrCalls(t, fake)
-		})
+	result := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"hook", "herdr-event"}, "", map[string]string{
+		"DESK_HOOKS":              "off",
+		"HERDR_PLUGIN_EVENT_JSON": `{"data":{"pane_id":"p-owned"}}`,
+	})
+	if result.exit != 0 || result.stdout != "" || result.stderr != "" {
+		t.Fatalf("hook result = (%d, %q, %q), want silent success", result.exit, result.stdout, result.stderr)
 	}
+	assertNoHerdrCalls(t, fake)
+	assertTrackedEventRun(t, home, task, run, model.RunRunning, model.StatusStarted)
+}
+
+func TestHerdrEventHookDoesNotCreateStateForAnInvalidEvent(t *testing.T) {
+	home := testutil.StartHome(t, testutil.HomeOptions{})
+	fake := testutil.FakeHerdr(t)
+
+	result := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"hook", "herdr-event"}, "", map[string]string{
+		"HERDR_PLUGIN_EVENT_JSON": "not JSON",
+	})
+	if result.exit != 0 || result.stdout != "" || result.stderr != "" {
+		t.Fatalf("hook result = (%d, %q, %q), want silent success", result.exit, result.stdout, result.stderr)
+	}
+	if _, err := os.Stat(home.Paths.DB()); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("hook created a store for an invalid event: %v", err)
+	}
+	assertNoHerdrCalls(t, fake)
 }
 
 func TestHerdrEventHookDoesNotCallHerdrForAnUnownedPane(t *testing.T) {
@@ -74,31 +71,7 @@ func TestHerdrEventHookDoesNotCallHerdrForAnUnownedPane(t *testing.T) {
 func TestHerdrEventHookTracksAnOwnedPaneFromHerdrInsteadOfTheEventPayload(t *testing.T) {
 	home := testutil.StartHome(t, testutil.HomeOptions{})
 	fake := testutil.FakeHerdr(t)
-	ctx := context.Background()
-
-	st, err := store.Open(home.Paths.DB(), store.Options{})
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	task, err := st.AddTask(ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{Title: "tracked event pane"}})
-	if err != nil {
-		t.Fatalf("add task: %v", err)
-	}
-	run, err := st.StartRun(ctx, task.Number, store.RunRoute{}, 1)
-	if err != nil {
-		t.Fatalf("start run: %v", err)
-	}
-	if updated, err := st.UpdateRun(ctx, run.ID, model.RunStarting, store.RunUpdate{
-		State:     model.RunRunning,
-		Session:   "worker-session",
-		Workspace: "workspace-owned",
-		Pane:      "p-owned",
-	}); err != nil || !updated {
-		t.Fatalf("make run trackable = (%t, %v), want update", updated, err)
-	}
-	if err := st.Close(); err != nil {
-		t.Fatalf("close setup store: %v", err)
-	}
+	task, run := trackedEventRun(t, home, "p-owned")
 
 	result := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"hook", "herdr-event"}, "", map[string]string{
 		"HERDR_PLUGIN_EVENT_JSON": `{"data":{"pane_id":"p-owned","agent_status":"working"}}`,
@@ -115,24 +88,58 @@ func TestHerdrEventHookTracksAnOwnedPaneFromHerdrInsteadOfTheEventPayload(t *tes
 		t.Fatalf("Herdr calls = %q, want one pane get for the owned pane", calls)
 	}
 
-	st, err = store.OpenReadOnly(home.Paths.DB(), store.Options{})
+	assertTrackedEventRun(t, home, task, run, model.RunEnded, model.StatusReview)
+}
+
+func trackedEventRun(t *testing.T, home *testutil.Home, pane string) (model.Task, model.Run) {
+	t.Helper()
+	ctx := context.Background()
+	st, err := store.Open(home.Paths.DB(), store.Options{})
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	task, err := st.AddTask(ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{Title: "tracked event pane"}})
+	if err != nil {
+		t.Fatalf("add task: %v", err)
+	}
+	run, err := st.StartRun(ctx, task.Number, store.RunRoute{}, 1)
+	if err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	if updated, err := st.UpdateRun(ctx, run.ID, model.RunStarting, store.RunUpdate{
+		State:     model.RunRunning,
+		Session:   "worker-session",
+		Workspace: "workspace-owned",
+		Pane:      pane,
+	}); err != nil || !updated {
+		t.Fatalf("make run trackable = (%t, %v), want update", updated, err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatalf("close setup store: %v", err)
+	}
+	return task, run
+}
+
+func assertTrackedEventRun(t *testing.T, home *testutil.Home, task model.Task, run model.Run, wantRun string, wantTask model.Status) {
+	t.Helper()
+	st, err := store.OpenReadOnly(home.Paths.DB(), store.Options{})
 	if err != nil {
 		t.Fatalf("reopen store read-only: %v", err)
 	}
 	defer st.Close()
-	runs, err := st.ListRuns(ctx)
+	runs, err := st.ListRuns(context.Background())
 	if err != nil {
 		t.Fatalf("list runs: %v", err)
 	}
-	if len(runs) != 1 || runs[0].State != model.RunEnded {
-		t.Fatalf("runs after missing pane = %#v, want one ended run", runs)
+	if len(runs) != 1 || runs[0].ID != run.ID || runs[0].State != wantRun {
+		t.Fatalf("runs = %#v, want run %d in state %q", runs, run.ID, wantRun)
 	}
-	detail, err := st.GetTask(ctx, task.Number)
+	detail, err := st.GetTask(context.Background(), task.Number)
 	if err != nil {
 		t.Fatalf("read tracked task: %v", err)
 	}
-	if detail.Task.Status != model.StatusReview {
-		t.Fatalf("task status after missing pane = %q, want %q", detail.Task.Status, model.StatusReview)
+	if detail.Task.Status != wantTask {
+		t.Fatalf("task status = %q, want %q", detail.Task.Status, wantTask)
 	}
 }
 

@@ -20,7 +20,7 @@ func TestOpenAppliesStoreConfigAndCloseOwnsItsStore(t *testing.T) {
 		t.Fatalf("write scanner: %v", err)
 	}
 	c := config.Default()
-	c.Runner.AgentsMayArm = true
+	c.Coordinator.StartRuns = config.StartRunsAuto
 	c.Runner.OnMerged = "done"
 	c.SecretScan.Command = []string{scanner}
 

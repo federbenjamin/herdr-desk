@@ -158,12 +158,49 @@ func TestClaimWaitingStartsTheOldestRunOnceASlotOpens(t *testing.T) {
 	if !ok || claimed.ID != waiting[0].ID || claimed.State != model.RunStarting || !claimed.StartedTS.Equal(now) {
 		t.Errorf("ClaimWaiting() = (%#v, %t), want oldest run %d starting at %v", claimed, ok, waiting[0].ID, now)
 	}
+	persisted, ok, err := st.CurrentRun(ctx, waiting[0].Task)
+	if err != nil || !ok {
+		t.Fatalf("read claimed run = (%t, %v)", ok, err)
+	}
+	if persisted.State != model.RunStarting || !persisted.StartedTS.Equal(now) {
+		t.Errorf("claimed run in store = %#v, want starting at %v", persisted, now)
+	}
 	second, ok, err := st.CurrentRun(ctx, waiting[1].Task)
 	if err != nil || !ok {
 		t.Fatalf("read second waiting run = (%t, %v)", ok, err)
 	}
 	if second.State != model.RunWaiting {
 		t.Errorf("second waiting run state = %q, want waiting", second.State)
+	}
+}
+
+func TestUpdateRunFromIdleKeepsTheOriginalStartTime(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, time.October, 4, 12, 0, 0, 0, time.UTC)
+	st := openRunPolicyStore(t, &now, false)
+	task, err := st.AddTask(ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{Title: "idle run", Status: model.StatusReady}})
+	if err != nil {
+		t.Fatalf("add task: %v", err)
+	}
+	run, err := st.StartRun(ctx, task.Number, policyRoute, 1)
+	if err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+
+	now = now.Add(time.Hour)
+	if changed, err := st.UpdateRun(ctx, run.ID, model.RunStarting, store.RunUpdate{State: model.RunIdle}); err != nil || !changed {
+		t.Fatalf("set run idle = (%t, %v)", changed, err)
+	}
+	now = now.Add(time.Hour)
+	if changed, err := st.UpdateRun(ctx, run.ID, model.RunIdle, store.RunUpdate{State: model.RunRunning}); err != nil || !changed {
+		t.Fatalf("resume idle run = (%t, %v)", changed, err)
+	}
+	got, ok, err := st.CurrentRun(ctx, task.Number)
+	if err != nil || !ok {
+		t.Fatalf("read resumed run = (%t, %v)", ok, err)
+	}
+	if !got.StartedTS.Equal(run.StartedTS) {
+		t.Errorf("resumed run started at %v, want original start %v", got.StartedTS, run.StartedTS)
 	}
 }
 

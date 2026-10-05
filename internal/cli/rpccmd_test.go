@@ -180,6 +180,8 @@ func TestTickerRunHoldsTheLockSoASecondOneSaysSoAndStopsWithItsContext(t *testin
 		return r.exit == 0 && json.Unmarshal([]byte(r.stdout), &st) == nil && st.Ticker.Running
 	}
 	deadline := time.Now().Add(10 * time.Second)
+	poll := time.NewTicker(20 * time.Millisecond)
+	defer poll.Stop()
 	for !running() {
 		select {
 		case code := <-done:
@@ -189,7 +191,7 @@ func TestTickerRunHoldsTheLockSoASecondOneSaysSoAndStopsWithItsContext(t *testin
 		if time.Now().After(deadline) {
 			t.Fatal("ticker status never reported the ticker running")
 		}
-		time.Sleep(20 * time.Millisecond)
+		<-poll.C
 	}
 
 	second := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"ticker"}, "", nil)

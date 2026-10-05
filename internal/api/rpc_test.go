@@ -6,25 +6,24 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/federbenjamin/herdr-desk/internal/api"
 	"github.com/federbenjamin/herdr-desk/internal/config"
 	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/store"
 	"github.com/federbenjamin/herdr-desk/internal/testutil"
 )
 
 func TestServeRPCWritesOneEnvelopeForResultsRefusalsAndBadRequests(t *testing.T) {
-	home := testutil.StartHome(t, testutil.HomeOptions{})
-	cfg, err := config.Load(home.Paths.ConfigFile())
-	if err != nil {
-		t.Fatalf("load home config: %v", err)
-	}
-
 	for _, tc := range []struct {
 		name  string
 		input string
+		setup func(t *testing.T, home *testutil.Home)
 		check func(t *testing.T, response api.RPCResponse)
 	}{
 		{
@@ -57,8 +56,45 @@ func TestServeRPCWritesOneEnvelopeForResultsRefusalsAndBadRequests(t *testing.T)
 				}
 			},
 		},
+		{
+			name:  "request over one mebibyte",
+			input: strings.Repeat("x", 1<<20+1),
+			check: func(t *testing.T, response api.RPCResponse) {
+				t.Helper()
+				if response.Result != nil || response.Refusal != nil || response.Error == nil || !response.Error.BadRequest || !strings.Contains(response.Error.Message, "over 1048576 bytes") {
+					t.Fatalf("oversize request response = %+v, want only a bad-request error", response)
+				}
+			},
+		},
+		{
+			name:  "home failure",
+			input: `{"method":"status","params":{}}`,
+			setup: func(t *testing.T, home *testutil.Home) {
+				t.Helper()
+				if err := os.MkdirAll(filepath.Dir(home.Paths.DB()), 0o700); err != nil {
+					t.Fatalf("create the store folder: %v", err)
+				}
+				if err := os.Mkdir(home.Paths.DB(), 0o700); err != nil {
+					t.Fatalf("block the store path: %v", err)
+				}
+			},
+			check: func(t *testing.T, response api.RPCResponse) {
+				t.Helper()
+				if response.Result != nil || response.Refusal != nil || response.Error == nil || response.Error.BadRequest {
+					t.Fatalf("store failure response = %+v, want only a retryable error", response)
+				}
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			home := testutil.StartHome(t, testutil.HomeOptions{})
+			cfg, err := config.Load(home.Paths.ConfigFile())
+			if err != nil {
+				t.Fatalf("load home config: %v", err)
+			}
+			if tc.setup != nil {
+				tc.setup(t, home)
+			}
 			var out bytes.Buffer
 			if err := api.ServeRPC(context.Background(), home.Paths, cfg, bytes.NewBufferString(tc.input), &out); err != nil {
 				t.Fatalf("ServeRPC: %v", err)
@@ -77,6 +113,66 @@ func TestServeRPCWritesOneEnvelopeForResultsRefusalsAndBadRequests(t *testing.T)
 	}
 }
 
+func TestLocalTransportKeepsItsStoreUntilClose(t *testing.T) {
+	ctx := context.Background()
+	home := testutil.StartHome(t, testutil.HomeOptions{})
+	client := home.Client()
+	task, err := client.AddTask(ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{Title: "keep the opened store"}})
+	if err != nil {
+		t.Fatalf("add task: %v", err)
+	}
+	if err := client.Close(); err != nil {
+		t.Fatalf("close setup client: %v", err)
+	}
+	cfg, err := config.Load(home.Paths.ConfigFile())
+	if err != nil {
+		t.Fatalf("load home config: %v", err)
+	}
+	transport := api.NewLocalTransport(home.Paths, cfg)
+	t.Cleanup(func() {
+		if err := transport.Close(); err != nil {
+			t.Errorf("close local transport: %v", err)
+		}
+	})
+
+	list := func() api.TaskList {
+		t.Helper()
+		response, err := transport.RoundTrip(ctx, api.MethodTasksList, []byte(`{}`))
+		if err != nil {
+			t.Fatalf("tasks.list: %v", err)
+		}
+		var envelope api.RPCResponse
+		if err := json.Unmarshal(response, &envelope); err != nil {
+			t.Fatalf("decode tasks.list response %q: %v", response, err)
+		}
+		if envelope.Error != nil || envelope.Refusal != nil {
+			t.Fatalf("tasks.list response = %+v, want a result", envelope)
+		}
+		var got api.TaskList
+		if err := json.Unmarshal(envelope.Result, &got); err != nil {
+			t.Fatalf("decode task list: %v", err)
+		}
+		return got
+	}
+
+	if got := list(); len(got.Tasks) != 1 || got.Tasks[0].Number != task.Number {
+		t.Fatalf("first task list = %+v, want task %d", got.Tasks, task.Number)
+	}
+	moved := home.Paths.DB() + ".moved"
+	if err := os.Rename(home.Paths.DB(), moved); err != nil {
+		t.Fatalf("move store after first request: %v", err)
+	}
+	if got := list(); len(got.Tasks) != 1 || got.Tasks[0].Number != task.Number {
+		t.Fatalf("second task list = %+v, want the already-opened task %d", got.Tasks, task.Number)
+	}
+	if err := transport.Close(); err != nil {
+		t.Fatalf("close local transport: %v", err)
+	}
+	if got := list(); len(got.Tasks) != 0 {
+		t.Fatalf("task list after Close = %+v, want a reopened empty store", got.Tasks)
+	}
+}
+
 func TestCommandTransportCarriesOneRequestAndClassifiesAnUnreachableHome(t *testing.T) {
 	home := testutil.StartHome(t, testutil.HomeOptions{})
 	machine := testutil.NewClientMachine(t, home)
@@ -86,7 +182,7 @@ func TestCommandTransportCarriesOneRequestAndClassifiesAnUnreachableHome(t *test
 	}
 	transport := api.NewCommandTransport(machine.Paths, cfg, time.Second)
 
-	response, err := transport.RoundTrip(context.Background(), api.MethodStatus, []byte(`{}`))
+	response, err := transport.RoundTrip(context.Background(), api.MethodTasksGet, []byte(`{"number":999}`))
 	if err != nil {
 		t.Fatalf("round trip to running home: %v", err)
 	}
@@ -94,8 +190,8 @@ func TestCommandTransportCarriesOneRequestAndClassifiesAnUnreachableHome(t *test
 	if err := json.Unmarshal(response, &envelope); err != nil {
 		t.Fatalf("decode home response %q: %v", response, err)
 	}
-	if envelope.Refusal != nil || envelope.Error != nil || !json.Valid(envelope.Result) {
-		t.Fatalf("running home response = %+v, want only a JSON result", envelope)
+	if envelope.Result != nil || envelope.Error != nil || envelope.Refusal == nil || envelope.Refusal.Code != model.CodeUnknownTask {
+		t.Fatalf("running home response = %+v, want only the %q refusal", envelope, model.CodeUnknownTask)
 	}
 
 	home.Stop()
@@ -103,6 +199,34 @@ func TestCommandTransportCarriesOneRequestAndClassifiesAnUnreachableHome(t *test
 	refusal, ok := model.AsRefusal(err)
 	if !ok || refusal.Code != model.CodeHomeUnreachable {
 		t.Fatalf("round trip to stopped home error = %v, want %q refusal", err, model.CodeHomeUnreachable)
+	}
+
+	missingCommand := api.NewCommandTransport(machine.Paths, config.Config{Client: config.Client{
+		Home:    "missing-home",
+		Command: []string{machine.Paths.ConfigDir + "/missing-client-command"},
+	}}, time.Second)
+	_, err = missingCommand.RoundTrip(context.Background(), api.MethodStatus, []byte(`{}`))
+	refusal, ok = model.AsRefusal(err)
+	if !ok || refusal.Code != model.CodeHomeUnreachable {
+		t.Fatalf("round trip with an unstartable command error = %v, want %q refusal", err, model.CodeHomeUnreachable)
+	}
+}
+
+func TestCommandTransportClassifiesItsDeadlineAsAnUnreachableHome(t *testing.T) {
+	if os.Getenv("HERDR_DESK_W3_HANG") == "1" {
+		select {}
+	}
+
+	machine := testutil.NewMachine(t)
+	transport := api.NewCommandTransport(machine.Paths, config.Config{Client: config.Client{
+		Home:    "slow-home",
+		Command: []string{"env", "HERDR_DESK_W3_HANG=1", os.Args[0], "-test.run=^TestCommandTransportClassifiesItsDeadlineAsAnUnreachableHome$"},
+	}}, time.Millisecond)
+
+	_, err := transport.RoundTrip(context.Background(), api.MethodStatus, []byte(`{}`))
+	refusal, ok := model.AsRefusal(err)
+	if !ok || refusal.Code != model.CodeHomeUnreachable {
+		t.Fatalf("round trip past its deadline error = %v, want %q refusal", err, model.CodeHomeUnreachable)
 	}
 }
 
@@ -135,6 +259,37 @@ func TestClientKeepsTheFirstUnreachableHomeForItsLifetime(t *testing.T) {
 	}
 	if transport.calls != 1 {
 		t.Fatalf("unreachable client called its transport %d times, want one", transport.calls)
+	}
+}
+
+func TestClientKeepsACommandStartFailureStickyForItsLifetime(t *testing.T) {
+	machine := testutil.NewMachine(t)
+	command := filepath.Join(machine.Paths.ConfigDir, "home-command")
+	client := api.NewClient(api.ClientOptions{
+		Paths: machine.Paths,
+		Config: config.Config{Client: config.Client{
+			Home:    "home",
+			Command: []string{command},
+		}},
+		Timeout: time.Second,
+	})
+
+	_, err := client.Status(context.Background())
+	refusal, ok := model.AsRefusal(err)
+	if !ok || refusal.Code != model.CodeHomeUnreachable {
+		t.Fatalf("Status with a missing command error = %v, want %q refusal", err, model.CodeHomeUnreachable)
+	}
+	if err := os.MkdirAll(filepath.Dir(command), 0o700); err != nil {
+		t.Fatalf("create command folder: %v", err)
+	}
+	if err := os.WriteFile(command, []byte("#!/bin/sh\nprintf '%s\\n' '{\"result\":{}}'\n"), 0o700); err != nil {
+		t.Fatalf("write command that would answer after the failure: %v", err)
+	}
+
+	_, err = client.Status(context.Background())
+	refusal, ok = model.AsRefusal(err)
+	if !ok || refusal.Code != model.CodeHomeUnreachable {
+		t.Fatalf("second Status after command appears error = %v, want the sticky %q refusal", err, model.CodeHomeUnreachable)
 	}
 }
 
