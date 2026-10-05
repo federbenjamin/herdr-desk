@@ -20,6 +20,7 @@ import (
 	"github.com/federbenjamin/herdr-desk/internal/secretscan"
 
 	_ "modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // Options configures a Store.
@@ -90,11 +91,38 @@ func Open(path string, o Options) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := connect(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("open %s: %w", path, err)
+	}
 	if err := migrate(context.Background(), db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
 	return newStore(db, o), nil
+}
+
+// busyTimeout is the DSN's busy_timeout.
+const busyTimeout = 5 * time.Second
+
+// connect makes the first connection, retrying while it fails with SQLITE_BUSY, up to busyTimeout. The switch of a
+// new file to WAL runs as each connection opens and does not wait on the busy timeout, so processes opening a new
+// store at once can see busy here.
+func connect(db *sql.DB) error {
+	deadline := time.Now().Add(busyTimeout)
+	for {
+		err := db.Ping()
+		if err == nil || !isBusy(err) || time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// isBusy reports SQLITE_BUSY or one of its extended codes.
+func isBusy(err error) bool {
+	var coded interface{ Code() int }
+	return errors.As(err, &coded) && coded.Code()&0xff == sqlite3.SQLITE_BUSY
 }
 
 // OpenReadOnly opens an existing store for reading. It never creates the file or its folder, never changes a
