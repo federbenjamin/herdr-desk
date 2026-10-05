@@ -53,6 +53,12 @@ In Claude Code:
 /plugin install herdr-desk@herdr-desk
 ```
 
+Claude Code keeps a plugin by its version. A release changes the version, so `claude plugin update
+herdr-desk@herdr-desk` picks up the new skill. A build from source between releases keeps the version, so
+`claude plugin update` says it is already at the latest and keeps the old skill: remove the plugin and
+install it again with `claude plugin uninstall herdr-desk@herdr-desk`, then
+`claude plugin install herdr-desk@herdr-desk`.
+
 The plugin registers a `SessionStart` hook (`herdr-desk hook start --format claude-code`) and the `herdr-desk`
 skill. `herdr-desk setup` also writes the skill to `~/.claude/skills/herdr-desk/SKILL.md` when you pass
 `--skill-dir ~/.claude/skills`. It binds `prefix+t` (open the board) and `prefix+a` (capture) in
@@ -196,7 +202,7 @@ stderr: it exits 1 when the home does not answer, so a script can ask whether it
 | `herdr-desk list [--ready\|--open\|--done\|--archived\|--all] [-p <project>\|--desk]` | lists tasks; default is the five live statuses. `-p` and `--desk` narrow every filter, `--all` too; a bare name no task's project carries is `unknown-project`, as for `add`. Offline the name is looked up in the whole snapshot, which holds live tasks only, so a bare name none of them carries lists nothing; a relative path such as `a/b` is `unknown-project` online and offline |
 | `herdr-desk show <task>` | one task with its steps and history |
 | `herdr-desk set <task> [<status>] [--thread <t>] [--root <r>] [--isolation <i>] [--model <m>] [--archive\|--unarchive] [--ref <ref>] [--merged]` | patches fields; `review --merged` writes the status that `runner.on_merged` names. Setting `done` ends the task's live run, an `idle` one included |
-| `herdr-desk edit <task> [--title <t>] [--notes <n>] [--append-notes <text>]` | `--notes` replaces the notes. `--append-notes` adds `<text>` on a new line at the end: it writes only if nobody changed the notes since it read them, and when someone did it reads again and retries once; a second `stale` exits 1 |
+| `herdr-desk edit <task> [--title <t>] [--notes <n>] [--append-notes <text>]` | `--notes` replaces the notes. `--append-notes` adds `<text>` on a new line at the end: it writes only if nobody changed the notes since it read them, and when someone did it reads again and retries once; a second `stale` exits 1. Empty or whitespace-only `<text>` is refused `empty-text` and writes nothing |
 | `herdr-desk steps <task> add <text>` · `toggle <id>` · `rename <id> <text>` · `remove <id>` | step ids are `s1`, `s2`, … per task, never reused |
 | `herdr-desk note <text> [--task <task>] [--ref <ref>] [--branch <b>] [--tag <t>]…` | appends a note and prints `e<id>`, or `queued` when the home is unreachable (stderr says why the home did not answer) |
 | `herdr-desk note --merged --branch <b> [--pr <n>] [--sha <sha>] [<text>]` | records that a branch merged |
@@ -243,9 +249,10 @@ The header is `herdr-desk  <project> ▾  thread: <thread> ▾` on the left and 
 `offline: <key> needs the home`. A refusal or error from the home shows on the status line until the next key.
 
 Below the header are the three sections, each with its title even when empty. `NEEDS YOU` lists
-blocked and review tasks, `IN MOTION` started ones (root, isolation, model, and elapsed time of the
-live run, and the last note under the row), `ON DECK` the ready ones, then `inbox` and the open ones.
-`d` adds a `DONE` section.
+blocked and review tasks, `IN MOTION` started ones (and the last note under the row), `ON DECK` the ready
+ones, then `inbox` and the open ones. `d` adds a `DONE` section. A row whose task has a live run, in any
+section, shows the run: its state, root, isolation, model, and elapsed time
+(`running · alpha · worktree · gpt · 1h`); a row without one shows its project and how long ago it changed.
 
 Width decides the layout: under 78 columns one surface at a time and rows without their right-hand
 detail; from 78 to 109 one surface with full rows; from 110 the board on the left and the selected

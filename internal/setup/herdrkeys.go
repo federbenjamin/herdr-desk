@@ -73,11 +73,21 @@ func dropBinding(lines []string, key string, remove bool) ([]string, bool) {
 			held = true
 		}
 		if match && remove {
-			i = end - 1
+			// The blank and comment lines after the table's last setting belong to what follows; they stay.
+			last := end
+			for last > i+1 && isBlankOrComment(lines[last-1]) {
+				last--
+			}
+			i = last - 1
 			continue
 		}
 		out = append(out, lines[i:end]...)
 		i = end - 1
 	}
 	return out, held
+}
+
+func isBlankOrComment(line string) bool {
+	t := strings.TrimSpace(line)
+	return t == "" || strings.HasPrefix(t, "#")
 }

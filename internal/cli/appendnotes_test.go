@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"github.com/federbenjamin/herdr-desk/internal/api"
 	"github.com/federbenjamin/herdr-desk/internal/config"
 	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/store"
 	"github.com/federbenjamin/herdr-desk/internal/testutil"
 )
 
@@ -162,5 +164,26 @@ func TestEditRejectsReplacingAndAppendingNotesTogether(t *testing.T) {
 	result := runDesk(t, machine.Getenv(nil), t.TempDir(), "", "edit", "T1", "--notes", "replace", "--append-notes", "append")
 	if result.exit != 2 || result.stdout != "" || !strings.Contains(result.stderr, "notes") || !strings.Contains(result.stderr, "append-notes") {
 		t.Fatalf("edit with both notes flags = %#v, want usage refusal", result)
+	}
+}
+
+func TestEditAppendNotesRefusesEmptyTextAndWritesNothing(t *testing.T) {
+	for _, text := range []string{"", "   ", "\n\t"} {
+		home := testutil.StartHome(t, testutil.HomeOptions{})
+		task, err := home.Client().AddTask(context.Background(), store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{Title: "notes task", Notes: "keep me"}})
+		if err != nil {
+			t.Fatalf("create task: %v", err)
+		}
+		result := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"edit", "T1", "--append-notes", text}, "", nil)
+		if result.exit != 1 || result.stdout != "" || !strings.Contains(result.stderr, model.CodeEmptyText) {
+			t.Errorf("edit --append-notes %q = %#v; want exit 1 and %s", text, result, model.CodeEmptyText)
+		}
+		detail, err := home.Client().GetTask(context.Background(), task.Number)
+		if err != nil {
+			t.Fatalf("read task: %v", err)
+		}
+		if detail.Task.Notes != "keep me" {
+			t.Errorf("notes after refused append %q = %q; want them unchanged", text, detail.Task.Notes)
+		}
 	}
 }

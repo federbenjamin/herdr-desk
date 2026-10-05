@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/federbenjamin/herdr-desk/internal/setup"
+	"github.com/pelletier/go-toml/v2"
 )
 
 func TestWriteHerdrKeysAddsOnlyDeskBindingsInsideItsFence(t *testing.T) {
@@ -84,5 +85,38 @@ command = "other.capture"
 	}
 	if !reflect.DeepEqual(againBound, []string{"prefix+t", "prefix+a"}) || len(againSkipped) != 0 {
 		t.Errorf("second WriteHerdrKeys bound, skipped = %#v, %#v; want both herdr-desk keys and none skipped", againBound, againSkipped)
+	}
+}
+
+// The blank and comment lines after a removed binding belong to the binding that follows it.
+func TestWriteHerdrKeysForceKeepsTheCommentsAboveTheNextBinding(t *testing.T) {
+	const keep = "\n# my own binding\n# opens the notes\n"
+	conflicted := "[[keys.command]]\nkey = \"prefix+t\"\ntype = \"plugin_action\"\ncommand = \"other.open\"\n" +
+		keep + "[[keys.command]]\nkey = \"prefix+n\"\ntype = \"plugin_action\"\ncommand = \"other.notes\"\n"
+	out, bound, _ := setup.WriteHerdrKeys(conflicted, true)
+	if !reflect.DeepEqual(bound, []string{"prefix+t", "prefix+a"}) {
+		t.Fatalf("bound = %#v; want both keys", bound)
+	}
+	want := keep + "[[keys.command]]\nkey = \"prefix+n\""
+	if !strings.Contains(out, want) {
+		t.Errorf("the comments above the next binding are gone:\n%s", out)
+	}
+	if strings.Contains(out, "other.open") {
+		t.Errorf("the conflicting binding stayed:\n%s", out)
+	}
+	var parsed struct {
+		Keys struct {
+			Command []map[string]string `toml:"command"`
+		} `toml:"keys"`
+	}
+	if err := toml.Unmarshal([]byte(out), &parsed); err != nil {
+		t.Fatalf("output is not TOML: %v\n%s", err, out)
+	}
+	if len(parsed.Keys.Command) != 3 {
+		t.Errorf("parsed %d bindings, want 3 (notes, open-board, capture):\n%s", len(parsed.Keys.Command), out)
+	}
+	again, _, _ := setup.WriteHerdrKeys(out, false)
+	if again != out {
+		t.Errorf("second run changed the text:\nfirst:\n%s\nsecond:\n%s", out, again)
 	}
 }

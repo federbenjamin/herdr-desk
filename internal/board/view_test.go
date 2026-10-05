@@ -334,3 +334,42 @@ func TestViewTaskTextReachesTheTerminalAsInertText(t *testing.T) {
 		w3RequireInert(t, s)
 	}
 }
+
+// A run ends only on done or its worker's hand-back, so a task a person moved off started still shows its agent.
+func TestViewRowDetailShowsTheLiveRunWhateverTheTaskStatus(t *testing.T) {
+	started := w3Now.Add(-90 * time.Minute)
+	live := func(state string) []model.Run {
+		return []model.Run{{Task: 1, State: state, Root: "/work/alpha", Isolation: "worktree", Model: "gpt", StartedTS: started}}
+	}
+	for _, c := range []struct {
+		name   string
+		status model.Status
+		runs   []model.Run
+		want   string
+	}{
+		{"open with a running run", model.StatusOpen, live(model.RunRunning), "T1  open     the task  running · alpha · worktree · gpt · 1h"},
+		{"review with an idle run", model.StatusReview, live(model.RunIdle), "T1  review   the task  idle · alpha · worktree · gpt · 1h"},
+		{"started with a running run", model.StatusStarted, live(model.RunRunning), "T1  started  the task  running · alpha · worktree · gpt · 1h"},
+		{"blocked with a waiting run", model.StatusBlocked, live(model.RunWaiting), "T1  blocked  the task  waiting · alpha · worktree · gpt · 1h"},
+		{"started with no run", model.StatusStarted, nil, "T1  started  the task  alpha · 5m ago"},
+		{"open with an ended run", model.StatusOpen, []model.Run{{Task: 1, State: model.RunRunning, Root: "/work/alpha", EndedTS: w3Now}}, "T1  open     the task  alpha · 5m ago"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			data := board.Data{
+				Tasks: []model.Task{{Number: 1, Title: "the task", Status: c.status, Project: "/work/alpha", UpdatedTS: w3Now.Add(-5 * time.Minute)}},
+				Runs:  c.runs,
+			}
+			text := w3State(109, data).Text()
+			var row string
+			for _, line := range strings.Split(text, "\n") {
+				if strings.Contains(line, "T1  ") {
+					row = line
+					break
+				}
+			}
+			if !strings.Contains(strings.Join(strings.Fields(row), " "), strings.Join(strings.Fields(c.want), " ")) {
+				t.Errorf("row = %q; want it to hold %q\n%s", row, c.want, text)
+			}
+		})
+	}
+}

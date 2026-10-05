@@ -66,7 +66,7 @@ func TestRunStartsTheCommandInTheWorkspaceCwdAndEnvironment(t *testing.T) {
 	if err := client.Run(context.Background(), created.Pane, command); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	pollUntil(t, 2*time.Second, func() bool {
+	pollUntil(t, pollBound, func() bool {
 		_, err := os.Stat(output)
 		return err == nil
 	})
@@ -98,7 +98,7 @@ func TestPanesReportAgentStateAndRemoveExitedCommands(t *testing.T) {
 	}
 
 	runFake(t, "pane", "report-agent", created.Pane, "--source", "test", "--agent", "test", "--state", "idle", "--agent-session-id", "session-123")
-	pollUntil(t, 2*time.Second, func() bool {
+	pollUntil(t, pollBound, func() bool {
 		panes, err := client.Panes(context.Background())
 		if err != nil {
 			return false
@@ -111,7 +111,7 @@ func TestPanesReportAgentStateAndRemoveExitedCommands(t *testing.T) {
 	if err := client.Run(context.Background(), exited.Pane, "exit 0"); err != nil {
 		t.Fatalf("Run(exited pane) error = %v", err)
 	}
-	pollUntil(t, 2*time.Second, func() bool {
+	pollUntil(t, pollBound, func() bool {
 		panes, err := client.Panes(context.Background())
 		return err == nil && !hasPane(panes, exited.Pane)
 	})
@@ -126,7 +126,7 @@ func TestProcessesReportTheRunningProcessGroup(t *testing.T) {
 	}
 
 	var got herdr.Processes
-	pollUntil(t, 2*time.Second, func() bool {
+	pollUntil(t, pollBound, func() bool {
 		var err error
 		got, err = client.Processes(context.Background(), created.Pane)
 		return err == nil && got.Group > 0 && len(got.PIDs) > 0
@@ -144,7 +144,7 @@ func TestClosePaneKillsItsProcessesAndRemovesThePane(t *testing.T) {
 	}
 
 	var processes herdr.Processes
-	pollUntil(t, 2*time.Second, func() bool {
+	pollUntil(t, pollBound, func() bool {
 		var err error
 		processes, err = client.Processes(context.Background(), created.Pane)
 		return err == nil && len(processes.PIDs) > 0
@@ -152,13 +152,13 @@ func TestClosePaneKillsItsProcessesAndRemovesThePane(t *testing.T) {
 	if err := client.ClosePane(context.Background(), created.Pane); err != nil {
 		t.Fatalf("ClosePane() error = %v", err)
 	}
-	pollUntil(t, 2*time.Second, func() bool {
+	pollUntil(t, pollBound, func() bool {
 		panes, err := client.Panes(context.Background())
 		return err == nil && !hasPane(panes, created.Pane)
 	})
 	for _, pid := range processes.PIDs {
 		pid := pid
-		pollUntil(t, 2*time.Second, func() bool { return !processAlive(pid) })
+		pollUntil(t, pollBound, func() bool { return !processAlive(pid) })
 	}
 }
 
@@ -291,6 +291,10 @@ func findPane(panes []herdr.Pane, id string) herdr.Pane {
 func hasPane(panes []herdr.Pane, id string) bool {
 	return findPane(panes, id).ID != ""
 }
+
+// pollBound is how long a test waits for a condition. A passing poll returns at once; the bound only has to outlast
+// a machine running the whole suite in parallel.
+const pollBound = 10 * time.Second
 
 func pollUntil(t *testing.T, timeout time.Duration, condition func() bool) {
 	t.Helper()
