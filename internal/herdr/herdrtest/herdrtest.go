@@ -18,8 +18,8 @@ type Workspace struct {
 }
 
 // Herdr has the methods of herdr.Client that runner.Herdr names, so it satisfies it. It is safe for concurrent use. A
-// new pane reports status "unknown" and no session. ClosePane removes the pane; Run, Processes, and ClosePane on an
-// unknown pane are errors, and Pane reports it not found.
+// new pane reports status "unknown" and no session. ClosePane removes the pane; Run, Processes, ClosePane, and
+// FocusPane on an unknown pane are errors, and Pane reports it not found.
 type Herdr struct {
 	mu         sync.Mutex
 	next       int
@@ -28,6 +28,7 @@ type Herdr struct {
 	panes      map[string]herdr.Pane
 	procs      map[string]herdr.Processes
 	closed     []string
+	focused    []string
 	fails      map[string]error
 }
 
@@ -133,6 +134,30 @@ func (h *Herdr) ClosePane(_ context.Context, pane string) error {
 	return nil
 }
 
+// FocusPane records the pane as focused. It checks the ids as herdr.FocusArgv does; an unknown pane is an error.
+func (h *Herdr) FocusPane(_ context.Context, workspace, pane string) error {
+	if _, err := herdr.FocusArgv("herdr", workspace, pane); err != nil {
+		return err
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if err := h.fails["FocusPane"]; err != nil {
+		return err
+	}
+	if _, ok := h.panes[pane]; !ok {
+		return fmt.Errorf("herdr pane zoom: unknown pane %q", pane)
+	}
+	h.focused = append(h.focused, pane)
+	return nil
+}
+
+// Focused returns the panes FocusPane was called for, in order.
+func (h *Herdr) Focused() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return slices.Clone(h.focused)
+}
+
 // Workspaces returns every workspace created, in order.
 func (h *Herdr) Workspaces() []Workspace {
 	h.mu.Lock()
@@ -178,7 +203,8 @@ func (h *Herdr) Closed() []string {
 	return slices.Clone(h.closed)
 }
 
-// Fail makes the named method (CreateWorkspace, Run, Panes, Pane, Processes, or ClosePane) return err; nil clears it.
+// Fail makes the named method (CreateWorkspace, Run, Panes, Pane, Processes, ClosePane, or FocusPane) return err;
+// nil clears it.
 func (h *Herdr) Fail(method string, err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

@@ -31,6 +31,7 @@ type Herdr interface {
 	Pane(ctx context.Context, id string) (herdr.Pane, bool, error)
 	Processes(ctx context.Context, pane string) (herdr.Processes, error)
 	ClosePane(ctx context.Context, pane string) error
+	FocusPane(ctx context.Context, workspace, pane string) error
 }
 
 // The runner's states, as State returns them and the status method shows them.

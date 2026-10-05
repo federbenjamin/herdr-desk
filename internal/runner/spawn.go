@@ -55,7 +55,7 @@ func (r *Runner) spawn(ctx context.Context, h Herdr, t model.Task, run model.Run
 		r.fail(ctx, run, state, "spawn: "+clip(reason)+extra)
 		return false
 	}
-	command, err := r.paneCommand()
+	command, err := r.paneCommand("worker")
 	if err != nil {
 		return failSpawn(ctx, from, err.Error(), nil)
 	}
@@ -112,8 +112,9 @@ func (r *Runner) spawn(ctx context.Context, h Herdr, t model.Task, run model.Run
 	return true
 }
 
-// paneCommand is the one text typed into a pane: exec of this herdr-desk binary's worker command.
-func (r *Runner) paneCommand() (string, error) {
+// paneCommand is the one text typed into a pane: exec of this herdr-desk binary with sub, a fixed subcommand
+// (`worker` for a run, `coordinator run` for the coordinator), never task text.
+func (r *Runner) paneCommand(sub string) (string, error) {
 	exe := r.o.Exe
 	if exe == "" {
 		var err error
@@ -125,7 +126,7 @@ func (r *Runner) paneCommand() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return "exec " + quoted + " worker", nil
+	return "exec " + quoted + " " + sub, nil
 }
 
 // shellQuote returns path as it is when it holds only [A-Za-z0-9_./-], else single-quoted. A path holding a

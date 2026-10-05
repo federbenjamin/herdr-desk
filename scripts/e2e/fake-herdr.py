@@ -203,17 +203,37 @@ def cmd_pane_get(d, st, args):
         fail("usage: herdr pane get <pane_id>")
     pane = args[0]
     if pane not in st["panes"]:
-        # herdr 0.9.1: the refusal is JSON on stderr, exit 1.
-        print(
-            json.dumps(
-                {"error": {"code": "pane_not_found", "message": "pane %s not found" % pane}, "id": "cli:pane:get"}
-            ),
-            file=sys.stderr,
-        )
-        save(d, st)
-        fire()
-        sys.exit(1)
+        not_found(d, st, "pane_not_found", "pane", pane)
     print(json.dumps({"id": "cli:pane:get", "result": {"type": "pane_info", "pane": pane_info(pane, st["panes"][pane])}}))
+
+
+def not_found(d, st, code, what, ident):
+    """herdr 0.9.1's refusal: JSON on stderr, exit 1."""
+    print(json.dumps({"error": {"code": code, "message": "%s %s not found" % (what, ident)}}), file=sys.stderr)
+    save(d, st)
+    fire()
+    sys.exit(1)
+
+
+def cmd_workspace_focus(d, st, args):
+    if len(args) != 1:
+        fail("usage: herdr workspace focus <workspace_id>")
+    if args[0] not in st["workspaces"]:
+        not_found(d, st, "workspace_not_found", "workspace", args[0])
+    emit({"type": "ok"})
+
+
+def cmd_pane_zoom(d, st, args):
+    ap = Parser(prog="herdr pane zoom")
+    ap.add_argument("pane")
+    ap.add_argument("--on", action="store_true")
+    ap.add_argument("--off", action="store_true")
+    a = ap.parse_args(args)
+    if a.on == a.off:
+        fail("pane zoom wants one of --on or --off")
+    if a.pane not in st["panes"]:
+        not_found(d, st, "pane_not_found", "pane", a.pane)
+    emit({"type": "ok"})
 
 
 def cmd_pane_process_info(d, st, args):
@@ -308,6 +328,8 @@ def cmd_notification_show(d, st, args):
 
 HANDLERS = {
     ("workspace", "create"): cmd_workspace_create,
+    ("workspace", "focus"): cmd_workspace_focus,
+    ("pane", "zoom"): cmd_pane_zoom,
     ("pane", "run"): cmd_pane_run,
     ("pane", "list"): cmd_pane_list,
     ("pane", "get"): cmd_pane_get,

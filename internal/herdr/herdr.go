@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -199,6 +200,39 @@ func (c *Client) Processes(ctx context.Context, pane string) (Processes, error) 
 func (c *Client) ClosePane(ctx context.Context, pane string) error {
 	_, err := c.exec(ctx, "pane close", "pane", "close", pane)
 	return err
+}
+
+// idPattern is what a workspace or pane id must look like before it reaches herdr's argv.
+var idPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9:_.-]*$`)
+
+// FocusArgv returns the commands, each starting with bin, that focus an agent's pane: `workspace focus`, then
+// `pane zoom --on` and `--off`. herdr focuses by id only a pane a plugin owns, so zooming the pane on and off is
+// what focuses an agent's. An id that is not one herdr gives is an error.
+func FocusArgv(bin, workspace, pane string) ([][]string, error) {
+	for _, id := range []string{workspace, pane} {
+		if !idPattern.MatchString(id) {
+			return nil, fmt.Errorf("the workspace or pane id %q is not one herdr gives", id)
+		}
+	}
+	return [][]string{
+		{bin, "workspace", "focus", workspace},
+		{bin, "pane", "zoom", pane, "--on"},
+		{bin, "pane", "zoom", pane, "--off"},
+	}, nil
+}
+
+// FocusPane runs FocusArgv's commands in order, stopping at the first that fails.
+func (c *Client) FocusPane(ctx context.Context, workspace, pane string) error {
+	argvs, err := FocusArgv("herdr", workspace, pane)
+	if err != nil {
+		return err
+	}
+	for _, argv := range argvs {
+		if _, err := c.exec(ctx, strings.Join(argv[1:3], " "), argv[1:]...); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (c *Client) json(ctx context.Context, name string, args []string, into any) error {
