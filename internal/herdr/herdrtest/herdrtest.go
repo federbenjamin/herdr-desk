@@ -17,9 +17,9 @@ type Workspace struct {
 	Command              string   // what Run was given; "" until then
 }
 
-// Herdr has the five methods of herdr.Client, so it satisfies runner.Herdr. It is safe for concurrent use. A new
-// pane reports status "unknown" and no session. ClosePane removes the pane; Run, Processes, and ClosePane on an
-// unknown pane are errors.
+// Herdr has the methods of herdr.Client that runner.Herdr names, so it satisfies it. It is safe for concurrent use. A
+// new pane reports status "unknown" and no session. ClosePane removes the pane; Run, Processes, and ClosePane on an
+// unknown pane are errors, and Pane reports it not found.
 type Herdr struct {
 	mu         sync.Mutex
 	next       int
@@ -93,6 +93,17 @@ func (h *Herdr) Panes(_ context.Context) ([]herdr.Pane, error) {
 	return out, nil
 }
 
+// Pane returns the pane as Panes would list it; found is false when it is not open.
+func (h *Herdr) Pane(_ context.Context, id string) (herdr.Pane, bool, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if err := h.fails["Pane"]; err != nil {
+		return herdr.Pane{}, false, err
+	}
+	p, ok := h.panes[id]
+	return p, ok, nil
+}
+
 // Processes returns what SetProcesses gave for the pane, empty when it gave nothing.
 func (h *Herdr) Processes(_ context.Context, pane string) (herdr.Processes, error) {
 	h.mu.Lock()
@@ -133,7 +144,7 @@ func (h *Herdr) Workspaces() []Workspace {
 	return out
 }
 
-// Set sets what Panes reports for the pane from now on.
+// Set sets what Panes and Pane report for the pane from now on.
 func (h *Herdr) Set(pane, session, status string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -146,7 +157,7 @@ func (h *Herdr) Set(pane, session, status string) {
 	h.panes[pane] = p
 }
 
-// Remove makes the pane gone from Panes.
+// Remove makes the pane gone from Panes and Pane.
 func (h *Herdr) Remove(pane string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -167,7 +178,7 @@ func (h *Herdr) Closed() []string {
 	return slices.Clone(h.closed)
 }
 
-// Fail makes the named method (CreateWorkspace, Run, Panes, Processes, or ClosePane) return err; nil clears it.
+// Fail makes the named method (CreateWorkspace, Run, Panes, Pane, Processes, or ClosePane) return err; nil clears it.
 func (h *Herdr) Fail(method string, err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

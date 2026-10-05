@@ -63,6 +63,33 @@ func TestHerdrImplementationsSharePaneContract(t *testing.T) {
 			},
 		},
 		{
+			name: "getting a new pane finds it as listed, with no session yet",
+			check: func(t *testing.T, h runner.Herdr) {
+				created := contractWorkspace(t, h)
+				pane, found, err := h.Pane(context.Background(), created.Pane)
+				if err != nil || !found {
+					t.Fatalf("Pane() = %#v, %v, %v; want the pane found", pane, found, err)
+				}
+				want := herdr.Pane{ID: created.Pane, Workspace: created.Workspace, Status: "unknown"}
+				if pane != want {
+					t.Fatalf("Pane() = %#v, want %#v", pane, want)
+				}
+			},
+		},
+		{
+			name: "getting a closed pane is not found, with no error",
+			check: func(t *testing.T, h runner.Herdr) {
+				created := contractWorkspace(t, h)
+				if err := h.ClosePane(context.Background(), created.Pane); err != nil {
+					t.Fatalf("ClosePane() error = %v", err)
+				}
+				pane, found, err := h.Pane(context.Background(), created.Pane)
+				if err != nil || found {
+					t.Fatalf("Pane(closed) = %#v, %v, %v; want not found and no error", pane, found, err)
+				}
+			},
+		},
+		{
 			name: "running an unknown pane is refused",
 			check: func(t *testing.T, h runner.Herdr) {
 				if err := h.Run(context.Background(), "unknown", "exit 0"); err == nil {
