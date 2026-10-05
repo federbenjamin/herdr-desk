@@ -1,6 +1,6 @@
 module github.com/federbenjamin/herdr-desk
 
-go 1.27
+go 1.27.0
 
 require (
 	charm.land/bubbles/v2 v2.2.1
