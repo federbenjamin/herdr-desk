@@ -52,6 +52,8 @@ func (r *runnerControl) Start(context.Context, store.Actor, int, store.RunRoute)
 
 func (r *runnerControl) AfterSet(context.Context, int) {}
 
+func (r *runnerControl) Reconcile(context.Context) error { return nil }
+
 func newRunsServer(t *testing.T, runner api.RunnerControl) *api.Server {
 	t.Helper()
 

@@ -15,7 +15,7 @@ func (a *app) runsCmd() *cobra.Command {
 	var all, asJSON bool
 	cmd := &cobra.Command{
 		Use:   "runs [--all] [--json]",
-		Short: "List the runner's live runs (--all: every run)",
+		Short: "Check the live runs against herdr once, then list them (--all: every run)",
 		Args:  cobra.NoArgs,
 	}
 	cmd.RunE = a.do(func(_ *cobra.Command, _ []string) error {
@@ -23,13 +23,12 @@ func (a *app) runsCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		list := a.liveRuns
-		if all {
-			list = func(c *api.Client) ([]model.Run, error) { return c.ListRuns(a.ctx) }
-		}
-		runs, err := list(c)
+		runs, err := c.ReconcileRuns(a.ctx)
 		if err != nil {
 			return err
+		}
+		if !all {
+			runs = onlyLive(runs)
 		}
 		if asJSON {
 			if runs == nil {
@@ -197,20 +196,25 @@ func (a *app) sayRunner(state string, cap int) error {
 	return nil
 }
 
-// liveRuns returns the home's runs in a live state, by id: the one filter herdr-desk runs, herdr-desk runner, and herdr-desk worker
-// read runs through.
+// liveRuns returns the home's runs in a live state, by id, with no reconcile: herdr-desk runner and herdr-desk worker
+// read runs through it.
 func (a *app) liveRuns(c *api.Client) ([]model.Run, error) {
 	runs, err := c.ListRuns(a.ctx)
 	if err != nil {
 		return nil, err
 	}
+	return onlyLive(runs), nil
+}
+
+// onlyLive returns the runs in a live state, in order.
+func onlyLive(runs []model.Run) []model.Run {
 	live := []model.Run{}
 	for _, r := range runs {
 		if model.RunLive(r.State) {
 			live = append(live, r)
 		}
 	}
-	return live, nil
+	return live
 }
 
 func dash(s string) string {

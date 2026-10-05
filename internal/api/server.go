@@ -32,6 +32,7 @@ type RunnerControl interface {
 	Kill(ctx context.Context, a store.Actor, task int) (model.Task, error)
 	Start(ctx context.Context, a store.Actor, task int, route store.RunRoute) (model.Run, error)
 	AfterSet(ctx context.Context, task int)
+	Reconcile(ctx context.Context) error
 }
 
 var _ RunnerControl = (*runner.Runner)(nil)
@@ -103,7 +104,11 @@ func NewServer(o ServerOptions) *Server {
 		MethodSessionView: bind(func(ctx context.Context, r sessionRequest) (any, error) {
 			return st.SessionEvents(ctx, r.Session)
 		}),
-		MethodRunsList: bind(func(ctx context.Context, _ empty) (any, error) {
+		MethodRunsList: bind(func(ctx context.Context, r runsRequest) (any, error) {
+			if r.Reconcile && o.Runner != nil {
+				// A failed reconcile is logged by the runner; the list is still the store's truth now.
+				_ = o.Runner.Reconcile(ctx)
+			}
 			runs, err := st.ListRuns(ctx)
 			if runs == nil {
 				runs = []model.Run{}

@@ -151,6 +151,9 @@ type (
 		Task  int            `json:"task"`
 		Route store.RunRoute `json:"route"`
 	}
+	runsRequest struct {
+		Reconcile bool `json:"reconcile,omitempty"` // check the live runs against herdr once before listing
+	}
 	pauseRequest struct {
 		Actor  store.Actor `json:"actor"`
 		Paused bool        `json:"paused"`

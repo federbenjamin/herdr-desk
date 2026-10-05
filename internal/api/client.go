@@ -203,10 +203,17 @@ func (c *Client) SessionView(ctx context.Context, session string) (model.Session
 	return d, err
 }
 
-// ListRuns returns the runner's runs.
+// ListRuns returns the runner's runs. It never reconciles.
 func (c *Client) ListRuns(ctx context.Context) ([]model.Run, error) {
 	var runs []model.Run
-	err := c.call(ctx, MethodRunsList, empty{}, &runs)
+	err := c.call(ctx, MethodRunsList, runsRequest{}, &runs)
+	return runs, err
+}
+
+// ReconcileRuns has the home check its live runs against herdr once, then returns the runner's runs.
+func (c *Client) ReconcileRuns(ctx context.Context) ([]model.Run, error) {
+	var runs []model.Run
+	err := c.call(ctx, MethodRunsList, runsRequest{Reconcile: true}, &runs)
 	return runs, err
 }
 
