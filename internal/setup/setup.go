@@ -1,4 +1,4 @@
-// Package setup does the three one-time jobs of installing herdr-desk: first-time setup, the edit of herdr's keys,
+// Package setup does the three one-time jobs of installing herdr-desk: first-time setup, the edit of herdr's config,
 // and joining a home.
 package setup
 
@@ -18,6 +18,7 @@ import (
 	"github.com/federbenjamin/herdr-desk/internal/config"
 	"github.com/federbenjamin/herdr-desk/internal/gitcmd"
 	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/sidebar"
 )
 
 // Options configures Run.
@@ -35,7 +36,8 @@ type Options struct {
 const gitTimeout = 30 * time.Second
 
 // Run writes the config (keeping an existing one's values), creates the scratch root, applies the profile, writes
-// the skill, and writes the herdr keys. It prints one line per thing it wrote or skipped. It never prompts.
+// the skill, and writes the herdr keys and sidebar row. It prints one line per thing it wrote or skipped. It never
+// prompts.
 func Run(ctx context.Context, o Options) error {
 	out := o.Out
 	if out == nil {
@@ -102,7 +104,7 @@ func Run(ctx context.Context, o Options) error {
 		fmt.Fprintln(out, "herdr: left alone (--no-herdr)")
 		return nil
 	case herdrFile == "":
-		fmt.Fprintln(out, "herdr: no config file; keys not written")
+		fmt.Fprintln(out, "herdr: no config file; keys and sidebar row not written")
 		return nil
 	}
 	return writeHerdr(herdrFile, o.Force, out)
@@ -196,15 +198,20 @@ func writeSkill(skillDir string, out io.Writer) error {
 	return nil
 }
 
-// writeHerdr edits herdr's config at path, copying it to <path>.herdr-desk-bak-<time> first when the text changes.
+// writeHerdr writes herdr-desk's keys and its sidebar row into herdr's config at path, copying it to
+// <path>.herdr-desk-bak-<time> first when the text changes: one backup for both.
 func writeHerdr(path string, force bool, out io.Writer) error {
 	old, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
-	text, bound, skipped := WriteHerdrKeys(string(old), force)
+	keyed, bound, skipped := WriteHerdrKeys(string(old), force)
 	for _, k := range skipped {
 		fmt.Fprintf(out, "herdr: %s skipped, another binding holds it (--force replaces it)\n", k)
+	}
+	text, note := sidebar.WriteHerdrSidebar(keyed)
+	if note != "" {
+		fmt.Fprintln(out, note)
 	}
 	if text == string(old) {
 		fmt.Fprintf(out, "herdr: %s unchanged\n", path)
@@ -224,6 +231,9 @@ func writeHerdr(path string, force bool, out io.Writer) error {
 	}
 	for _, k := range bound {
 		fmt.Fprintf(out, "herdr: %s bound\n", k)
+	}
+	if text != keyed {
+		fmt.Fprintln(out, "herdr: sidebar row $desk written")
 	}
 	return nil
 }
