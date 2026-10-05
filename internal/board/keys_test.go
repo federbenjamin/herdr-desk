@@ -128,7 +128,7 @@ func TestKeysCaptureRefusalAndBlockedAnswerKeepTheirInputUntilResolved(t *testin
 
 func TestKeysRunnerActionsRequireTheRightRunnerState(t *testing.T) {
 	run := model.Run{Task: 4, Pane: "pane-4", Workspace: "work-4"}
-	s := board.NewState(board.Config{CanFocus: true})
+	s := board.NewState(board.Config{})
 	s, _ = s.Update(tea.WindowSizeMsg{Width: 90, Height: 24})
 	s, _ = s.Update(board.Loaded{Data: board.Data{
 		Tasks:  []model.Task{w2Task(4, model.StatusStarted)},
@@ -136,10 +136,7 @@ func TestKeysRunnerActionsRequireTheRightRunnerState(t *testing.T) {
 		Status: api.Status{RunnerState: api.RunnerStateOn},
 	}})
 
-	_, effects := s.Update(press('f'))
-	wantEffects(t, effects, []board.Effect{board.FocusRun{Run: run}})
-
-	s, effects = s.Update(press('k'))
+	s, effects := s.Update(press('k'))
 	wantEffects(t, effects, nil)
 	if !strings.Contains(s.Text(), "kill T4's run? y/n") {
 		t.Fatalf("k = %q, want kill confirmation", s.Text())
@@ -293,39 +290,19 @@ func TestKeysBoardNavigationFiltersDrawerAndOverlayKeepBoardStateCoherent(t *tes
 	}
 }
 
-func TestKeysAgentFocusKillAndRunnerStatusMessagesExplainUnavailableActions(t *testing.T) {
+func TestKeysAgentKillAndRunnerStatusMessagesExplainUnavailableActions(t *testing.T) {
 	s := w2State(w2Task(1, model.StatusOpen))
 	_, effects := s.Update(press('a'))
 	thread := "agent"
 	wantEffects(t, effects, []board.Effect{board.SetTask{Task: 1, Patch: model.Patch{Thread: &thread}}})
 
-	s, effects = s.Update(press('f'))
+	noRun := board.NewState(board.Config{})
+	noRun, _ = noRun.Update(tea.WindowSizeMsg{Width: 90, Height: 24})
+	noRun, _ = noRun.Update(board.Loaded{Data: board.Data{Tasks: []model.Task{w2Task(1, model.StatusStarted)}}})
+	noRun, effects = noRun.Update(press('k'))
 	wantEffects(t, effects, nil)
-	if !strings.HasSuffix(s.Text(), "f works only on the home, with herdr") {
-		t.Fatalf("f without focus support = %q", s.Text())
-	}
-
-	canFocus := board.NewState(board.Config{CanFocus: true})
-	canFocus, _ = canFocus.Update(tea.WindowSizeMsg{Width: 90, Height: 24})
-	canFocus, _ = canFocus.Update(board.Loaded{Data: board.Data{Tasks: []model.Task{w2Task(1, model.StatusStarted)}}})
-	canFocus, effects = canFocus.Update(press('f'))
-	wantEffects(t, effects, nil)
-	if !strings.HasSuffix(canFocus.Text(), "T1 has no live run") {
-		t.Fatalf("f without run = %q", canFocus.Text())
-	}
-	_, effects = canFocus.Update(press('k'))
-	wantEffects(t, effects, nil)
-	if !strings.HasSuffix(canFocus.Text(), "T1 has no live run") {
-		t.Fatalf("k without run = %q", canFocus.Text())
-	}
-
-	paneLess := board.NewState(board.Config{CanFocus: true})
-	paneLess, _ = paneLess.Update(tea.WindowSizeMsg{Width: 90, Height: 24})
-	paneLess, _ = paneLess.Update(board.Loaded{Data: board.Data{Tasks: []model.Task{w2Task(1, model.StatusStarted)}, Runs: []model.Run{{Task: 1}}}})
-	paneLess, effects = paneLess.Update(press('f'))
-	wantEffects(t, effects, nil)
-	if !strings.HasSuffix(paneLess.Text(), "T1's run has no pane yet") {
-		t.Fatalf("f without pane = %q", paneLess.Text())
+	if !strings.HasSuffix(noRun.Text(), "T1 has no live run") {
+		t.Fatalf("k without run = %q", noRun.Text())
 	}
 
 	for _, test := range []struct {

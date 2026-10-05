@@ -229,27 +229,6 @@ def not_found(d, st, code, what, ident):
     sys.exit(1)
 
 
-def cmd_workspace_focus(d, st, args):
-    if len(args) != 1:
-        fail("usage: herdr workspace focus <workspace_id>")
-    if args[0] not in st["workspaces"]:
-        not_found(d, st, "workspace_not_found", "workspace", args[0])
-    emit({"type": "ok"})
-
-
-def cmd_pane_zoom(d, st, args):
-    ap = Parser(prog="herdr pane zoom")
-    ap.add_argument("pane")
-    ap.add_argument("--on", action="store_true")
-    ap.add_argument("--off", action="store_true")
-    a = ap.parse_args(args)
-    if a.on == a.off:
-        fail("pane zoom wants one of --on or --off")
-    if a.pane not in st["panes"]:
-        not_found(d, st, "pane_not_found", "pane", a.pane)
-    emit({"type": "ok"})
-
-
 def cmd_pane_process_info(d, st, args):
     ap = Parser(prog="herdr pane process-info")
     ap.add_argument("--pane", default=None)
@@ -366,8 +345,6 @@ def cmd_notification_show(d, st, args):
 
 HANDLERS = {
     ("workspace", "create"): cmd_workspace_create,
-    ("workspace", "focus"): cmd_workspace_focus,
-    ("pane", "zoom"): cmd_pane_zoom,
     ("pane", "run"): cmd_pane_run,
     ("pane", "list"): cmd_pane_list,
     ("pane", "get"): cmd_pane_get,

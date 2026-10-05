@@ -9,17 +9,9 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-
-	"github.com/federbenjamin/herdr-desk/internal/herdr"
-	"github.com/federbenjamin/herdr-desk/internal/model"
 )
 
 const viewerPlugin = "herdr-file-viewer"
-
-// focusArgvs are the commands that focus a run's pane, built by herdr.FocusArgv.
-func focusArgvs(bin string, r model.Run) ([][]string, error) {
-	return herdr.FocusArgv(bin, r.Workspace, r.Pane)
-}
 
 func refURL(ref string) (string, bool) {
 	if !strings.HasPrefix(ref, "http://") && !strings.HasPrefix(ref, "https://") {

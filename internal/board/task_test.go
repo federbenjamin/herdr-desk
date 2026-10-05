@@ -92,7 +92,7 @@ func TestTaskPageTextShowsTaskFieldsNotesStepsHistoryAndFiles(t *testing.T) {
 		"FILES",
 		"https://example.test/pr/42",
 		"docs/task.md",
-		"e notes  t steps  n ready  S run  x done  o open  R root  I isolation  M model  f focus",
+		"e notes  t steps  n ready  S run  x done  o open  R root  I isolation  M model",
 		"esc back",
 	} {
 		if !strings.Contains(text, want) {
@@ -655,11 +655,10 @@ func TestTaskPageDelegatesStatusAndRunnerKeys(t *testing.T) {
 		{"review sets the review status", open, press('r'), board.SetTask{Task: 13, Patch: model.Patch{Status: w4Status(model.StatusReview)}}},
 		{"review task finishes immediately", review, press('x'), board.SetTask{Task: 14, Patch: model.Patch{Status: w4Status(model.StatusDone)}}},
 		{"agent toggles the task thread", open, press('a'), board.SetTask{Task: 13, Patch: model.Patch{Thread: w4String("agent")}}},
-		{"focus carries the live run", open, press('f'), board.FocusRun{Run: run}},
 		{"pause asks the runner to pause", open, press('P'), board.PauseRunner{Paused: true}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s := w4TaskPageData(t, 90, board.Config{CanFocus: true, Now: func() time.Time { return w4Now }}, board.Data{
+			s := w4TaskPageData(t, 90, board.Config{Now: func() time.Time { return w4Now }}, board.Data{
 				Tasks: []model.Task{tc.task}, Runs: []model.Run{run}, Status: api.Status{RunnerState: api.RunnerStateOn},
 			}, tc.task, nil)
 			_, effects := s.Update(tc.key)

@@ -41,7 +41,7 @@ func (r *Runner) Coordinator(ctx context.Context, a store.Actor) (c model.Coordi
 			return model.Coordinator{}, false, err
 		}
 		if found {
-			return old, false, h.FocusPane(ctx, old.Workspace, old.Pane)
+			return old, false, nil
 		}
 	}
 	command, err := r.paneCommand("coordinator run")

@@ -8,6 +8,7 @@ import (
 
 	"github.com/federbenjamin/herdr-desk/internal/herdr"
 	"github.com/federbenjamin/herdr-desk/internal/herdr/herdrtest"
+	"github.com/federbenjamin/herdr-desk/internal/model"
 	"github.com/federbenjamin/herdr-desk/internal/store"
 )
 
@@ -20,17 +21,18 @@ func (h slowHerdr) CreateWorkspace(ctx context.Context, cwd, label string, env [
 	return h.Herdr.CreateWorkspace(ctx, cwd, label, env)
 }
 
-// Two `herdr-desk coordinator` calls at once must leave one coordinator agent: the second focuses the first's pane.
+// Two `herdr-desk coordinator` calls at once must leave one coordinator agent: the others report the first's pane and focus nothing.
 func TestCoordinatorCalledAtOnceOpensOneCoordinator(t *testing.T) {
 	f := newFixture(t, "", "self")
 	h := slowHerdr{f.herdr}
 	const callers = 3
 	opened := make([]bool, callers)
+	got := make([]model.Coordinator, callers)
 	errs := make([]error, callers)
 	var wg sync.WaitGroup
 	for i := range callers {
 		r := f.runnerWith(h)
-		wg.Go(func() { _, opened[i], errs[i] = r.Coordinator(f.ctx, store.Actor{}) })
+		wg.Go(func() { got[i], opened[i], errs[i] = r.Coordinator(f.ctx, store.Actor{}) })
 	}
 	wg.Wait()
 	n := 0
@@ -42,7 +44,12 @@ func TestCoordinatorCalledAtOnceOpensOneCoordinator(t *testing.T) {
 			n++
 		}
 	}
-	if n != 1 || len(f.herdr.Workspaces()) != 1 || len(f.herdr.Focused()) != callers-1 {
-		t.Fatalf("%d opened, workspaces %#v, focused %v; want one opened, one workspace, and %d focuses", n, f.herdr.Workspaces(), f.herdr.Focused(), callers-1)
+	if n != 1 || len(f.herdr.Workspaces()) != 1 {
+		t.Fatalf("%d opened, workspaces %#v; want one opened and one workspace", n, f.herdr.Workspaces())
+	}
+	for i, c := range got {
+		if c.Pane != got[0].Pane {
+			t.Fatalf("caller %d got pane %q, caller 0 got %q; want every caller to name the one coordinator pane", i, c.Pane, got[0].Pane)
+		}
 	}
 }

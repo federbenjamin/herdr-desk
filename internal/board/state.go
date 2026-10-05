@@ -18,9 +18,8 @@ import (
 
 // Config is what a State is made from.
 type Config struct {
-	IsHome   bool             // this machine is the home; false on a client
-	CanFocus bool             // f can reach a worker's pane: the home, with herdr
-	Now      func() time.Time // nil → time.Now
+	IsHome bool             // this machine is the home; false on a client
+	Now    func() time.Time // nil → time.Now
 }
 
 // Data is one refresh of what the home holds.
@@ -80,8 +79,6 @@ type (
 	StartRun struct{ Task int }
 	// PauseRunner pauses or resumes the runner.
 	PauseRunner struct{ Paused bool }
-	// FocusRun focuses the run's pane.
-	FocusRun struct{ Run model.Run }
 	// OpenRef opens a ref of a task whose project is Dir.
 	OpenRef struct {
 		Ref string
@@ -100,7 +97,6 @@ func (Rearm) effect()       {}
 func (KillRun) effect()     {}
 func (StartRun) effect()    {}
 func (PauseRunner) effect() {}
-func (FocusRun) effect()    {}
 func (OpenRef) effect()     {}
 func (Quit) effect()        {}
 
@@ -682,19 +678,6 @@ func (s State) act(k string, t model.Task) (State, []Effect) {
 			thread = ""
 		}
 		return set(model.Patch{Thread: &thread})
-	case "f":
-		r, ok := s.liveRun(t.Number)
-		switch {
-		case !s.cfg.CanFocus:
-			s.status = "f works only on the home, with herdr"
-		case !ok:
-			s.status = taskID(t.Number) + " has no live run"
-		case r.Pane == "":
-			s.status = taskID(t.Number) + "'s run has no pane yet"
-		default:
-			return s, []Effect{FocusRun{Run: r}}
-		}
-		return s, nil
 	case "S":
 		return s, []Effect{StartRun{Task: t.Number}}
 	case "k":

@@ -59,9 +59,9 @@ const (
 const minHeight = 10
 
 const (
-	boardFooter = "+ add  n ready  S run  s start  b blocked  r review  x done  a #agent  f focus  k kill  P pause  / search  p project  t thread  d done  ? keys"
+	boardFooter = "+ add  n ready  S run  s start  b blocked  r review  x done  a #agent  k kill  P pause  / search  p project  t thread  d done  ? keys"
 	shortFooter = "? keys  q quit"
-	taskFooter  = "e notes  t steps  n ready  S run  x done  o open  R root  I isolation  M model  f focus  esc back"
+	taskFooter  = "e notes  t steps  n ready  S run  x done  o open  R root  I isolation  M model  esc back"
 	stepsFooter = "space toggle  a add  r rename  x remove  esc back"
 	notesFooter = "ctrl+s save  esc cancel"
 	pickFooter  = "enter open  esc close"
@@ -538,7 +538,6 @@ var boardKeys = [][2]string{
 	{"r", "review"},
 	{"x", "done (asks unless in review)"},
 	{"a", "#agent on or off"},
-	{"f", "focus the run's pane"},
 	{"k", "kill the run (task → blocked)"},
 	{"P", "pause or resume the runner"},
 	{"/", "search"},
@@ -563,7 +562,6 @@ var taskKeys = [][2]string{
 	{"R", "root"},
 	{"I", "next isolation"},
 	{"M", "model"},
-	{"f", "focus the run's pane"},
 	{"k", "kill the run (task → blocked)"},
 	{"P", "pause or resume the runner"},
 	{"?", "keys"},
