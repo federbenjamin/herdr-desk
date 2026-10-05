@@ -152,7 +152,7 @@ func TestOpenRejectsInvalidOptionsAndUnusableOrNewerDatabases(t *testing.T) {
 		if err != nil {
 			t.Fatalf("open future database: %v", err)
 		}
-		if _, err := db.Exec("PRAGMA user_version = 2"); err != nil {
+		if _, err := db.Exec("PRAGMA user_version = 3"); err != nil {
 			db.Close()
 			t.Fatalf("set future schema version: %v", err)
 		}
@@ -161,8 +161,8 @@ func TestOpenRejectsInvalidOptionsAndUnusableOrNewerDatabases(t *testing.T) {
 		}
 
 		_, err = store.Open(path, store.Options{})
-		if err == nil || !strings.Contains(err.Error(), "schema version 2") {
-			t.Fatalf("Open future database error = %v, want it to name version 2", err)
+		if err == nil || !strings.Contains(err.Error(), "schema version 3") {
+			t.Fatalf("Open future database error = %v, want it to name version 3", err)
 		}
 		db, err = sqlOpenSQLite(path)
 		if err != nil {
@@ -173,8 +173,8 @@ func TestOpenRejectsInvalidOptionsAndUnusableOrNewerDatabases(t *testing.T) {
 		if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 			t.Fatalf("read schema version: %v", err)
 		}
-		if version != 2 {
-			t.Fatalf("schema version after refused Open = %d, want 2", version)
+		if version != 3 {
+			t.Fatalf("schema version after refused Open = %d, want 3", version)
 		}
 		var tables int
 		if err := db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'").Scan(&tables); err != nil {
@@ -301,7 +301,7 @@ func sqlOpenSQLite(path string) (*sql.DB, error) {
 	return sql.Open("sqlite", fmt.Sprintf("file:%s", path))
 }
 
-func TestAgentCannotSetOrAddReadyOrDone(t *testing.T) {
+func TestAgentCannotSetOrAddReadyWithoutAutoStart(t *testing.T) {
 	ctx := context.Background()
 	cases := []struct {
 		name      string
@@ -320,27 +320,8 @@ func TestAgentCannotSetOrAddReadyOrDone(t *testing.T) {
 			},
 		},
 		{
-			name:   "adds done",
-			status: model.StatusDone,
-			write: func(st *store.Store, status model.Status, _ int) error {
-				_, err := st.AddTask(ctx, store.Actor{Session: "agent"}, store.AddTaskInput{
-					TaskData: model.TaskData{Title: "agent task", Status: status},
-				})
-				return err
-			},
-		},
-		{
 			name:      "sets ready",
 			status:    model.StatusReady,
-			needsTask: true,
-			write: func(st *store.Store, status model.Status, number int) error {
-				_, err := st.SetTask(ctx, store.Actor{Session: "agent"}, number, model.Patch{Status: statusPtr(status)})
-				return err
-			},
-		},
-		{
-			name:      "sets done",
-			status:    model.StatusDone,
 			needsTask: true,
 			write: func(st *store.Store, status model.Status, number int) error {
 				_, err := st.SetTask(ctx, store.Actor{Session: "agent"}, number, model.Patch{Status: statusPtr(status)})
@@ -372,7 +353,7 @@ func TestAgentCannotSetOrAddReadyOrDone(t *testing.T) {
 	}
 }
 
-func TestAgentsMayArmPermitsReadyButNotDone(t *testing.T) {
+func TestAutoStartPermitsAgentReadyAndAnyAgentMaySetDone(t *testing.T) {
 	ctx := context.Background()
 	cases := []struct {
 		name   string
@@ -399,7 +380,7 @@ func TestAgentsMayArmPermitsReadyButNotDone(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			st := openStore(t, store.Options{AgentsMayArm: true})
+			st := openStore(t, store.Options{AutoStart: true})
 			task, err := tc.write(st, tc.status)
 			if err != nil {
 				t.Fatalf("agent write: %v", err)
@@ -410,23 +391,26 @@ func TestAgentsMayArmPermitsReadyButNotDone(t *testing.T) {
 		})
 	}
 
-	for _, operation := range []string{"add", "set"} {
-		t.Run(operation+"s done", func(t *testing.T) {
-			st := openStore(t, store.Options{AgentsMayArm: true})
-			var err error
-			switch operation {
-			case "add":
-				_, err = st.AddTask(ctx, store.Actor{Session: "agent"}, store.AddTaskInput{
-					TaskData: model.TaskData{Title: "agent task", Status: model.StatusDone},
-				})
-			case "set":
-				task := addOpenTask(t, st)
-				_, err = st.SetTask(ctx, store.Actor{Session: "agent"}, task.Number, model.Patch{Status: statusPtr(model.StatusDone)})
-			}
-			if got := refusalCode(t, err); got != model.CodeNotAllowed {
-				t.Fatalf("refusal code = %q, want %q", got, model.CodeNotAllowed)
-			}
-		})
+	for _, autoStart := range []bool{false, true} {
+		for _, operation := range []string{"add", "set"} {
+			t.Run(fmt.Sprintf("%ss done, auto start %t", operation, autoStart), func(t *testing.T) {
+				st := openStore(t, store.Options{AutoStart: autoStart})
+				var task model.Task
+				var err error
+				switch operation {
+				case "add":
+					task, err = st.AddTask(ctx, store.Actor{Session: "agent"}, store.AddTaskInput{
+						TaskData: model.TaskData{Title: "agent task", Status: model.StatusDone},
+					})
+				case "set":
+					task = addOpenTask(t, st)
+					task, err = st.SetTask(ctx, store.Actor{Session: "agent"}, task.Number, model.Patch{Status: statusPtr(model.StatusDone)})
+				}
+				if err != nil || task.Status != model.StatusDone {
+					t.Fatalf("agent %s done = %q, %v; want done, nil", operation, task.Status, err)
+				}
+			})
+		}
 	}
 }
 

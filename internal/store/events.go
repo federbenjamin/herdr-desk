@@ -26,7 +26,17 @@ type DecisionInput struct {
 // journal appends one journal event, checking that the task it names exists.
 func (s *Store) journal(ctx context.Context, a Actor, kind model.Kind, task int, tags, scan []string, data any,
 	check func(tx *sql.Tx) error, apply func(tx *sql.Tx, ev model.Event) error) (model.Event, error) {
-	ev, _, err := s.append(ctx, a, write{
+	evs, err := s.append(ctx, a, journalWrite(ctx, kind, task, tags, scan, data, check, apply))
+	if err != nil {
+		return model.Event{}, err
+	}
+	return evs[0], nil
+}
+
+// journalWrite is the write of one journal event: journal's, and the note of a HandBack.
+func journalWrite(ctx context.Context, kind model.Kind, task int, tags, scan []string, data any,
+	check func(tx *sql.Tx) error, apply func(tx *sql.Tx, ev model.Event) error) write {
+	return write{
 		kind: kind,
 		tags: tags,
 		scan: append(scan, tags...),
@@ -44,8 +54,7 @@ func (s *Store) journal(ctx context.Context, a Actor, kind model.Kind, task int,
 			return task, data, nil
 		},
 		apply: apply,
-	})
-	return ev, err
+	}
 }
 
 // Note appends a note.
