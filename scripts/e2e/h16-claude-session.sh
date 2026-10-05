@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
-# H16: a real Claude Code session with the plugin loaded gets the journal path at start.
+# A real Claude Code session with the plugin loaded gets the journal path at start.
 # Starts one short `claude -p` run (a few cents). The hook's `herdr-desk` is a wrapper that points at
 # this script's home, so Claude Code itself runs with its normal environment.
 # shellcheck source=scripts/e2e/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 build
-run 0 on home herdr-desk setup --no-herdr
-start_daemon home
+home_up home
 
 mkdir -p "$E2E/wrap"
 cat >"$E2E/wrap/herdr-desk" <<WRAP

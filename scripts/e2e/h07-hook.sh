@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
-# H7: the session hook prints the view's path on startup and resume, records a compaction, and
+# H13: the session hook prints the view's path on startup and resume, records a compaction, and
 # does nothing when switched off.
 # shellcheck source=scripts/e2e/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 build
-run 0 on home herdr-desk setup --no-herdr
-start_daemon home
+home_up home
 S="s-h7"
 SESSIONS="$E2E/home/state/herdr-desk/sessions"
 VIEW="$SESSIONS/$S.md"

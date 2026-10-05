@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# H6: a session's view hides and shows lines as the journal rules say.
+# H12: a session's view hides and shows lines as the journal rules say.
 # shellcheck source=scripts/e2e/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 build
-run 0 on home herdr-desk setup --no-herdr
-start_daemon home
+home_up home
 S="s-h6"
 
 compact() {

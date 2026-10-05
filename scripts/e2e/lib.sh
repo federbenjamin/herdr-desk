@@ -42,9 +42,9 @@ as_agent() {
 cleanup() {
   local d m p
   for d in "$E2E"/*/state/herdr-desk; do
-    [ -f "$d/daemon.json" ] || continue
+    [ -f "$d/ticker.json" ] || continue
     m=$(basename "$(dirname "$(dirname "$d")")")
-    on "$m" herdr-desk daemon stop >/dev/null 2>&1 || true
+    on "$m" herdr-desk ticker stop >/dev/null 2>&1 || true
   done
   for p in "${PIDS[@]:-}"; do
     if [ -n "$p" ]; then kill "$p" 2>/dev/null || true; fi
@@ -112,13 +112,6 @@ wait_long() {
 # wait_for <what> <command...>: poll until the command succeeds, up to 10 s.
 wait_for() { wait_long 10 "$@"; }
 
-sock() { printf '%s' "$E2E/$1/state/herdr-desk/desk.sock"; }
-no_sock() { [ ! -S "$(sock "$1")" ]; }
-
-free_port() {
-  python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])'
-}
-
 # mode <file>: its permission bits, as 600.
 mode() { stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1"; }
 
@@ -130,31 +123,119 @@ write_config() {
   chmod 600 "$dir/config.toml"
 }
 
-start_daemon() {
-  local m=$1
-  on "$m" herdr-desk daemon run >>"$E2E/$m.daemon.log" 2>&1 &
-  PIDS+=("$!")
-  wait_for "the daemon socket on $m" test -S "$(sock "$m")"
-}
+# home_up <machine>: set that machine up as a home. Nothing runs: every command opens the store.
+home_up() { run 0 on "$1" herdr-desk setup --no-herdr; }
 
-stop_daemon() {
-  local m=$1
-  run 0 on "$m" herdr-desk daemon stop
-  wait_for "the daemon on $m to stop" no_sock "$m"
-}
-
-# home_with_listen <machine> <port>: a set-up home serving TCP on 127.0.0.1:<port>, daemon running.
-home_with_listen() {
-  run 0 on "$1" herdr-desk setup --no-herdr --listen "127.0.0.1:$2"
-  start_daemon "$1"
-}
-
-# make_client <client-machine> <home-machine> <port>: the token goes in on stdin.
+# make_client <client-machine> <home-machine>: write a client config whose [client] command is the ssh shim, so a
+# request reaches the home machine's own folders with no sshd.
 make_client() {
-  local token
-  token=$(on "$2" herdr-desk token show)
-  run_in 0 "$token" on "$1" herdr-desk client add "127.0.0.1:$3"
+  write_config "$1" <<TOML
+[client]
+home = "$2"
+command = ["$REPO/scripts/e2e/ssh-shim.sh", "$E2E", "{home}", "herdr-desk", "rpc"]
+TOML
 }
+
+# home_down <machine> [seconds]: from now on the shim holds each request for that many seconds (0 when omitted),
+# then fails it with ssh's exit 255.
+home_down() { printf '%s' "${2:-}" >"$E2E/$1.down"; }
+
+# home_back <machine>: the shim answers again.
+home_back() { rm -f "$E2E/$1.down"; }
+
+ticker_running() { on "$1" herdr-desk ticker status | jq -e '.ticker.running' >/dev/null; }
+ticker_stopped() { ! ticker_running "$1"; }
+
+# ticker_up <machine>: start that home's ticker in the background and wait until it holds its lock.
+ticker_up() {
+  local m=$1
+  on "$m" herdr-desk ticker >>"$E2E/$m.ticker.log" 2>&1 &
+  PIDS+=("$!")
+  wait_for "the ticker on $m" ticker_running "$m"
+}
+
+# ticker_down <machine>: stop that home's ticker and wait until it lets go.
+ticker_down() {
+  run 0 on "$1" herdr-desk ticker stop
+  wait_for "the ticker on $1 to stop" ticker_stopped "$1"
+}
+
+# The real pair (p01, p02). This machine is the home. E2E_CLIENT is the ssh target of the client machine from here;
+# E2E_HOME is the target the client uses to reach this machine. Both machines get temp XDG folders: the home's under
+# $E2E, the client's under RDIR, which pair_cleanup removes.
+
+rssh() { ssh -o BatchMode=yes -o ConnectTimeout=5 "$E2E_CLIENT" "$@"; }
+
+# pair_up: build for both machines, make this one a home, and put the client's binary, a timing helper, and a
+# client config pointing at the home on the client machine.
+pair_up() {
+  [ -n "${E2E_CLIENT:-}" ] && [ -n "${E2E_HOME:-}" ] || fail "(env) set E2E_CLIENT and E2E_HOME"
+  build
+  local info goos goarch
+  info=$(rssh uname -sm) || fail "(env) cannot ssh to the client machine"
+  case "${info% *}" in
+    Darwin) goos=darwin ;;
+    Linux) goos=linux ;;
+    *) fail "(env) the client machine is '$info'" ;;
+  esac
+  case "${info#* }" in
+    arm64 | aarch64) goarch=arm64 ;;
+    x86_64) goarch=amd64 ;;
+    *) fail "(env) the client machine is '$info'" ;;
+  esac
+  (cd "$REPO" && GOOS=$goos GOARCH=$goarch CGO_ENABLED=0 go build -o "$E2E/client-herdr-desk" ./cmd/herdr-desk) ||
+    fail "go build for $goos/$goarch"
+  home_up home
+  trap 'pair_cleanup; cleanup' EXIT
+  RDIR=$(rssh mktemp -d /tmp/dk.XXXXXX) || fail "(env) cannot make a temp folder on the client machine"
+  rssh "mkdir -m 700 -p $RDIR/config/herdr-desk" || fail "cannot make the client's config folder"
+  scp -q -o BatchMode=yes "$E2E/client-herdr-desk" "$E2E_CLIENT:$RDIR/herdr-desk" || fail "cannot copy the binary to the client machine"
+  rssh "chmod 755 $RDIR/herdr-desk && cat >$RDIR/timed.py" <<'PY'
+import subprocess, sys, time
+
+# timed.py <file> <command...>: run the command with this process's stdin and stdout, write its seconds to <file>.
+start = time.perf_counter()
+rc = subprocess.run(sys.argv[2:]).returncode
+open(sys.argv[1], "w").write("%.3f\n" % (time.perf_counter() - start))
+sys.exit(rc)
+PY
+  CN_ENV="env XDG_CONFIG_HOME=$RDIR/config XDG_STATE_HOME=$RDIR/state XDG_DATA_HOME=$RDIR/data XDG_CACHE_HOME=$RDIR/cache"
+  client_config "$E2E_HOME"
+}
+
+# client_config <home-target>: write the client's config; its [client] command is the default ssh one, run to reach
+# this machine's home folders with this build's binary.
+client_config() {
+  rssh "cat >$RDIR/config/herdr-desk/config.toml && chmod 600 $RDIR/config/herdr-desk/config.toml" <<TOML
+[client]
+home = "$1"
+command = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-o", "ControlMaster=auto", "-o", "ControlPath={control}", "-o", "ControlPersist=60", "{home}", "env", "XDG_CONFIG_HOME=$E2E/home/config", "XDG_STATE_HOME=$E2E/home/state", "XDG_DATA_HOME=$E2E/home/data", "XDG_CACHE_HOME=$E2E/home/cache", "$BIN/herdr-desk", "rpc"]
+TOML
+}
+
+# cn <args...>: run herdr-desk on the client machine as a person, or as the session in CN_SESSION. Its stdin and
+# stdout come back, and so does its exit code. The words are plain, so they survive the remote shell.
+cn() {
+  rssh "$CN_ENV ${CN_SESSION:+DESK_SESSION=$CN_SESSION} $RDIR/herdr-desk $(printf '%q ' "$@")"
+}
+
+# ctimed <args...>: cn, timed on the client machine; the seconds are in CT afterwards.
+ctimed() {
+  local rc=0
+  rssh "$CN_ENV python3 $RDIR/timed.py $RDIR/timed.txt $RDIR/herdr-desk $(printf '%q ' "$@")" || rc=$?
+  # shellcheck disable=SC2034 # read by the scripts that source this file
+  CT=$(rssh "cat $RDIR/timed.txt")
+  return "$rc"
+}
+
+# under <seconds> <limit>: the seconds are under the limit.
+under() { awk -v t="$1" -v l="$2" 'BEGIN { exit !(t < l) }'; }
+
+pair_cleanup() {
+  [ -n "${RDIR:-}" ] || return 0
+  rssh "ssh -o ControlPath=$RDIR/state/herdr-desk/ssh-%C -O exit $E2E_HOME; rm -rf $RDIR" >/dev/null 2>&1 || true
+}
+
 
 # The terminal helpers. Every screen runs on a private tmux server (TMUX_SOCK) that cleanup kills, so nothing
 # opens on anyone's display. A finished program stays on the server as a dead pane, so its exit code can be read.
