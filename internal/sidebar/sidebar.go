@@ -104,8 +104,9 @@ const (
 	blockClose = "# <<< herdr-desk sidebar"
 )
 
-// deskRow is the sidebar row that shows the token; "needs you" is bold and the row sets no colour of its own.
-const deskRow = `[{ token = "$desk", rules = [{ contains = "needs you", bold = true }] }]`
+// deskRow is the sidebar row that shows the token. A row that needs a person is bold: a run's "needs you" and the
+// coordinator's "need you" both contain "need". The row sets no colour of its own.
+const deskRow = `[{ token = "$desk", rules = [{ contains = "need", bold = true }] }]`
 
 // block is herdr's default agent rows (herdr 0.9.1) with the $desk row after them.
 const block = blockOpen + `

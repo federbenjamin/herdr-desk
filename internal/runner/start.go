@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/federbenjamin/herdr-desk/internal/herdr"
 	"github.com/federbenjamin/herdr-desk/internal/model"
 	"github.com/federbenjamin/herdr-desk/internal/store"
 )
@@ -60,7 +59,7 @@ func (r *Runner) Start(ctx context.Context, a store.Actor, task int, route store
 	if hadRun && prev.State == model.RunIdle && h != nil && prev.Pane != "" {
 		// StartRun ended the idle run; its worker is still at its prompt in the old pane, and must not go on working
 		// in the root beside the new run.
-		r.closePane(ctx, h, prev, herdr.Pane{ID: prev.Pane, Workspace: prev.Workspace})
+		r.closePane(ctx, h, prev, runPane(prev))
 	}
 	how := run.Isolation
 	if run.Model != "" {

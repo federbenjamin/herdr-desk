@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/federbenjamin/herdr-desk/internal/api"
 	"github.com/federbenjamin/herdr-desk/internal/config"
 	"github.com/federbenjamin/herdr-desk/internal/model"
 	"github.com/federbenjamin/herdr-desk/internal/testutil"
@@ -152,6 +153,27 @@ func TestRunnerStatusAndControlShowLiveCapacityAndRejectAgents(t *testing.T) {
 	for _, action := range []string{"pause", "resume"} {
 		denied := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"runner", action}, "", map[string]string{"DESK_SESSION": "agent-session"})
 		requireRefusal(t, denied, "runner "+action, model.CodeNotAllowed, 1)
+	}
+}
+
+// With no ticker, max_run_minutes and the checks of live runs wait; runner status and context must say so rather
+// than read as all well.
+func TestRunnerStatusAndContextSayWhenNoTickerRuns(t *testing.T) {
+	home, _ := startOnlyHome(t, nil)
+	status := runHomeDesk(t, home, "runner", "status")
+	requireSuccess(t, status)
+	if status.stdout != "runner on · 0/2 live · "+api.NoTickerText+"\n" {
+		t.Fatalf("runner status with no ticker = %q, want the live count then that no ticker runs", status.stdout)
+	}
+	ctx := runHomeDesk(t, home, "context")
+	requireSuccess(t, ctx)
+	if !strings.Contains(ctx.stdout, "\n"+api.NoTickerText+"\n") {
+		t.Fatalf("context with no ticker = %q, want the no-ticker line", ctx.stdout)
+	}
+	asJSON := runHomeDesk(t, home, "context", "--json")
+	requireSuccess(t, asJSON)
+	if !strings.Contains(asJSON.stdout, `"no_ticker":true`) {
+		t.Fatalf("context --json with no ticker = %q, want no_ticker true", asJSON.stdout)
 	}
 }
 

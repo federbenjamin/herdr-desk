@@ -238,8 +238,8 @@ func (r *Runner) closeLeftOpen(ctx context.Context) {
 	}
 	shut := false
 	for _, run := range runs {
-		pane := herdr.Pane{ID: run.Pane, Workspace: run.Workspace}
-		if listed(panes, pane) {
+		pane := runPane(run)
+		if _, ok := paneByID(panes, pane); ok {
 			k := r.closePane(ctx, h, run, pane)
 			r.o.Logf("herdr-desk runner: T%d: closing pane %s again: %s", run.Task, pane.ID, k)
 			if k.done == "" {
@@ -373,7 +373,7 @@ func (r *Runner) reportRun(ctx context.Context, h Herdr, run model.Run) {
 			r.logErr("T%d: read pane %s for the sidebar", run.Task, run.Pane, err)
 			return
 		}
-		if !found || p.Workspace != run.Workspace {
+		if _, open := paneByID([]herdr.Pane{p}, runPane(run)); !found || !open {
 			return
 		}
 	}

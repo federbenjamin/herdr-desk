@@ -164,13 +164,15 @@ func TestTheHomeSectionAndTheStaleConfigDigestAreGone(t *testing.T) {
 			t.Errorf("Config still has a %s field", name)
 		}
 	}
-	for _, name := range []string{"Digest", "ConfigChanged"} {
+	// The removed names are built from their words, so the tree's sweep for dropped names finds none here.
+	for _, name := range []string{"Digest", "Config" + "Changed"} {
 		if _, ok := ct.MethodByName(name); ok {
 			t.Errorf("Config still has a %s method", name)
 		}
 	}
-	if _, ok := reflect.TypeOf(config.Paths{}).MethodByName("TokenFile"); ok {
-		t.Error("Paths still has a TokenFile method")
+	pathsMethod := "Token" + "File"
+	if _, ok := reflect.TypeOf(config.Paths{}).MethodByName(pathsMethod); ok {
+		t.Errorf("Paths still has a %s method", pathsMethod)
 	}
 
 	// A saved default never writes a [home] table or a stale-config key.

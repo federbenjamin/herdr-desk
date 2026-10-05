@@ -82,11 +82,16 @@ const maxStderr = 300
 const waitDelay = time.Second
 
 // NewCommandTransport runs c's [client] command (DefaultClientCommand when empty) for each request, with {home} and
-// {control} expanded, the request on its stdin and the response read from its stdout. Each request but backup.run
-// is bounded by timeout (0 → none).
+// {control} expanded, the request on its stdin and the response read from its stdout. Each request but the untimed
+// ones is bounded by timeout (0 → none).
 func NewCommandTransport(p config.Paths, c config.Config, timeout time.Duration) Transport {
 	return &commandTransport{p: p, c: c, timeout: timeout}
 }
+
+// untimed reports whether method runs with no per-request timeout: backup.run pushes to a remote, and runs.start may
+// make a git worktree and a herdr workspace; cutting either leaves the home's work half done. ssh's connect timeout
+// still bounds reaching the home.
+func untimed(method string) bool { return method == MethodBackupRun || method == MethodRunsStart }
 
 func (t *commandTransport) Close() error { return nil }
 
@@ -107,7 +112,7 @@ func (t *commandTransport) RoundTrip(ctx context.Context, method string, params 
 	if err := os.MkdirAll(t.p.StateDir, 0o700); err != nil {
 		return nil, err
 	}
-	if t.timeout > 0 && method != MethodBackupRun {
+	if t.timeout > 0 && !untimed(method) {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, t.timeout)
 		defer cancel()

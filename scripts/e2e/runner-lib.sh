@@ -92,10 +92,9 @@ PY
 # home_event_command: set EVENT_CMD to the event hook's command for the home: this build's binary on the home's four
 # folders, with the PATH and the herdr socket of this script, so the hook reaches the herdr that fired it.
 home_event_command() {
+  machine_env home
   # shellcheck disable=SC2034 # read by the scripts that source this file
-  EVENT_CMD=(env -u DESK_SESSION -u DESK_RUN -u DESK_HOOKS
-    "XDG_CONFIG_HOME=$E2E/home/config" "XDG_STATE_HOME=$E2E/home/state"
-    "XDG_DATA_HOME=$E2E/home/data" "XDG_CACHE_HOME=$E2E/home/cache" "PATH=$PATH"
+  EVENT_CMD=("${MACHINE_ENV[@]}" "PATH=$PATH"
     ${HERDR_SOCKET_PATH:+"HERDR_SOCKET_PATH=$HERDR_SOCKET_PATH"} "$BIN/herdr-desk" hook herdr-event)
 }
 
@@ -181,6 +180,38 @@ run_count() { sqlite3 "$DB" "SELECT count(*) FROM runs"; }
 task_count() { on home herdr-desk list --all --json | jq '.tasks | length'; }
 at_least_two_tasks() { [ "$(task_count)" -ge 2 ]; }
 at_least_two_runs() { [ "$(run_count)" -ge 2 ]; }
+
+# coordinator_status: the agent status herdr shows for the coordinator's pane.
+coordinator_status() { herdr_do pane get "$COORD_PANE" 2>/dev/null | jq -r '.result.pane.agent_status // ""'; }
+
+# coordinator_turn_done: herdr shows the coordinator idle or done, its turn over, on two reads a second apart, so a
+# status that flickers between two tool calls is not read as the end of the turn. Wait for the turn's first effect
+# before this, so the status read is not the one from before the turn.
+coordinator_turn_done() {
+  case "$(coordinator_status)" in idle | done) ;; *) return 1 ;; esac
+  sleep 1
+  case "$(coordinator_status)" in idle | done) ;; *) return 1 ;; esac
+}
+
+# xy_tasks: exactly two tasks exist, one whose title names X and one whose title names Y, for "fix X and update Y".
+# X_TASK and Y_TASK are their numbers.
+xy_tasks() {
+  local json
+  json=$(on home herdr-desk list --all --json)
+  [ "$(jq '.tasks | length' <<<"$json")" = 2 ] || return 1
+  X_TASK=$(jq -r '[.tasks[] | select(.title | test("\\bX\\b"))] | if length == 1 then .[0].number else "" end' <<<"$json")
+  Y_TASK=$(jq -r '[.tasks[] | select(.title | test("\\bY\\b"))] | if length == 1 then .[0].number else "" end' <<<"$json")
+  [ -n "$X_TASK" ] && [ -n "$Y_TASK" ] && [ "$X_TASK" != "$Y_TASK" ]
+}
+
+# tasks_seen: the tasks' numbers and titles, for a failure message.
+tasks_seen() { on home herdr-desk list --all --json | jq -c '[.tasks[] | {number, title}]'; }
+
+# one_run_each: exactly two runs exist, one for X_TASK and one for Y_TASK.
+one_run_each() {
+  [ "$(sqlite3 "$DB" "SELECT group_concat(task, ',') FROM (SELECT task FROM runs ORDER BY task)")" = \
+    "$(printf '%s\n' "$X_TASK" "$Y_TASK" | sort -n | paste -sd, -)" ]
+}
 
 # end_real_coordinator: close what the script opened, check it is closed, and check the session count.
 end_real_coordinator() {

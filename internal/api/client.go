@@ -61,6 +61,14 @@ func NewClient(o ClientOptions) *Client {
 // Close closes the client's transport: on a home, the store it opened.
 func (c *Client) Close() error { return c.tr.Close() }
 
+// Retry forgets that the home did not answer, so the next request tries the transport again. A caller that lives
+// past one command, as the board does, calls it once per refresh; within one command the sticky refusal stands.
+func (c *Client) Retry() {
+	c.mu.Lock()
+	c.down = nil
+	c.mu.Unlock()
+}
+
 func isUnreachable(err error) bool {
 	r, ok := model.AsRefusal(err)
 	return ok && r.Code == model.CodeHomeUnreachable

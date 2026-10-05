@@ -33,6 +33,8 @@ type Home interface {
 	KillRun(ctx context.Context, a store.Actor, task int) (model.Task, error)
 	PauseRunner(ctx context.Context, a store.Actor, paused bool) (api.Status, error)
 	StartRun(ctx context.Context, a store.Actor, task int, route store.RunRoute) (model.Run, error)
+	// Retry forgets an unreachable home, so a refresh after the home came back reaches it.
+	Retry()
 }
 
 var _ Home = (*api.Client)(nil)
@@ -315,6 +317,8 @@ func (x *executor) rearm(ctx context.Context, e Rearm) tea.Msg {
 }
 
 func (x *executor) refresh(ctx context.Context, done bool) tea.Msg {
+	// Each refresh tries the home afresh: a board left open while the home was away recovers once it answers.
+	x.home.Retry()
 	tl, err := x.home.ListTasks(ctx, store.Filter{})
 	if err != nil {
 		return Failed{Err: err}

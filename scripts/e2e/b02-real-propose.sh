@@ -15,17 +15,18 @@ coordinator_open
 
 tell_coordinator "fix X and update Y"
 wait_long 300 "the coordinator to add two tasks" at_least_two_tasks
-ok "two tasks added by the coordinator"
-
-# Give it time to finish proposing: no run may exist before a go-ahead.
-sleep 30
+# No run may start in the whole first turn, so the check waits for herdr to show the turn over.
+wait_long 300 "the coordinator to finish its first turn" coordinator_turn_done
+xy_tasks || fail "the tasks are not one for X and one for Y: $(tasks_seen)"
+ok "two tasks added by the coordinator, one for X and one for Y"
 [ "$(run_count)" = 0 ] || fail "$(run_count) runs exist before the go-ahead"
-ok "no run before go"
+ok "no run in the coordinator's first turn"
 
-FIRST=$(on home herdr-desk list --json | jq -r '.tasks[0].number')
-SECOND=$(on home herdr-desk list --json | jq -r '.tasks[1].number')
-tell_coordinator "go: start the runs for T$FIRST and T$SECOND"
+tell_coordinator "go: start the runs for T$X_TASK and T$Y_TASK"
 wait_long 300 "the coordinator to start two runs" at_least_two_runs
-ok "two runs after go"
+wait_long 300 "the coordinator to finish its second turn" coordinator_turn_done
+one_run_each || fail "the runs are not one for T$X_TASK and one for T$Y_TASK: $(sqlite3 "$DB" "SELECT id, task FROM runs")"
+xy_tasks || fail "the tasks changed after the go-ahead: $(tasks_seen)"
+ok "one run for each task after go"
 end_real_coordinator
 pass

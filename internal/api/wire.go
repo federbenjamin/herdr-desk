@@ -112,6 +112,15 @@ type Status struct {
 	BackupError string     `json:"backup_error"`
 }
 
+// NoTicker reports whether the runner is on or paused, so live runs may be working, while no ticker runs: the run
+// deadline and the checks of live runs wait until one does. Every surface that shows the runner says so.
+func (s Status) NoTicker() bool {
+	return (s.RunnerState == RunnerStateOn || s.RunnerState == RunnerStatePaused) && !s.Ticker.Running
+}
+
+// NoTickerText is how a surface with room for it says NoTicker.
+const NoTickerText = "no ticker: max_run_minutes and the checks of live runs wait until one runs"
+
 // TickerStatus is the home's ticker: whether one holds the lock, and its pid and start time when it does.
 type TickerStatus struct {
 	Running   bool       `json:"running"`

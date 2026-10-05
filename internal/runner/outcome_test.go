@@ -74,11 +74,13 @@ func TestOutcomeAppliesEveryPaneStateRow(t *testing.T) {
 			wantWrite: true,
 		},
 		{
-			name:      "a repeated blocked event on an idle run writes nothing",
-			run:       model.Run{State: model.RunIdle, Session: runSession},
-			pane:      herdr.Pane{ID: paneID, Session: runSession, Status: "blocked"},
-			found:     true,
-			wantWrite: false,
+			name:  "a blocked pane on an idle run blocks the task the idle row left in review",
+			run:   model.Run{State: model.RunIdle, Session: runSession},
+			pane:  herdr.Pane{ID: paneID, Session: runSession, Status: "blocked"},
+			found: true,
+			want: handBack(model.RunIdle, model.RunIdle, model.StatusBlocked, model.StatusReview,
+				"the worker is waiting for an answer in pane "+paneID),
+			wantWrite: true,
 		},
 		{
 			name:  "an owned idle pane asks a running run to review",

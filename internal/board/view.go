@@ -337,7 +337,12 @@ func (s State) runnerLabel() string {
 	if d.Status.RunnerCap > 0 {
 		count += "/" + strconv.Itoa(d.Status.RunnerCap)
 	}
-	return "runner " + glyph + " " + word + " · " + count + " · " + where
+	line := "runner " + glyph + " " + word + " · " + count + " · " + where
+	if d.Status.NoTicker() {
+		// The board's width has room for the short form only; herdr-desk runner status says the rest.
+		line += " · no ticker"
+	}
+	return line
 }
 
 func (s State) liveRuns() int {

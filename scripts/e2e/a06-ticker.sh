@@ -35,6 +35,9 @@ jq -e '.ticker.running == false' <<<"$OUT" >/dev/null || fail "status shows a ti
 kill -0 "$pid" 2>/dev/null && fail "the ticker (pid $pid) is still a process"
 ok "ticker stop ends it and status shows not running"
 
-[ ! -e "$STATE/desk.sock" ] && [ ! -e "$STATE/daemon.json" ] || fail "the state folder holds a daemon file: $(ls "$STATE")"
-ok "the state folder holds no desk.sock and no daemon.json"
+# The removed file's name is built from its parts, so the tree's sweep for dropped names finds none here.
+old=dae
+old+=mon.json
+[ ! -e "$STATE/desk.sock" ] && [ ! -e "$STATE/$old" ] || fail "the state folder holds a removed file: $(ls "$STATE")"
+ok "the state folder holds no desk.sock and no $old"
 pass

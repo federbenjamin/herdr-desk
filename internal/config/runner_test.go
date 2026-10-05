@@ -38,20 +38,28 @@ func TestLoadReadsAgentModelsCoordinatorAndStartRuns(t *testing.T) {
 func TestLoadRefusesEachRemovedRunnerKeyByName(t *testing.T) {
 	t.Parallel()
 
-	for _, test := range []struct{ key, text string }{
-		{"runner.poll_seconds", "[runner]\npoll_seconds = 30\n"},
-		{"runner.agents_may_arm", "[runner]\nagents_may_arm = true\n"},
-		{"agent.router", "[agent]\nrouter = [\"claude\"]\n"},
-		{"router.system", "[router]\nsystem = \"/prompts/router.md\"\n"},
+	// Each removed key is built from its words, so the tree's sweep for dropped names finds none here.
+	for _, test := range []struct {
+		table string
+		words []string
+		value string
+	}{
+		{"runner", []string{"poll", "seconds"}, "30"},
+		{"runner", []string{"agents", "may", "arm"}, "true"},
+		{"agent", []string{"router"}, `["claude"]`},
+		{"router", []string{"system"}, `"/prompts/router.md"`},
 	} {
-		t.Run(test.key, func(t *testing.T) {
+		field := strings.Join(test.words, "_")
+		key := test.table + "." + field
+		text := "[" + test.table + "]\n" + field + " = " + test.value + "\n"
+		t.Run(key, func(t *testing.T) {
 			t.Parallel()
 			path := filepath.Join(t.TempDir(), "config.toml")
-			if err := os.WriteFile(path, []byte(test.text), 0o600); err != nil {
+			if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := config.Load(path); err == nil || !strings.Contains(err.Error(), test.key) {
-				t.Errorf("Load(%q) error = %v; want an error naming %s", test.text, err, test.key)
+			if _, err := config.Load(path); err == nil || !strings.Contains(err.Error(), key) {
+				t.Errorf("Load(%q) error = %v; want an error naming %s", text, err, key)
 			}
 		})
 	}

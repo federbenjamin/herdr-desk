@@ -52,6 +52,39 @@ func TestTrackAppliesPaneOutcomesAndARepeatWritesNothing(t *testing.T) {
 	}
 }
 
+// A run that went idle (task review) and whose pane then asks a question must block its task; looking again at the
+// same blocked pane, as the ticker does every minute, writes and reports nothing.
+func TestTrackBlocksTheTaskOfAnIdleRunWhosePaneAsksAQuestion(t *testing.T) {
+	f := newFixture(t, "", "self")
+	h := newReportingHerdr(f.herdr)
+	task := f.armThread("went idle, then asked", "agent")
+	r := f.runnerWith(h)
+	run := f.startRun(r, task.Number)
+	h.Set(run.Pane, run.Session, "idle")
+	if err := r.Track(f.ctx, run.Pane); err != nil {
+		t.Fatalf("Track(idle) error = %v", err)
+	}
+	if got := f.task(task.Number).Task.Status; got != model.StatusReview {
+		t.Fatalf("task after the idle row = %q, want review", got)
+	}
+	h.Set(run.Pane, run.Session, "blocked")
+	if err := r.Track(f.ctx, run.Pane); err != nil {
+		t.Fatalf("Track(blocked) error = %v", err)
+	}
+	detail := f.task(task.Number)
+	if detail.Task.Status != model.StatusBlocked || f.run(task.Number).State != model.RunIdle || !trackHasNote(detail.History, "waiting for an answer") {
+		t.Fatalf("task %#v, run %#v; want the task blocked with the pane's note and the run still idle", detail.Task, f.run(task.Number))
+	}
+	before := len(detail.History)
+	h.resetReports()
+	if err := r.Track(f.ctx, run.Pane); err != nil {
+		t.Fatalf("repeat Track() error = %v", err)
+	}
+	if got := len(f.task(task.Number).History); got != before || len(h.reports) != 0 {
+		t.Fatalf("repeat Track grew history from %d to %d and reported %#v; want nothing", before, got, h.reports)
+	}
+}
+
 func TestTrackLeavesAnOlderRunAloneWhenANewerRunWinsTheTask(t *testing.T) {
 	f := newFixture(t, "", "self")
 	task, old, _ := f.start()

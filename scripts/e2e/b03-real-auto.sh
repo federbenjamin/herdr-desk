@@ -14,7 +14,9 @@ coordinator_open
 
 tell_coordinator "fix X and update Y"
 wait_long 300 "the coordinator to start two runs" at_least_two_runs
-[ "$(task_count)" -ge 2 ] || fail "two runs exist, but only $(task_count) tasks"
-ok "two runs with no go"
+wait_long 300 "the coordinator to finish its turn" coordinator_turn_done
+xy_tasks || fail "the tasks are not one for X and one for Y: $(tasks_seen)"
+one_run_each || fail "the runs are not one for T$X_TASK and one for T$Y_TASK: $(sqlite3 "$DB" "SELECT id, task FROM runs")"
+ok "one task and one run for each of X and Y, with no go"
 end_real_coordinator
 pass

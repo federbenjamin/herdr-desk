@@ -25,7 +25,11 @@ func (r *Runner) Track(ctx context.Context, pane string) error {
 	if err != nil {
 		return err
 	}
-	return r.track(ctx, run, p, found && p.Workspace == run.Workspace)
+	if found {
+		// herdr found the id; it is the run's pane only in the run's workspace.
+		_, found = paneByID([]herdr.Pane{p}, runPane(run))
+	}
+	return r.track(ctx, run, p, found)
 }
 
 // Reconcile applies the outcome table to every running and idle run with one `herdr pane list`, for the events herdr
@@ -58,14 +62,7 @@ func (r *Runner) Reconcile(ctx context.Context) error {
 	}
 	var errs []error
 	for _, run := range tracked {
-		var p herdr.Pane
-		found := false
-		for _, q := range panes {
-			if q.ID == run.Pane && q.Workspace == run.Workspace {
-				p, found = q, true
-				break
-			}
-		}
+		p, found := paneByID(panes, runPane(run))
 		errs = append(errs, r.track(ctx, run, p, found))
 	}
 	return errors.Join(errs...)
@@ -86,12 +83,26 @@ func (r *Runner) track(ctx context.Context, run model.Run, pane herdr.Pane, foun
 	if !ok {
 		return nil
 	}
+	if hb.From == hb.To && hb.IfStatus != "" {
+		// The row keeps the run's state and writes only the task's status: with the task out of IfStatus it has
+		// nothing to write, and a repeat must write and report nothing.
+		d, err := r.o.Store.GetTask(ctx, run.Task)
+		if err != nil {
+			r.logErr("T%d: read the task", run.Task, err)
+			return err
+		}
+		if d.Task.Status != hb.IfStatus {
+			return nil
+		}
+	}
 	_, _, err := r.handBack(ctx, run, hb, nil)
 	return err
 }
 
 // outcome is the one outcome table: the hand-back that the pane's state now asks of a running or idle run, and
-// false when it asks none. A row whose run state is the run's own is no write, so a repeated event changes nothing.
+// false when it asks none. A row whose run state is the run's own is no write, so a repeated event changes nothing;
+// the one exception, a blocked pane on an idle run, writes the task's status only from review (IfStatus), and track
+// skips it when the task is not in review.
 func outcome(run model.Run, pane herdr.Pane, found, wrote bool) (store.HandBack, bool) {
 	if run.State != model.RunRunning && run.State != model.RunIdle {
 		return store.HandBack{}, false
@@ -108,6 +119,12 @@ func outcome(run model.Run, pane herdr.Pane, found, wrote bool) (store.HandBack,
 	case pane.Status == "blocked" && (own || pane.Session == ""):
 		hb.To, hb.Status = model.RunIdle, model.StatusBlocked
 		hb.Note = "the worker is waiting for an answer in pane " + pane.ID
+		if run.State == model.RunIdle {
+			// The run went idle (its task in review), then its pane asked a question: the task is blocked now, but
+			// only from review, so a person's status stands and a task already blocked is a repeat.
+			hb.IfStatus = model.StatusReview
+			return hb, true
+		}
 	case (pane.Status == "idle" || pane.Status == "done") && own && run.State == model.RunRunning:
 		hb.To, hb.Status = model.RunIdle, model.StatusReview
 		hb.Note = "went idle without handing back"

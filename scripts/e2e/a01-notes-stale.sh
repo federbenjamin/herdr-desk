@@ -23,10 +23,8 @@ term_keys boardA C-s
 wait_task home 1 .task.notes "the base alpha"
 ok "board A saved its notes"
 
-# A refused save reopens the editor against the notes as the board last loaded them; board B loads A's text on its
-# next refresh (every 3 s), so its save is refused against A's text, not the old one. Nothing on the screen shows
-# the refresh.
-sleep 4
+# Board B's save is refused against A's text; the refusal loads the task, so B's second ctrl+s replaces it with no
+# refresh between.
 term_keys boardB C-s
 term_wait boardB "changed while you edited"
 term_has boardB "bravo" || fail "board B lost its typed text"

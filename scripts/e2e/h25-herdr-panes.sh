@@ -117,25 +117,7 @@ mkdir -p "$PLUG/scripts"
 sed 's/ --focus$/ --no-focus/' "$REPO/scripts/open-pane.sh" >"$PLUG/scripts/open-pane.sh"
 grep -q -- '--no-focus' "$PLUG/scripts/open-pane.sh" || fail "the temp open-pane.sh keeps --focus"
 ORIG=$(focused)
-python3 - "$REPO/herdr-plugin.toml" "$PLUG/herdr-plugin.toml" "$BIN/herdr-desk" "$E2E/home" <<'PY'
-import json
-import re
-import sys
-
-src, dst, desk, home = sys.argv[1:5]
-text = open(src).read()
-parts = re.split(r"(?m)^(?=\[\[)", text)
-text = "".join(p for p in parts if not p.startswith(("[[build]]", "[[startup]]", "[[events]]")))
-text = text.replace('id = "herdr-desk"\n', 'id = "desk-e2e"\n', 1)
-env = ["env", "-u", "DESK_SESSION", "-u", "DESK_RUN", "-u", "DESK_HOOKS",
-       "XDG_CONFIG_HOME=%s/config" % home, "XDG_STATE_HOME=%s/state" % home,
-       "XDG_DATA_HOME=%s/data" % home, "XDG_CACHE_HOME=%s/cache" % home]
-text = text.replace('command = ["herdr-desk", "capture"]', "command = " + json.dumps(env + [desk, "capture"]))
-text = text.replace('command = ["herdr-desk"]', "command = " + json.dumps(env + [desk]))
-open(dst, "w").write(text)
-PY
-grep -q 'id = "desk-e2e"' "$PLUG/herdr-plugin.toml" || fail "the temp manifest has no id desk-e2e"
-if grep -Eq '^\[\[(build|startup|events)\]\]' "$PLUG/herdr-plugin.toml"; then fail "the temp manifest still has a build, startup, or events block"; fi
+popup_manifest "$PLUG/herdr-plugin.toml"
 
 run 0 "$HERDR" plugin link "$PLUG" --enabled
 LINKED=1

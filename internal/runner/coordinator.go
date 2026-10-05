@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/federbenjamin/herdr-desk/internal/config"
 	"github.com/federbenjamin/herdr-desk/internal/model"
 	"github.com/federbenjamin/herdr-desk/internal/store"
 )
@@ -15,7 +16,8 @@ const coordinatorLabel = "desk coordinator"
 // Coordinator focuses the desk's coordinator pane when herdr still has it, and records nothing. Else it opens a new
 // coordinator: a workspace in the scratch root with a new DESK_SESSION, recorded in the store, whose pane types
 // `herdr-desk coordinator run`. An agent session gets not-allowed before herdr is asked; no herdr is no-herdr.
-// opened reports whether a new coordinator was opened.
+// opened reports whether a new coordinator was opened. The look and the open hold the coordinator lock, so calls at
+// once from several processes open one coordinator, and the others focus it.
 func (r *Runner) Coordinator(ctx context.Context, a store.Actor) (c model.Coordinator, opened bool, err error) {
 	if a.Session != "" {
 		return model.Coordinator{}, false, &model.Refusal{Code: model.CodeNotAllowed, Msg: "an agent may not open the coordinator; a person does"}
@@ -24,6 +26,11 @@ func (r *Runner) Coordinator(ctx context.Context, a store.Actor) (c model.Coordi
 	if err != nil {
 		return model.Coordinator{}, false, &model.Refusal{Code: model.CodeNoHerdr, Msg: "herdr was not found, so no pane can be opened: " + err.Error()}
 	}
+	unlock, err := config.Lock(r.o.Paths.CoordinatorLock())
+	if err != nil {
+		return model.Coordinator{}, false, err
+	}
+	defer unlock()
 	old, ok, err := r.o.Store.Coordinator(ctx)
 	if err != nil {
 		return model.Coordinator{}, false, err

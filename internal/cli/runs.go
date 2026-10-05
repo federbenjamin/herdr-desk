@@ -153,7 +153,7 @@ func (a *app) runnerCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		return a.sayRunner(st.RunnerState, st.RunnerCap)
+		return a.sayRunner(st)
 	})
 	pause := func(use, short string, paused bool) *cobra.Command {
 		return &cobra.Command{
@@ -171,7 +171,7 @@ func (a *app) runnerCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				return a.sayRunner(st.RunnerState, st.RunnerCap)
+				return a.sayRunner(st)
 			}),
 		}
 	}
@@ -183,10 +183,11 @@ func (a *app) runnerCmd() *cobra.Command {
 	return cmd
 }
 
-// sayRunner prints `runner <state>`, and the live runs against the cap when the state is on or paused.
-func (a *app) sayRunner(state string, cap int) error {
-	if state != "on" && state != "paused" {
-		a.say("runner %s", state)
+// sayRunner prints `runner <state>`, and the live runs against the cap when the state is on or paused, then that no
+// ticker runs when none does.
+func (a *app) sayRunner(st api.Status) error {
+	if st.RunnerState != api.RunnerStateOn && st.RunnerState != api.RunnerStatePaused {
+		a.say("runner %s", st.RunnerState)
 		return nil
 	}
 	c, err := a.client()
@@ -197,7 +198,11 @@ func (a *app) sayRunner(state string, cap int) error {
 	if err != nil {
 		return err
 	}
-	a.say("runner %s · %d/%d live", state, len(live), cap)
+	line := fmt.Sprintf("runner %s · %d/%d live", st.RunnerState, len(live), st.RunnerCap)
+	if st.NoTicker() {
+		line += " · " + api.NoTickerText
+	}
+	a.say("%s", line)
 	return nil
 }
 

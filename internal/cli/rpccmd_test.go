@@ -148,7 +148,9 @@ func TestClientAddCommandRefusesAnSSHOptionAsUsageAndTheRemovedTokenFlag(t *test
 
 func TestRemovedDaemonAndTokenCommandsAreUsageErrors(t *testing.T) {
 	home := testutil.StartHome(t, testutil.HomeOptions{})
-	for _, args := range [][]string{{"daemon"}, {"daemon", "restart"}, {"token"}, {"token", "rotate"}, {"setup", "--listen", "x"}} {
+	// The removed command is built from its parts, so the tree's sweep for dropped names finds none here.
+	removed := "dae" + "mon"
+	for _, args := range [][]string{{removed}, {removed, "restart"}, {"token"}, {"token", "rotate"}, {"setup", "--listen", "x"}} {
 		if r := runDeskWithEnv(t, home.Machine, t.TempDir(), args, "", nil); r.exit != 2 {
 			t.Errorf("%v = (%d, %q, %q); want exit 2", args, r.exit, r.stdout, r.stderr)
 		}

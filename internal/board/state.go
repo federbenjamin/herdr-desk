@@ -157,10 +157,13 @@ type State struct {
 	add       CaptureState
 	editing   bool
 	notes     textarea.Model
-	notesFrom string // the notes a save says it read: the task's when the editor opened, or as loaded when a save was refused stale
-	notesTop  int    // the editor's first drawn line
-	picking   bool
-	pickSel   int
+	notesFrom string // the notes a save says it read: the task's when the editor opened, or the home's after a stale refusal
+	// notesReread is set while the editor holds text a stale refusal gave back: the next TaskLoaded of its task
+	// sets notesFrom to the home's notes.
+	notesReread bool
+	notesTop    int // the editor's first drawn line
+	picking     bool
+	pickSel     int
 
 	// sent is every notes save whose write may still fail, oldest first.
 	sent []sent
@@ -177,13 +180,15 @@ type sent struct {
 }
 
 // unsaved is typed text whose write failed, for a task: a notes save's text and the notes its editor started
-// from, or an answer. failed is the write's error.
+// from, or an answer. failed is the write's error. reread is set when the save was refused stale, until a
+// TaskLoaded gives from the home's notes.
 type unsaved struct {
 	answer bool
 	task   int
 	text   string
 	from   string
 	failed string
+	reread bool
 }
 
 // NewState returns the board page with no data, 80 columns by 24 rows.
@@ -234,6 +239,7 @@ func (s State) Update(msg tea.Msg) (State, []Effect) {
 		s, eff = s.answered()
 	case TaskLoaded:
 		s = s.held([]model.Task{m.Detail.Task})
+		s = s.reread(m.Detail.Task)
 		if m.Detail.Task.Number == s.shown() && s.shown() != 0 && !s.data.Offline {
 			s.detail, s.hasDetail = m.Detail, true
 		}
@@ -272,6 +278,7 @@ func answers(m Failed, match func(Effect) bool) bool {
 func (s State) failed(m Failed) (State, []Effect) {
 	text := errText(m.Err)
 	shown := false
+	var eff []Effect
 	var named effectErr
 	switch {
 	case s.adding && s.add.busy && answers(m, func(e Effect) bool { _, ok := e.(AddTask); return ok }):
@@ -283,9 +290,10 @@ func (s State) failed(m Failed) (State, []Effect) {
 		if s, u, ok = s.typed(named.effect); ok {
 			u.failed = text
 			if r, isRefusal := model.AsRefusal(m.Err); isRefusal && r.Code == model.CodeStale && !u.answer {
-				u.from = s.loaded(u.task).Notes
+				u.from, u.reread = s.loaded(u.task).Notes, true
 				u.failed = taskID(u.task) + "'s notes changed while you edited: ctrl+s replaces them, esc keeps them"
 				text = u.failed
+				eff = append(eff, LoadTask{Task: u.task})
 			}
 			s.back = append(slices.Clip(s.back), u)
 		}
@@ -294,9 +302,26 @@ func (s State) failed(m Failed) (State, []Effect) {
 		s.status = text
 	}
 	if s.waiting && answers(m, func(e Effect) bool { _, ok := e.(Refresh); return ok }) {
-		return s.answered()
+		var more []Effect
+		s, more = s.answered()
+		eff = append(eff, more...)
 	}
-	return s, nil
+	return s, eff
+}
+
+// reread gives the home's notes in t to the text a stale refusal gave back, in the editor or still waiting in
+// s.back, so its next ctrl+s names the notes the home holds and replaces them.
+func (s State) reread(t model.Task) State {
+	if s.editing && s.notesReread && s.shown() == t.Number {
+		s.notesFrom, s.notesReread = t.Notes, false
+	}
+	s.back = slices.Clone(s.back)
+	for i, u := range s.back {
+		if u.reread && u.task == t.Number {
+			s.back[i].from, s.back[i].reread = t.Notes, false
+		}
+	}
+	return s
 }
 
 // typed is the typed text that the failed write e carried: a notes save still in s.sent, which it drops, or a
@@ -350,7 +375,8 @@ func (s State) held(tasks []model.Task) State {
 // giveBack opens the notes editor or the answer prompt again, with its typed text and its error on the status
 // line, when its write failed and no other input has the keys. Text whose write failed while another input was
 // open waits for that input to close. The editor keeps the notes it started from, so a save over notes written
-// since is still refused stale; after a stale refusal it starts from the notes as last loaded.
+// since is still refused stale; after a stale refusal it starts from the notes as last loaded, then from the
+// home's notes once the LoadTask the refusal asked for answers.
 func (s State) giveBack() State {
 	if s.inputOpen() || len(s.back) == 0 {
 		return s
@@ -363,7 +389,7 @@ func (s State) giveBack() State {
 		if s.shown() != u.task {
 			s.page, s.taskNum, s.hasDetail, s.detail, s.taskTop = pageTask, u.task, false, store.TaskDetail{}, 0
 		}
-		s.editing, s.notes, s.notesFrom, s.notesTop = true, newNotes(u.text), u.from, 0
+		s.editing, s.notes, s.notesFrom, s.notesReread, s.notesTop = true, newNotes(u.text), u.from, u.reread, 0
 	}
 	s.status = u.failed
 	return s

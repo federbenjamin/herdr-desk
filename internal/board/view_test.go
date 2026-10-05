@@ -39,8 +39,22 @@ func w3LiveData() board.Data {
 			RunnerOn:    true,
 			RunnerState: api.RunnerStateOn,
 			RunnerCap:   4,
+			Ticker:      api.TickerStatus{Running: true},
 		},
 		Notes: map[int]string{1: "await deploy", 3: "watching logs"},
+	}
+}
+
+// With the runner on and no ticker, nothing stops a run past max_run_minutes: the header must not read as all well.
+func TestViewHeaderSaysWhenNoTickerRunsBehindALiveRunner(t *testing.T) {
+	for _, state := range []string{api.RunnerStateOn, api.RunnerStatePaused} {
+		d := w3LiveData()
+		d.Status.RunnerState, d.Status.Ticker.Running = state, false
+		w3RequireContains(t, w3State(200, d).Text(), "· home · no ticker")
+		d.Status.Ticker.Running = true
+		if text := w3State(200, d).Text(); strings.Contains(text, "no ticker") {
+			t.Fatalf("runner %s with a ticker: header says no ticker:\n%s", state, text)
+		}
 	}
 }
 

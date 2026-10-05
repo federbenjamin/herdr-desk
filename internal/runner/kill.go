@@ -141,8 +141,10 @@ func (r *Runner) closePane(ctx context.Context, h Herdr, run model.Run, pane her
 func (r *Runner) close(ctx context.Context, h Herdr, run model.Run, pane herdr.Pane) bool {
 	err := h.ClosePane(ctx, pane.ID)
 	if err != nil {
-		if panes, lerr := h.Panes(ctx); lerr == nil && !listed(panes, pane) {
-			err = nil
+		if panes, lerr := h.Panes(ctx); lerr == nil {
+			if _, ok := paneByID(panes, pane); !ok {
+				err = nil
+			}
 		}
 	}
 	if err != nil {
@@ -174,18 +176,22 @@ func (r *Runner) keepOpen(ctx context.Context, run model.Run, pane herdr.Pane) {
 	}
 }
 
-// listed reports whether herdr lists the pane, by its id and workspace.
-func listed(panes []herdr.Pane, pane herdr.Pane) bool {
+// paneByID is the one rule for which listed pane is a given one: the same id in the same workspace (herdr may reuse
+// an id in another workspace). It returns that pane as herdr lists it; false when herdr does not list it.
+func paneByID(panes []herdr.Pane, pane herdr.Pane) (herdr.Pane, bool) {
 	for _, p := range panes {
 		if p.ID == pane.ID && p.Workspace == pane.Workspace {
-			return true
+			return p, true
 		}
 	}
-	return false
+	return herdr.Pane{}, false
 }
 
-// findPane returns the run's pane: the one whose agent session is the run's, else the one whose id and workspace
-// are the run's. bySession reports which; nil is no pane.
+// runPane is the pane the run row names.
+func runPane(run model.Run) herdr.Pane { return herdr.Pane{ID: run.Pane, Workspace: run.Workspace} }
+
+// findPane returns the run's pane: the one whose agent session is the run's, else the one paneByID finds for the run
+// row's pane. bySession reports which; nil is no pane.
 func findPane(panes []herdr.Pane, run model.Run) (pane *herdr.Pane, bySession bool) {
 	if run.Session != "" {
 		for i := range panes {
@@ -195,10 +201,8 @@ func findPane(panes []herdr.Pane, run model.Run) (pane *herdr.Pane, bySession bo
 		}
 	}
 	if run.Pane != "" {
-		for i := range panes {
-			if panes[i].ID == run.Pane && panes[i].Workspace == run.Workspace {
-				return &panes[i], false
-			}
+		if p, ok := paneByID(panes, runPane(run)); ok {
+			return &p, false
 		}
 	}
 	return nil, false

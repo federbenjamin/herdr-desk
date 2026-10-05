@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/federbenjamin/herdr-desk/internal/api"
 	"github.com/federbenjamin/herdr-desk/internal/board"
 	"github.com/federbenjamin/herdr-desk/internal/model"
 	"github.com/federbenjamin/herdr-desk/internal/runner"
@@ -18,6 +19,7 @@ import (
 type deskContext struct {
 	StartRuns     string           `json:"start_runs"`
 	RunnerState   string           `json:"runner_state"`
+	NoTicker      bool             `json:"no_ticker"` // api.Status.NoTicker: the runner is on or paused and no ticker runs
 	Cap           int              `json:"cap"`
 	Today         int              `json:"today"` // runs started since local midnight
 	MaxRunsPerDay int              `json:"max_runs_per_day"`
@@ -80,6 +82,7 @@ func (a *app) contextCmd() *cobra.Command {
 		d := deskContext{
 			StartRuns:     cfg.Coordinator.StartRuns,
 			RunnerState:   st.RunnerState,
+			NoTicker:      st.NoTicker(),
 			Cap:           cfg.Runner.Cap,
 			Today:         startedToday(runs, time.Now()),
 			MaxRunsPerDay: cfg.Runner.MaxRunsPerDay,
@@ -133,6 +136,9 @@ func (a *app) printContext(d deskContext) {
 	a.say("start_runs %s", d.StartRuns)
 	a.say("runner %s · cap %d · today %d of max_runs_per_day %d · max_run_minutes %d",
 		d.RunnerState, d.Cap, d.Today, d.MaxRunsPerDay, d.MaxRunMinutes)
+	if d.NoTicker {
+		a.say("%s", api.NoTickerText)
+	}
 	a.say("\nroots:")
 	for _, r := range d.Roots {
 		line := "  " + r.Path + "  " + dash(r.Isolation)

@@ -23,13 +23,44 @@ fail() {
 pass() { say "E2E PASS"; }
 ok() { say "ok: $*"; }
 
+# machine_env <machine>: set MACHINE_ENV to the env argv a person's command on that machine runs under: no agent
+# session or run, and the machine's four folders. on, term_start, and the event hook's command build from it.
+machine_env() {
+  local m=$1
+  MACHINE_ENV=(env -u DESK_SESSION -u DESK_RUN -u DESK_HOOKS -u CLAUDE_CODE_SESSION_ID
+    "XDG_CONFIG_HOME=$E2E/$m/config" "XDG_STATE_HOME=$E2E/$m/state"
+    "XDG_DATA_HOME=$E2E/$m/data" "XDG_CACHE_HOME=$E2E/$m/cache")
+}
+
+# popup_manifest <dst>: write to <dst> the repo's herdr-plugin.toml as the temp plugin desk-e2e: no build, startup,
+# or events block, and its board and capture commands run this build's binary as a person on the home.
+popup_manifest() {
+  local dst=$1
+  machine_env home
+  python3 - "$REPO/herdr-plugin.toml" "$dst" "$BIN/herdr-desk" "${MACHINE_ENV[@]}" <<'PY' || fail "cannot write the temp manifest"
+import json
+import re
+import sys
+
+src, dst, desk = sys.argv[1:4]
+env = sys.argv[4:]
+text = open(src).read()
+parts = re.split(r"(?m)^(?=\[\[)", text)
+text = "".join(p for p in parts if not p.startswith(("[[build]]", "[[startup]]", "[[events]]")))
+text = text.replace('id = "herdr-desk"\n', 'id = "desk-e2e"\n', 1)
+text = text.replace('command = ["herdr-desk", "capture"]', "command = " + json.dumps(env + [desk, "capture"]))
+text = text.replace('command = ["herdr-desk"]', "command = " + json.dumps(env + [desk]))
+open(dst, "w").write(text)
+PY
+  grep -q 'id = "desk-e2e"' "$dst" || fail "the temp manifest has no id desk-e2e"
+  if grep -Eq '^\[\[(build|startup|events)\]\]' "$dst"; then fail "the temp manifest still has a build, startup, or events block"; fi
+}
+
 # on <machine> <command...>: run a command as a person on that machine.
 on() {
-  local m=$1
+  machine_env "$1"
   shift
-  env -u DESK_SESSION -u DESK_RUN -u DESK_HOOKS -u CLAUDE_CODE_SESSION_ID \
-    XDG_CONFIG_HOME="$E2E/$m/config" XDG_STATE_HOME="$E2E/$m/state" \
-    XDG_DATA_HOME="$E2E/$m/data" XDG_CACHE_HOME="$E2E/$m/cache" "$@"
+  "${MACHINE_ENV[@]}" "$@"
 }
 
 # as_agent <machine> <session> <command...>: the same, as an agent session.
@@ -251,9 +282,8 @@ term_start() {
     tm new-session -d -s keeper -x 80 -y 24 -- sleep 3600 || fail "tmux cannot start a server"
     tm set-option -g remain-on-exit on
   fi
-  tm new-session -d -s "$name" -x "$cols" -y "$rows" -- env -u DESK_SESSION -u DESK_RUN -u DESK_HOOKS \
-    -u CLAUDE_CODE_SESSION_ID XDG_CONFIG_HOME="$E2E/$m/config" XDG_STATE_HOME="$E2E/$m/state" \
-    XDG_DATA_HOME="$E2E/$m/data" XDG_CACHE_HOME="$E2E/$m/cache" "$@" || fail "tmux cannot start $name"
+  machine_env "$m"
+  tm new-session -d -s "$name" -x "$cols" -y "$rows" -- "${MACHINE_ENV[@]}" "$@" || fail "tmux cannot start $name"
 }
 
 # term_screen <name>: the text on the screen now.

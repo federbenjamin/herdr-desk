@@ -230,6 +230,29 @@ func TestCommandTransportClassifiesItsDeadlineAsAnUnreachableHome(t *testing.T) 
 	}
 }
 
+// runs.start may make a git worktree and a herdr workspace on the home, which can take longer than the per-request
+// timeout: cutting it would report the home unreachable and leave the run half started.
+func TestCommandTransportLetsARunStartOutlastThePerRequestTimeout(t *testing.T) {
+	machine := testutil.NewMachine(t)
+	command := filepath.Join(machine.Paths.ConfigDir, "slow-home")
+	if err := os.MkdirAll(filepath.Dir(command), 0o700); err != nil {
+		t.Fatalf("create command folder: %v", err)
+	}
+	if err := os.WriteFile(command, []byte("#!/bin/sh\ncat >/dev/null\nsleep 0.3\nprintf '%s\\n' '{\"result\":{\"id\":7}}'\n"), 0o700); err != nil {
+		t.Fatalf("write slow home command: %v", err)
+	}
+	transport := api.NewCommandTransport(machine.Paths, config.Config{Client: config.Client{Home: "slow-home", Command: []string{command}}},
+		50*time.Millisecond)
+
+	response, err := transport.RoundTrip(context.Background(), api.MethodRunsStart, []byte(`{"task":1}`))
+	if err != nil || !strings.Contains(string(response), `"id":7`) {
+		t.Fatalf("runs.start past the timeout = %q, %v; want the home's answer", response, err)
+	}
+	if _, err := transport.RoundTrip(context.Background(), api.MethodStatus, []byte(`{}`)); err == nil {
+		t.Fatal("status past the timeout error = nil, want the timeout to still bound other requests")
+	}
+}
+
 type w3CountingTransport struct {
 	calls  int
 	closes int
