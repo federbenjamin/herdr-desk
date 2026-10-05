@@ -155,7 +155,7 @@ ok "board-popup opens the popup, and neither lists panes nor focuses the split b
 
 open_pane 0 "$E2E/none.json" busy board-popup
 called "plugin pane open --plugin herdr-desk --entrypoint board-popup --focus"
-[ -z "$OUT" ] && [ -z "$ERR" ] || fail "a second press of board-popup printed: $OUT$ERR"
+{ [ -z "$OUT" ] && [ -z "$ERR" ]; } || fail "a second press of board-popup printed: $OUT$ERR"
 ok "a second press while the popup is up exits 0 and prints nothing"
 
 open_pane 2 "$E2E/none.json" free nosuch

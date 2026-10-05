@@ -311,7 +311,7 @@ rssh() { ssh -o BatchMode=yes -o ConnectTimeout=5 "$E2E_CLIENT" "$@"; }
 # pair_up: build for both machines, make this one a home, and put the client's binary, a timing helper, and a
 # client config pointing at the home on the client machine.
 pair_up() {
-  [ -n "${E2E_CLIENT:-}" ] && [ -n "${E2E_HOME:-}" ] || fail "(env) set E2E_CLIENT and E2E_HOME"
+  { [ -n "${E2E_CLIENT:-}" ] && [ -n "${E2E_HOME:-}" ]; } || fail "(env) set E2E_CLIENT and E2E_HOME"
   build
   local info goos goarch
   info=$(rssh uname -sm) || fail "(env) cannot ssh to the client machine"

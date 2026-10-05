@@ -38,6 +38,6 @@ ok "ticker stop ends it and status shows not running"
 # The removed file's name is built from its parts, so the tree's sweep for dropped names finds none here.
 old=dae
 old+=mon.json
-[ ! -e "$STATE/desk.sock" ] && [ ! -e "$STATE/$old" ] || fail "the state folder holds a removed file: $(ls "$STATE")"
+{ [ ! -e "$STATE/desk.sock" ] && [ ! -e "$STATE/$old" ]; } || fail "the state folder holds a removed file: $(ls "$STATE")"
 ok "the state folder holds no desk.sock and no $old"
 pass

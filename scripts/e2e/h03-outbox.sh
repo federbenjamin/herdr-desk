@@ -28,7 +28,7 @@ say "the home's view holds both lines"
 
 ts=$(sqlite3 "$E2E/home/data/herdr-desk/desk.db" "select ts from events where kind = 'note' and session = 's-h3'")
 epoch=$(python3 -c 'import sys; from datetime import datetime; print(int(datetime.fromisoformat(sys.argv[1].replace("Z", "+00:00")).timestamp()))' "$ts")
-[ "$epoch" -ge $((written - 1)) ] && [ "$epoch" -le $((written + 1)) ] || fail "the note's ts is $ts (epoch $epoch), written at $written"
+{ [ "$epoch" -ge $((written - 1)) ] && [ "$epoch" -le $((written + 1)) ]; } || fail "the note's ts is $ts (epoch $epoch), written at $written"
 [ "$epoch" -lt $((arrived - 1)) ] || fail "the note's ts $ts is the time it arrived ($arrived)"
 ok "the note's ts on the home is the time it was written, not the time it arrived"
 pass
