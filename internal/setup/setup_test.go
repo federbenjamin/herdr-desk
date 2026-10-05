@@ -103,6 +103,10 @@ func TestRunAppliesClaudeCodeProfileAndWritesSkill(t *testing.T) {
 	if !reflect.DeepEqual(got.Agent.Worker, wantWorker) {
 		t.Errorf("worker argv = %#v; want %#v", got.Agent.Worker, wantWorker)
 	}
+	wantCoordinator := []string{"claude", "--permission-mode", "auto", "--session-id", "{session}", "--append-system-prompt", "{prompt}"}
+	if !reflect.DeepEqual(got.Agent.Coordinator, wantCoordinator) {
+		t.Errorf("coordinator argv = %#v; want %#v", got.Agent.Coordinator, wantCoordinator)
+	}
 	if got.Agent.SessionEnv != "CLAUDE_CODE_SESSION_ID" {
 		t.Errorf("session env = %q; want CLAUDE_CODE_SESSION_ID", got.Agent.SessionEnv)
 	}
@@ -128,7 +132,7 @@ func TestRunAppliesClaudeCodeProfileAndWritesSkill(t *testing.T) {
 	if strings.Contains(secondOut.String(), "agent.router") {
 		t.Errorf("second Run report = %q; want no agent.router line: the router is gone", secondOut.String())
 	}
-	for _, line := range []string{"agent.worker: kept", "agent.session_env: kept", "skill: " + skillFile + " unchanged"} {
+	for _, line := range []string{"agent.worker: kept", "agent.coordinator: kept", "agent.session_env: kept", "skill: " + skillFile + " unchanged"} {
 		if !strings.Contains(secondOut.String(), line) {
 			t.Errorf("second Run report = %q; want %q", secondOut.String(), line)
 		}

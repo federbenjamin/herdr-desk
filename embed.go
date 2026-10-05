@@ -6,5 +6,11 @@ import _ "embed"
 //go:embed profiles/claude-code/skills/herdr-desk/SKILL.md
 var skill string
 
+//go:embed skill/COORDINATOR.md
+var coordinator string
+
 // Skill returns the text of the agent skill (profiles/claude-code/skills/herdr-desk/SKILL.md).
 func Skill() string { return skill }
+
+// Coordinator returns the text of the coordinator skill (skill/COORDINATOR.md), the coordinator's system prompt.
+func Coordinator() string { return coordinator }

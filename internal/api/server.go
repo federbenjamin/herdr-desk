@@ -115,6 +115,9 @@ func NewServer(o ServerOptions) *Server {
 			}
 			return runs, err
 		}),
+		MethodCoordinatorChanges: bind(func(ctx context.Context, r changesRequest) (any, error) {
+			return st.Changes(ctx, r.Actor, maxChanges)
+		}),
 		MethodStatus: bind(func(ctx context.Context, _ empty) (any, error) { return s.status(ctx) }),
 		MethodBackupRun: bind(func(ctx context.Context, _ empty) (any, error) {
 			if o.Backup == nil {

@@ -245,6 +245,14 @@ func (c *Client) StartRun(ctx context.Context, a store.Actor, task int, route st
 	return r, err
 }
 
+// Changes returns the events after the coordinator's cursor, at most 100 of them, oldest first; it moves the cursor
+// only when a is the recorded coordinator's session.
+func (c *Client) Changes(ctx context.Context, a store.Actor) (store.Changes, error) {
+	var ch store.Changes
+	err := c.call(ctx, MethodCoordinatorChanges, changesRequest{Actor: a}, &ch)
+	return ch, err
+}
+
 // PauseRunner pauses or resumes the runner and returns the status after.
 func (c *Client) PauseRunner(ctx context.Context, a store.Actor, paused bool) (Status, error) {
 	var s Status

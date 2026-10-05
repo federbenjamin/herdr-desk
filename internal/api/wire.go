@@ -26,7 +26,13 @@ const (
 	MethodRunnerPause  = "runner.pause"
 	MethodStatus       = "status"
 	MethodBackupRun    = "backup.run"
+	// MethodCoordinatorChanges returns the events after the coordinator's cursor; only the coordinator's own call
+	// moves the cursor. The coordinator is recorded on the home by runner.Coordinator, so no method gets or sets it.
+	MethodCoordinatorChanges = "coordinator.changes"
 )
+
+// maxChanges is the most events coordinator.changes returns; the rest are counted as left out.
+const maxChanges = 100
 
 // The values of Status.RunnerState.
 const (
@@ -157,6 +163,9 @@ type (
 	pauseRequest struct {
 		Actor  store.Actor `json:"actor"`
 		Paused bool        `json:"paused"`
+	}
+	changesRequest struct {
+		Actor store.Actor `json:"actor"`
 	}
 	empty struct{}
 )
