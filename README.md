@@ -52,7 +52,7 @@ The plugin registers a `SessionStart` hook (`herdr-desk hook start --format clau
 skill. `herdr-desk setup` also writes the skill to `~/.claude/skills/herdr-desk/SKILL.md` when you pass
 `--skill-dir ~/.claude/skills`. It binds `prefix+t` (open the board) and `prefix+a` (capture) in
 herdr's `config.toml`, only for keys that are free; `--force` replaces a binding that holds them. It
-copies the file to `config.toml.desk-bak-<time>` first and never binds `ctrl+d`.
+copies the file to `config.toml.herdr-desk-bak-<time>` first and never binds `ctrl+d`.
 
 Homebrew installs the binary alone: `brew install federbenjamin/tap/herdr-desk`.
 
@@ -377,14 +377,14 @@ socket path may be 103 bytes at most; when `$XDG_STATE_HOME/herdr-desk/desk.sock
 that tried to start the daemon prints the path, its length, and the limit. Set `XDG_STATE_HOME` to a
 shorter folder.
 
-launchd, `~/Library/LaunchAgents/desk.daemon.plist`:
+launchd, `~/Library/LaunchAgents/herdr-desk.daemon.plist`:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>desk.daemon</string>
+  <key>Label</key><string>herdr-desk.daemon</string>
   <key>ProgramArguments</key>
   <array><string>/usr/local/bin/herdr-desk</string><string>daemon</string></array>
   <key>RunAtLoad</key><true/>
@@ -394,10 +394,10 @@ launchd, `~/Library/LaunchAgents/desk.daemon.plist`:
 ```
 
 ```sh
-launchctl load ~/Library/LaunchAgents/desk.daemon.plist
+launchctl load ~/Library/LaunchAgents/herdr-desk.daemon.plist
 ```
 
-systemd, `~/.config/systemd/user/desk.service`:
+systemd, `~/.config/systemd/user/herdr-desk.service`:
 
 ```ini
 [Service]
@@ -409,7 +409,7 @@ WantedBy=default.target
 ```
 
 ```sh
-systemctl --user enable --now desk.service
+systemctl --user enable --now herdr-desk.service
 ```
 
 ## Releases

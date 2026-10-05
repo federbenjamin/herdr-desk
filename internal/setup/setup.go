@@ -223,7 +223,7 @@ func writeSkill(skillDir string, out io.Writer) error {
 	return nil
 }
 
-// writeHerdr edits herdr's config at path, copying it to <path>.desk-bak-<time> first when the text changes.
+// writeHerdr edits herdr's config at path, copying it to <path>.herdr-desk-bak-<time> first when the text changes.
 func writeHerdr(path string, force bool, out io.Writer) error {
 	old, err := os.ReadFile(path)
 	if err != nil {
@@ -241,7 +241,7 @@ func writeHerdr(path string, force bool, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	backup := path + ".desk-bak-" + time.Now().UTC().Format("20060102-150405.000000000")
+	backup := path + ".herdr-desk-bak-" + time.Now().UTC().Format("20060102-150405.000000000")
 	if err := os.WriteFile(backup, old, info.Mode().Perm()); err != nil {
 		return err
 	}

@@ -211,7 +211,7 @@ func TestRunAddsHerdrNotificationOnlyWhenHerdrConfigExists(t *testing.T) {
 	if len(withoutHerdr.Notify.Command) != 0 {
 		t.Errorf("Run without a herdr config set notification argv to %#v", withoutHerdr.Notify.Command)
 	}
-	if backups, err := filepath.Glob(filepath.Join(filepath.Dir(p.ConfigDir), "herdr", "config.toml.desk-bak-*")); err != nil || len(backups) != 0 {
+	if backups, err := filepath.Glob(filepath.Join(filepath.Dir(p.ConfigDir), "herdr", "config.toml.herdr-desk-bak-*")); err != nil || len(backups) != 0 {
 		t.Errorf("Run without a herdr config made backups %#v, %v", backups, err)
 	}
 
@@ -234,7 +234,7 @@ func TestRunAddsHerdrNotificationOnlyWhenHerdrConfigExists(t *testing.T) {
 	if !reflect.DeepEqual(got.Notify.Command, want) {
 		t.Errorf("notification argv = %#v; want %#v", got.Notify.Command, want)
 	}
-	backups, err := filepath.Glob(herdrConfig + ".desk-bak-*")
+	backups, err := filepath.Glob(herdrConfig + ".herdr-desk-bak-*")
 	if err != nil || len(backups) != 1 {
 		t.Fatalf("herdr config backups = %#v, %v; want one", backups, err)
 	}

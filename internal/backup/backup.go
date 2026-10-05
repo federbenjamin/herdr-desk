@@ -144,6 +144,6 @@ func writeState(p config.Paths, s state) error {
 // git runs one git command in dir and returns its trimmed stdout. A daemon has no terminal, so a signing prompt
 // would hang it, and the machine may have no git identity.
 func git(ctx context.Context, dir string, args ...string) (string, error) {
-	identity := []string{"-c", "commit.gpgsign=false", "-c", "user.name=desk", "-c", "user.email=desk@localhost"}
+	identity := []string{"-c", "commit.gpgsign=false", "-c", "user.name=herdr-desk", "-c", "user.email=herdr-desk@localhost"}
 	return gitcmd.Run(ctx, dir, gitTimeout, append(identity, args...)...)
 }

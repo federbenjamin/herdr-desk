@@ -38,7 +38,7 @@ grep -q 'command = "other.open"' "$HERDR" || fail "the other program's prefix+t 
 if grep -q 'command = "herdr-desk.open-board"' "$HERDR"; then fail "prefix+t was taken without --force"; fi
 out_has "prefix+t"
 say "taken keys left ok"
-ls "$E2E"/s/config/herdr/config.toml.desk-bak-* >/dev/null 2>&1 || fail "no backup of herdr's config"
+ls "$E2E"/s/config/herdr/config.toml.herdr-desk-bak-* >/dev/null 2>&1 || fail "no backup of herdr's config"
 say "backup file ok"
 
 grep -Eq "session_env = [\"']CLAUDE_CODE_SESSION_ID[\"']" "$CFG" || fail "no session_env from the profile"
