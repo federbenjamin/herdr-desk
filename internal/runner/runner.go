@@ -20,6 +20,7 @@ import (
 	"github.com/federbenjamin/herdr-desk/internal/config"
 	"github.com/federbenjamin/herdr-desk/internal/herdr"
 	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/sidebar"
 	"github.com/federbenjamin/herdr-desk/internal/store"
 )
 
@@ -32,6 +33,7 @@ type Herdr interface {
 	Processes(ctx context.Context, pane string) (herdr.Processes, error)
 	ClosePane(ctx context.Context, pane string) error
 	FocusPane(ctx context.Context, workspace, pane string) error
+	ReportToken(ctx context.Context, pane, source, name, value string) error
 }
 
 // The runner's states, as State returns them and the status method shows them.
@@ -302,7 +304,8 @@ func (r *Runner) fail(ctx context.Context, run model.Run, from, msg string) {
 // run (HandBack{From, To}), runs the cleanup, whose answer is the note, then writes the note and the status from
 // To; once claimed, those writes go on even when ctx ends, so the task is not left started with no live run. A run
 // that is not its task's newest (stale-run) is nothing to do. A run that ends frees a slot, so StartWaiting runs.
-// It returns the task and whether it claimed the run.
+// A claimed hand-back is then reported: the run's row while the run stays live (a run that ends here had its pane
+// closed or found gone), and the coordinator's row. It returns the task and whether it claimed the run.
 func (r *Runner) handBack(ctx context.Context, run model.Run, hb store.HandBack, cleanup func(ctx context.Context) string) (model.Task, bool, error) {
 	write := hb
 	if cleanup != nil {
@@ -320,10 +323,114 @@ func (r *Runner) handBack(ctx context.Context, run model.Run, hb store.HandBack,
 	if err != nil {
 		return t, cleanup != nil, err
 	}
-	if (claimed || cleanup != nil) && runEnded(hb.To) {
+	if !claimed && cleanup == nil {
+		return t, false, nil
+	}
+	if runEnded(hb.To) {
 		r.StartWaiting(ctx)
 	}
-	return t, claimed || cleanup != nil, nil
+	state := hb.To
+	if state == "" {
+		state = hb.From
+	}
+	r.report(ctx, run, model.RunLive(state))
+	return t, true, nil
+}
+
+// report shows the sidebar rows a change of the run can move: the run's own when row is set, then the
+// coordinator's. With no herdr there is no sidebar, and nothing is asked; a report herdr refuses is logged.
+func (r *Runner) report(ctx context.Context, run model.Run, row bool) {
+	h, err := r.findHerdr()
+	if err != nil {
+		return
+	}
+	if row {
+		r.reportRun(ctx, h, run)
+	}
+	r.reportCoordinator(ctx, h)
+}
+
+// reportRun shows the run's row on its pane, from the run and its task as the store holds them now. A run with no
+// pane yet, or killed or failed (its pane closed or closing), gets nothing; for a run that ended, herdr is asked
+// first whether its pane is still open.
+func (r *Runner) reportRun(ctx context.Context, h Herdr, run model.Run) {
+	cur, ok, err := r.o.Store.CurrentRun(ctx, run.Task)
+	if err != nil {
+		r.logErr("T%d: read its run for the sidebar", run.Task, err)
+		return
+	}
+	current := ok && cur.ID == run.ID
+	if current {
+		run = cur
+	}
+	if run.Pane == "" || run.State == model.RunKilled || run.State == model.RunFailed {
+		return
+	}
+	if !model.RunLive(run.State) {
+		p, found, err := h.Pane(ctx, run.Pane)
+		if err != nil || !found || p.Workspace != run.Workspace {
+			return
+		}
+	}
+	d, err := r.o.Store.GetTask(ctx, run.Task)
+	if err != nil {
+		r.logErr("T%d: read the task for the sidebar", run.Task, err)
+		return
+	}
+	r.reportToken(ctx, h, run.Pane, sidebar.RunText(d.Task, run, current, handBackRef(d.History, run.ID), r.o.Now().Location()))
+}
+
+// reportCoordinator shows the desk's counts on the recorded coordinator's pane, when there is one.
+func (r *Runner) reportCoordinator(ctx context.Context, h Herdr) {
+	c, ok, err := r.o.Store.Coordinator(ctx)
+	if err != nil {
+		r.logErr("read the coordinator for the sidebar", err)
+		return
+	}
+	if !ok || c.Pane == "" {
+		return
+	}
+	need, err := r.o.Store.ListTasks(ctx, store.Filter{Statuses: []model.Status{model.StatusBlocked, model.StatusReview}})
+	if err != nil {
+		r.logErr("count the tasks that need a person", err)
+		return
+	}
+	live, err := r.o.Store.LiveRuns(ctx)
+	if err != nil {
+		r.logErr("read live runs", err)
+		return
+	}
+	running, waiting := 0, 0
+	for _, run := range live {
+		switch run.State {
+		case model.RunStarting, model.RunRunning:
+			running++
+		case model.RunWaiting:
+			waiting++
+		}
+	}
+	r.reportToken(ctx, h, c.Pane, sidebar.CoordinatorText(len(need), running, waiting))
+}
+
+func (r *Runner) reportToken(ctx context.Context, h Herdr, pane, text string) {
+	if err := h.ReportToken(ctx, pane, sidebar.Source, sidebar.Token, text); err != nil {
+		r.logErr("show the sidebar row of pane %s", pane, err)
+	}
+}
+
+// handBackRef is the ref of the newest status write the run's worker made with one, "" when none did.
+func handBackRef(history []model.Event, run int64) string {
+	for i := len(history) - 1; i >= 0; i-- {
+		e := history[i]
+		var p model.Patch
+		if e.Kind != model.KindSet || e.Run != run || json.Unmarshal(e.Data, &p) != nil {
+			continue
+		}
+		if p.Ref != "" {
+			return p.Ref
+		}
+	}
+	return ""
 }
 
 // storeHandBack is Store.HandBack with a stale-run refusal read as no claim; any other error is logged.

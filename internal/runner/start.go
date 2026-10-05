@@ -13,8 +13,8 @@ import (
 // Start starts a run of the task on route, each field of which wins over the task's own and the defaults (Resolve).
 // It refuses, in this order: not-allowed for a session that is not the recorded coordinator's, runner-off,
 // runner-paused, no-herdr, and cap-reached once today's runs reach runner.max_runs_per_day. The store then decides
-// starting or waiting; a starting run is spawned. A task that already has a starting, waiting, or running run gets
-// that run and no error.
+// starting or waiting; a starting run is spawned, and the sidebar rows are reported. A task that already has a
+// starting, waiting, or running run gets that run and no error.
 func (r *Runner) Start(ctx context.Context, a store.Actor, task int, route store.RunRoute) (model.Run, error) {
 	if err := r.mayStart(ctx, a); err != nil {
 		return model.Run{}, err
@@ -63,9 +63,12 @@ func (r *Runner) Start(ctx context.Context, a store.Actor, task int, route store
 	}
 	r.note(ctx, store.Actor{Run: run.ID}, task, []string{model.TagRunner}, fmt.Sprintf("run %d %s: %s (%s)", run.ID, run.State, run.Root, how))
 	if run.State != model.RunStarting {
+		r.report(ctx, run, false)
 		return run, nil
 	}
-	r.spawn(ctx, h, d.Task, run)
+	if r.spawn(ctx, h, d.Task, run) {
+		r.report(ctx, run, true)
+	}
 	if cur, ok, err := r.o.Store.CurrentRun(ctx, task); err == nil && ok && cur.ID == run.ID {
 		run = cur
 	}
@@ -95,8 +98,8 @@ func (r *Runner) today(ctx context.Context) (int, error) {
 	return r.o.Store.RunsSince(ctx, time.Date(y, m, d, 0, 0, 0, 0, now.Location()))
 }
 
-// StartWaiting spawns waiting runs, oldest first, while the store finds one whose slot and root are free. It
-// starts nothing unless the runner is on.
+// StartWaiting spawns waiting runs, oldest first, while the store finds one whose slot and root are free, and
+// reports each it spawned. It starts nothing unless the runner is on.
 func (r *Runner) StartWaiting(ctx context.Context) {
 	state, h, _ := r.compute()
 	if state != StateOn {
@@ -116,12 +119,20 @@ func (r *Runner) StartWaiting(ctx context.Context) {
 			r.fail(ctx, run, model.RunStarting, "spawn: could not read the task: "+clip(err.Error()))
 			continue
 		}
-		r.spawn(ctx, h, d.Task, run)
+		if r.spawn(ctx, h, d.Task, run) {
+			r.report(ctx, run, true)
+		}
 	}
 }
 
 // AfterSet runs after a task's status was written through the API: a write that ended a run frees a slot, so it
-// starts what waits.
+// starts what waits. Then it reports the task's run row, which a worker's hand-back or done changes, and the
+// coordinator's counts.
 func (r *Runner) AfterSet(ctx context.Context, task int) {
 	r.StartWaiting(ctx)
+	run, ok, err := r.o.Store.CurrentRun(ctx, task)
+	if err != nil {
+		r.logErr("T%d: read its run", task, err)
+	}
+	r.report(ctx, run, ok)
 }
