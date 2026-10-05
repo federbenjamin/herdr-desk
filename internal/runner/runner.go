@@ -28,6 +28,7 @@ type Herdr interface {
 	CreateWorkspace(ctx context.Context, cwd, label string, env []string) (herdr.Created, error)
 	Run(ctx context.Context, pane, command string) error
 	Panes(ctx context.Context) ([]herdr.Pane, error)
+	Pane(ctx context.Context, id string) (herdr.Pane, bool, error)
 	Processes(ctx context.Context, pane string) (herdr.Processes, error)
 	ClosePane(ctx context.Context, pane string) error
 }
@@ -149,9 +150,10 @@ func (r *Runner) findHerdr() (Herdr, error) {
 	return &herdr.Client{Bin: bin}, nil
 }
 
-// Jobs is the ticker's run jobs, once: the deadline, start what waits, fail runs left starting, close the panes
-// left open again, and block tasks left started.
+// Jobs is the ticker's run jobs, once: reconcile, the deadline, start what waits, fail runs left starting, close
+// the panes left open again, and block tasks left started. With no live run and no pane left open, herdr is not asked.
 func (r *Runner) Jobs(ctx context.Context) {
+	_ = r.Reconcile(ctx) // Reconcile logs its errors.
 	r.deadline(ctx)
 	r.StartWaiting(ctx)
 	r.failStaleStarting(ctx)
