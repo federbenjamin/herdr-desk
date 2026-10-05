@@ -160,7 +160,7 @@ func (t *Ticker) Tick(ctx context.Context) {
 		return
 	}
 	if c.Runner.Enabled && open() {
-		r.Tick(ctx)
+		r.Jobs(ctx)
 	}
 }
 

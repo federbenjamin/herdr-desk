@@ -22,14 +22,14 @@ import (
 	"github.com/federbenjamin/herdr-desk/internal/testutil"
 )
 
-func TestTickStartsInPlaceRunWithSessionWorkspaceEnvironmentNoteAndNotification(t *testing.T) {
+func TestStartStartsInPlaceRunWithSessionWorkspaceEnvironmentNoteAndNotification(t *testing.T) {
 	root := t.TempDir()
 	f := newFixture(t, root, "in-place")
 	notice := filepath.Join(t.TempDir(), "notice")
 	f.config.Notify.Command = []string{spawnNotifyScript(t, notice)}
 	task := f.armRoute("in place", root, "in-place")
 
-	f.runner().Tick(f.ctx)
+	f.startRun(f.runner(), task.Number)
 	run := f.run(task.Number)
 	if run.State != model.RunRunning || run.Session == "" || run.Workspace == "" || run.Pane == "" {
 		t.Fatalf("run = %#v, want running run with session, workspace, and pane", run)
@@ -39,7 +39,7 @@ func TestTickStartsInPlaceRunWithSessionWorkspaceEnvironmentNoteAndNotification(
 	}
 	other := newFixture(t, t.TempDir(), "self")
 	otherTask := other.armRoute("another session", other.config.Roots[0].Path, "self")
-	other.runner().Tick(other.ctx)
+	other.startRun(other.runner(), otherTask.Number)
 	if otherRun := other.run(otherTask.Number); otherRun.Session == run.Session {
 		t.Fatalf("sessions = %q and %q, want a fresh session for each spawn", run.Session, otherRun.Session)
 	}
@@ -68,7 +68,7 @@ func TestTickStartsInPlaceRunWithSessionWorkspaceEnvironmentNoteAndNotification(
 	}
 }
 
-func TestTickQuotesWorkerExecutableAndRefusesSingleQuotes(t *testing.T) {
+func TestStartQuotesWorkerExecutableAndRefusesSingleQuotes(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
 		exe          string
@@ -95,7 +95,7 @@ func TestTickQuotesWorkerExecutableAndRefusesSingleQuotes(t *testing.T) {
 			f.exe = tc.exe
 			task := f.armRoute("quote command", root, "self")
 
-			f.runner().Tick(f.ctx)
+			f.startRun(f.runner(), task.Number)
 			run := f.run(task.Number)
 			if tc.wantSpawned {
 				workspaces := f.herdr.Workspaces()
@@ -112,7 +112,7 @@ func TestTickQuotesWorkerExecutableAndRefusesSingleQuotes(t *testing.T) {
 	}
 }
 
-func TestTickCreatesWorktreeAndReusesItAfterTheTaskIsRearmed(t *testing.T) {
+func TestStartCreatesWorktreeAndReusesItOnTheNextRun(t *testing.T) {
 	parent := t.TempDir()
 	root := filepath.Join(parent, "repo")
 	spawnGitRoot(t, root)
@@ -122,20 +122,16 @@ func TestTickCreatesWorktreeAndReusesItAfterTheTaskIsRearmed(t *testing.T) {
 	branch := "desk/T" + strconv.Itoa(task.Number) + "-ship-the-test"
 	r := f.runner()
 
-	r.Tick(f.ctx)
+	f.startRun(r, task.Number)
 	first := f.run(task.Number)
 	if first.State != model.RunRunning || f.herdr.Workspaces()[0].Cwd != worktree || spawnGitBranch(t, worktree) != branch {
 		t.Fatalf("first worktree run = %#v; workspaces = %#v; branch = %q, want %q at %q", first, f.herdr.Workspaces(), spawnGitBranch(t, worktree), branch, worktree)
 	}
 	blocked := model.StatusBlocked
-	if _, err := f.store.SetTask(f.ctx, store.Actor{}, task.Number, model.Patch{Status: &blocked}); err != nil {
-		t.Fatalf("block first run: %v", err)
+	if _, err := f.store.SetTask(f.ctx, store.Actor{Session: first.Session, Run: first.ID}, task.Number, model.Patch{Status: &blocked}); err != nil {
+		t.Fatalf("the first run's worker hands back blocked: %v", err)
 	}
-	ready := model.StatusReady
-	if _, err := f.store.SetTask(f.ctx, store.Actor{}, task.Number, model.Patch{Status: &ready}); err != nil {
-		t.Fatalf("re-arm task: %v", err)
-	}
-	r.Tick(f.ctx)
+	f.startRun(r, task.Number)
 	runs, err := f.store.ListRuns(f.ctx)
 	if err != nil {
 		t.Fatalf("list runs: %v", err)
@@ -146,7 +142,7 @@ func TestTickCreatesWorktreeAndReusesItAfterTheTaskIsRearmed(t *testing.T) {
 	}
 }
 
-func TestTickChecksOutExistingWorktreeBranchAndUsesBareNumberForEmptySlug(t *testing.T) {
+func TestStartChecksOutExistingWorktreeBranchAndUsesBareNumberForEmptySlug(t *testing.T) {
 	parent := t.TempDir()
 	root := filepath.Join(parent, "repo")
 	spawnGitRoot(t, root)
@@ -155,7 +151,7 @@ func TestTickChecksOutExistingWorktreeBranchAndUsesBareNumberForEmptySlug(t *tes
 	branch := "desk/T" + strconv.Itoa(task.Number)
 	spawnGit(t, root, "branch", branch)
 
-	f.runner().Tick(f.ctx)
+	f.startRun(f.runner(), task.Number)
 	run := f.run(task.Number)
 	worktree := filepath.Join(parent, "repo-T"+strconv.Itoa(task.Number))
 	if run.State != model.RunRunning || f.herdr.Workspaces()[0].Cwd != worktree || spawnGitBranch(t, worktree) != branch {
@@ -163,12 +159,12 @@ func TestTickChecksOutExistingWorktreeBranchAndUsesBareNumberForEmptySlug(t *tes
 	}
 }
 
-func TestTickBlocksTaskWhenWorktreeRootIsNotAGitRepository(t *testing.T) {
+func TestStartBlocksTaskWhenWorktreeRootIsNotAGitRepository(t *testing.T) {
 	root := t.TempDir()
 	f := newFixture(t, root, "worktree")
 	task := f.armRoute("not a repository", root, "worktree")
 
-	f.runner().Tick(f.ctx)
+	f.startRun(f.runner(), task.Number)
 	run := f.run(task.Number)
 	if run.State != model.RunFailed || f.task(task.Number).Task.Status != model.StatusBlocked || len(f.herdr.Workspaces()) != 0 {
 		t.Fatalf("run = %#v; task = %#v; workspaces = %#v, want failed blocked task without a workspace", run, f.task(task.Number).Task, f.herdr.Workspaces())
@@ -176,45 +172,45 @@ func TestTickBlocksTaskWhenWorktreeRootIsNotAGitRepository(t *testing.T) {
 	spawnAssertFailureNote(t, f.task(task.Number).History, run.ID, "")
 }
 
-func TestTickMakesScratchRootBeforeStartingTheWorkspace(t *testing.T) {
+func TestStartMakesScratchRootBeforeStartingTheWorkspace(t *testing.T) {
 	machine := testutil.NewMachine(t)
 	root := machine.Paths.ScratchRoot()
 	if _, err := os.Stat(root); !os.IsNotExist(err) {
-		t.Fatalf("scratch root before tick = %v, want missing", err)
+		t.Fatalf("scratch root before the start = %v, want missing", err)
 	}
 	f := newFixture(t, root, "in-place")
 	f.paths = machine.Paths
 	f.config.Roots = []config.Root{{Path: root, Isolation: "in-place"}}
 	task := f.armRoute("scratch task", root, "in-place")
 
-	f.runner().Tick(f.ctx)
+	f.startRun(f.runner(), task.Number)
 	if run := f.run(task.Number); run.State != model.RunRunning {
 		t.Fatalf("scratch run = %#v, want running", run)
 	}
 	if info, err := os.Stat(root); err != nil || !info.IsDir() {
-		t.Fatalf("scratch root after tick = %v (%v), want directory", info, err)
+		t.Fatalf("scratch root after the start = %v (%v), want directory", info, err)
 	}
 }
 
-func TestTickUsesSelfRootAsTheWorkspaceDirectory(t *testing.T) {
+func TestStartUsesSelfRootAsTheWorkspaceDirectory(t *testing.T) {
 	root := t.TempDir()
 	f := newFixture(t, root, "self")
 	task := f.armRoute("self task", root, "self")
 
-	f.runner().Tick(f.ctx)
+	f.startRun(f.runner(), task.Number)
 	workspaces := f.herdr.Workspaces()
 	if run := f.run(task.Number); run.State != model.RunRunning || len(workspaces) != 1 || workspaces[0].Cwd != root {
 		t.Fatalf("run = %#v; workspaces = %#v, want root %q used directly", run, workspaces, root)
 	}
 }
 
-func TestTickFailsAndBlocksWhenCreatingTheWorkspaceFails(t *testing.T) {
+func TestStartFailsAndBlocksWhenCreatingTheWorkspaceFails(t *testing.T) {
 	root := t.TempDir()
 	f := newFixture(t, root, "self")
 	f.herdr.Fail("CreateWorkspace", errors.New("create denied"))
 	task := f.armRoute("workspace failure", root, "self")
 
-	f.runner().Tick(f.ctx)
+	f.startRun(f.runner(), task.Number)
 	run := f.run(task.Number)
 	if run.State != model.RunFailed || f.task(task.Number).Task.Status != model.StatusBlocked || len(f.herdr.Workspaces()) != 0 {
 		t.Fatalf("run = %#v; task = %#v; workspaces = %#v, want failed blocked spawn without workspace", run, f.task(task.Number).Task, f.herdr.Workspaces())
@@ -222,13 +218,13 @@ func TestTickFailsAndBlocksWhenCreatingTheWorkspaceFails(t *testing.T) {
 	spawnAssertFailureNote(t, f.task(task.Number).History, run.ID, "create denied")
 }
 
-func TestTickClosesOpenedPaneAndBlocksWhenStartingWorkerFails(t *testing.T) {
+func TestStartClosesOpenedPaneAndBlocksWhenStartingWorkerFails(t *testing.T) {
 	root := t.TempDir()
 	f := newFixture(t, root, "self")
 	f.herdr.Fail("Run", errors.New("run denied"))
 	task := f.armRoute("worker failure", root, "self")
 
-	f.runner().Tick(f.ctx)
+	f.startRun(f.runner(), task.Number)
 	run := f.run(task.Number)
 	workspaces := f.herdr.Workspaces()
 	if run.State != model.RunFailed || f.task(task.Number).Task.Status != model.StatusBlocked || len(workspaces) != 1 || run.Workspace != workspaces[0].ID || run.Pane != workspaces[0].Pane || !reflect.DeepEqual(f.herdr.Closed(), []string{run.Pane}) {
@@ -237,7 +233,7 @@ func TestTickClosesOpenedPaneAndBlocksWhenStartingWorkerFails(t *testing.T) {
 	spawnAssertFailureNote(t, f.task(task.Number).History, run.ID, "run denied")
 }
 
-func TestTickStartsNoWorkerForARunKilledDuringItsSpawn(t *testing.T) {
+func TestStartStartsNoWorkerForARunKilledDuringItsSpawn(t *testing.T) {
 	for _, when := range []string{"after CreateWorkspace", "before Run", "after Run"} {
 		t.Run(when, func(t *testing.T) {
 			root := t.TempDir()
@@ -257,7 +253,7 @@ func TestTickStartsNoWorkerForARunKilledDuringItsSpawn(t *testing.T) {
 				}
 			})
 
-			r.Tick(f.ctx)
+			f.startRun(r, task.Number)
 			run := f.run(task.Number)
 			workspaces := f.herdr.Workspaces()
 			if run.State != model.RunKilled || f.task(task.Number).Task.Status != model.StatusBlocked || len(workspaces) != 1 {
@@ -282,7 +278,7 @@ func TestTickStartsNoWorkerForARunKilledDuringItsSpawn(t *testing.T) {
 	}
 }
 
-func TestTickFailsTheRunWhenItsPaneCannotBeRecorded(t *testing.T) {
+func TestStartFailsTheRunWhenItsPaneCannotBeRecorded(t *testing.T) {
 	root := t.TempDir()
 	f := newFixture(t, root, "self")
 	task := f.armRoute("pane not recorded", root, "self")
@@ -297,7 +293,7 @@ func TestTickFailsTheRunWhenItsPaneCannotBeRecorded(t *testing.T) {
 		t.Fatalf("add the trigger: %v", err)
 	}
 
-	f.runner().Tick(f.ctx)
+	f.startRun(f.runner(), task.Number)
 	run := f.run(task.Number)
 	workspaces := f.herdr.Workspaces()
 	if run.State != model.RunFailed || f.task(task.Number).Task.Status != model.StatusBlocked || len(workspaces) != 1 || workspaces[0].Command != "" || !reflect.DeepEqual(f.herdr.Closed(), []string{workspaces[0].Pane}) {
@@ -306,7 +302,7 @@ func TestTickFailsTheRunWhenItsPaneCannotBeRecorded(t *testing.T) {
 	spawnAssertFailureNote(t, f.task(task.Number).History, run.ID, "could not record the pane")
 }
 
-func TestTickReportsNoStartWhenItCannotConfirmTheRunAfterTheCommand(t *testing.T) {
+func TestStartReportsNoStartWhenItCannotConfirmTheRunAfterTheCommand(t *testing.T) {
 	t.Run("the run row cannot be read", func(t *testing.T) {
 		root := t.TempDir()
 		f := newFixture(t, root, "self")
@@ -335,7 +331,7 @@ func TestTickReportsNoStartWhenItCannotConfirmTheRunAfterTheCommand(t *testing.T
 	})
 }
 
-func TestTickUndoesASpawnWhoseContextEndsOnceThePaneExists(t *testing.T) {
+func TestStartUndoesASpawnWhoseContextEndsOnceThePaneExists(t *testing.T) {
 	for _, tc := range []struct {
 		name, hook, reason string
 	}{
@@ -350,7 +346,7 @@ func TestTickUndoesASpawnWhoseContextEndsOnceThePaneExists(t *testing.T) {
 			h := &ctxHerdr{hookedHerdr: &hookedHerdr{Herdr: f.herdr}}
 			ctx, cancel := context.WithCancel(f.ctx)
 			defer cancel()
-			// The daemon stops while the spawn runs: every call on ctx from here on fails.
+			// The process stops while the spawn runs: every call on ctx from here on fails.
 			h.set(tc.hook, cancel)
 			spawnAssertUndone(t, ctx, f, task, h, tc.reason, func() {})
 		})
@@ -376,13 +372,13 @@ func (h *ctxHerdr) ClosePane(ctx context.Context, pane string) error {
 	return h.hookedHerdr.ClosePane(ctx, pane)
 }
 
-// spawnAssertUndone ticks a runner on h with ctx, runs restore, and checks the run failed with reason in its
+// spawnAssertUndone starts a run of the task through a runner on h with ctx, runs restore, and checks the run failed with reason in its
 // spawn note, the task blocked, and the pane closed, with no started note and no notification.
 func spawnAssertUndone(t *testing.T, ctx context.Context, f *fixture, task model.Task, h runner.Herdr, reason string, restore func()) {
 	t.Helper()
 	notice := filepath.Join(t.TempDir(), "notice")
 	f.config.Notify.Command = []string{spawnNotifyScript(t, notice)}
-	f.runnerWith(h).Tick(ctx)
+	_, _ = f.runnerWith(h).Start(ctx, store.Actor{}, task.Number, store.RunRoute{})
 	restore()
 	run := f.run(task.Number)
 	workspaces := f.herdr.Workspaces()
@@ -401,7 +397,7 @@ func spawnAssertUndone(t *testing.T, ctx context.Context, f *fixture, task model
 	}
 }
 
-func TestTickNamesAPaneItCouldNotCloseAfterAFailedSpawnAndClosesItLater(t *testing.T) {
+func TestStartNamesAPaneItCouldNotCloseAfterAFailedSpawnAndJobsClosesItLater(t *testing.T) {
 	root := t.TempDir()
 	f := newFixture(t, root, "self")
 	f.herdr.Fail("Run", errors.New("run denied"))
@@ -409,16 +405,16 @@ func TestTickNamesAPaneItCouldNotCloseAfterAFailedSpawnAndClosesItLater(t *testi
 	task := f.armRoute("pane left open", root, "self")
 	r := f.runner()
 
-	r.Tick(f.ctx)
+	f.startRun(r, task.Number)
 	run := f.run(task.Number)
 	if run.State != model.RunFailed || f.task(task.Number).Task.Status != model.StatusBlocked {
 		t.Fatalf("run = %#v; task = %#v, want a failed run and a blocked task", run, f.task(task.Number).Task)
 	}
 	spawnAssertFailureNote(t, f.task(task.Number).History, run.ID, "pane "+run.Pane+" was left open")
 	f.herdr.Fail("ClosePane", nil)
-	r.Tick(f.ctx)
+	r.Jobs(f.ctx)
 	if got := f.herdr.Closed(); !reflect.DeepEqual(got, []string{run.Pane}) {
-		t.Fatalf("closed panes on the next tick = %#v, want the pane left open closed", got)
+		t.Fatalf("closed panes after the next jobs = %#v, want the pane left open closed", got)
 	}
 }
 

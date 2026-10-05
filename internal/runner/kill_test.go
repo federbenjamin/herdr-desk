@@ -2,6 +2,7 @@ package runner_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -37,8 +38,8 @@ func TestKillStopsReportedPaneProcessesClosesThePaneAndBlocksTheTask(t *testing.
 	if got.Status != model.StatusBlocked || f.task(task.Number).Task.Status != model.StatusBlocked || f.run(task.Number).State != model.RunKilled || !reflect.DeepEqual(f.herdr.Closed(), []string{run.Pane}) {
 		t.Fatalf("returned task = %#v; stored task = %#v; run = %#v; closed = %#v, want blocked task, killed run, and closed pane", got, f.task(task.Number).Task, f.run(task.Number), f.herdr.Closed())
 	}
-	watchAssertRunnerNote(t, f.task(task.Number).History, run.ID, "")
-	watchAssertRunnerStatus(t, f.task(task.Number).History, run.ID, model.StatusBlocked)
+	killAssertRunnerNote(t, f.task(task.Number).History, run.ID, "")
+	killAssertRunnerStatus(t, f.task(task.Number).History, run.ID, model.StatusBlocked)
 }
 
 func TestKillEscalatesToKILLWhenAChildIgnoresTERM(t *testing.T) {
@@ -90,14 +91,21 @@ func TestKillRefusesAgentActorsAndTasksWithoutLiveRuns(t *testing.T) {
 	}
 }
 
-func TestKillStopsRoutingAndWaitingRunsWithoutCallingHerdr(t *testing.T) {
-	for _, state := range []string{model.RunRouting, model.RunWaiting} {
+func TestKillStopsStartingAndWaitingRunsWithoutCallingHerdr(t *testing.T) {
+	for _, tc := range []struct {
+		state string
+		cap   int
+	}{{model.RunStarting, 3}, {model.RunWaiting, 0}} {
+		state := tc.state
 		t.Run(state, func(t *testing.T) {
 			f := newFixture(t, "", "in-place")
-			task, run, r := f.start()
-			if changed, err := f.store.UpdateRun(f.ctx, run.ID, model.RunRunning, store.RunUpdate{State: state}); err != nil || !changed {
-				t.Fatalf("make %s run = (%t, %v)", state, changed, err)
+			task := f.armRoute("kill me", f.root, "in-place")
+			r := f.runner()
+			run, err := f.store.StartRun(f.ctx, task.Number, store.RunRoute{Root: f.root, Isolation: "in-place", Model: "model-a"}, tc.cap)
+			if err != nil || run.State != state {
+				t.Fatalf("start %s run = %#v, %v", state, run, err)
 			}
+			f.herdr.Fail("Panes", errors.New("must not be called"))
 			f.herdr.Fail("Processes", errors.New("must not be called"))
 			if _, err := r.Kill(f.ctx, store.Actor{}, task.Number); err != nil {
 				t.Fatalf("Kill %s run: %v", state, err)
@@ -124,11 +132,11 @@ func TestKillClosesAndBlocksWhenReadingPaneProcessesFails(t *testing.T) {
 	if got.Status != model.StatusBlocked || f.run(task.Number).State != model.RunKilled || !reflect.DeepEqual(f.herdr.Closed(), []string{run.Pane}) {
 		t.Fatalf("returned task = %#v; run = %#v; closed = %#v, want blocked killed task and closed pane", got, f.run(task.Number), f.herdr.Closed())
 	}
-	watchAssertRunnerNote(t, f.task(task.Number).History, run.ID, fmt.Sprintf("run %d killed: pane %s closed; its processes could not be read", run.ID, run.Pane))
-	watchAssertRunnerStatus(t, f.task(task.Number).History, run.ID, model.StatusBlocked)
+	killAssertRunnerNote(t, f.task(task.Number).History, run.ID, fmt.Sprintf("run %d killed: pane %s closed; its processes could not be read", run.ID, run.Pane))
+	killAssertRunnerStatus(t, f.task(task.Number).History, run.ID, model.StatusBlocked)
 }
 
-func TestKillReportsAPaneThatDidNotCloseAndTheWatchClosesItAgain(t *testing.T) {
+func TestKillRecordsAPaneThatDidNotCloseAndJobsClosesItAgain(t *testing.T) {
 	f := newFixture(t, "", "in-place")
 	task, run, r := f.start()
 	f.herdr.Fail("ClosePane", errors.New("close denied"))
@@ -137,18 +145,18 @@ func TestKillReportsAPaneThatDidNotCloseAndTheWatchClosesItAgain(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "pane "+run.Pane+" did not close") {
 		t.Fatalf("Kill with a pane that does not close: error = %v, want one naming the open pane", err)
 	}
-	if got.Status != model.StatusBlocked || f.run(task.Number).State != model.RunKilled {
-		t.Fatalf("returned task = %#v; run = %#v, want the task blocked and the run killed", got, f.run(task.Number))
+	if got.Status != model.StatusBlocked || f.run(task.Number).State != model.RunKilled || !f.run(task.Number).LeftOpen {
+		t.Fatalf("returned task = %#v; run = %#v, want the task blocked and the run killed with its pane left open", got, f.run(task.Number))
 	}
-	watchAssertRunnerNote(t, f.task(task.Number).History, run.ID, fmt.Sprintf("run %d killed: pane %s did not close", run.ID, run.Pane))
+	killAssertRunnerNote(t, f.task(task.Number).History, run.ID, fmt.Sprintf("run %d killed: pane %s did not close", run.ID, run.Pane))
 
-	r.Tick(f.ctx)
+	r.Jobs(f.ctx)
 	if got := f.herdr.Closed(); len(got) != 0 {
 		t.Fatalf("closed panes while close still fails = %#v, want none", got)
 	}
 	f.herdr.Fail("ClosePane", nil)
-	r.Tick(f.ctx)
-	r.Tick(f.ctx)
+	r.Jobs(f.ctx)
+	r.Jobs(f.ctx)
 	if got := f.herdr.Closed(); !reflect.DeepEqual(got, []string{run.Pane}) {
 		t.Fatalf("closed panes once close works = %#v, want the left pane closed once", got)
 	}
@@ -165,7 +173,7 @@ func TestKillCountsAPaneThatClosedWithItsProcessesAsClosed(t *testing.T) {
 	if _, err := r.Kill(f.ctx, store.Actor{}, task.Number); err != nil {
 		t.Fatalf("Kill of a pane that went away with its processes: %v", err)
 	}
-	watchAssertRunnerNote(t, f.task(task.Number).History, run.ID, fmt.Sprintf("run %d killed: pane %s closed", run.ID, run.Pane))
+	killAssertRunnerNote(t, f.task(task.Number).History, run.ID, fmt.Sprintf("run %d killed: pane %s closed", run.ID, run.Pane))
 }
 
 func TestKillReportsAProcessThatSurvivesTheKill(t *testing.T) {
@@ -184,7 +192,7 @@ func TestKillReportsAProcessThatSurvivesTheKill(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("Kill error = %v, want one holding %q", err, want)
 	}
-	watchAssertRunnerNote(t, f.task(task.Number).History, run.ID, fmt.Sprintf("run %d killed: pane %s closed; %s", run.ID, run.Pane, want))
+	killAssertRunnerNote(t, f.task(task.Number).History, run.ID, fmt.Sprintf("run %d killed: pane %s closed; %s", run.ID, run.Pane, want))
 }
 
 func TestKillClaimsTheRunBeforeItTouchesThePane(t *testing.T) {
@@ -196,7 +204,7 @@ func TestKillClaimsTheRunBeforeItTouchesThePane(t *testing.T) {
 	f.herdr.SetProcesses(run.Pane, herdr.Processes{Group: cmd.Process.Pid, PIDs: []int{cmd.Process.Pid}})
 	review := model.StatusReview
 	h.before("Panes", func() {
-		if _, err := f.store.SetTask(f.ctx, store.Actor{}, task.Number, model.Patch{Status: &review}); err != nil {
+		if _, err := f.store.SetTask(f.ctx, store.Actor{Session: run.Session, Run: run.ID}, task.Number, model.Patch{Status: &review}); err != nil {
 			t.Errorf("hand back during the kill: %v", err)
 		}
 	})
@@ -211,7 +219,7 @@ func TestKillClaimsTheRunBeforeItTouchesThePane(t *testing.T) {
 		t.Fatalf("the pane's process after a lost kill: %v, want it alive", err)
 	}
 	if got := f.task(task.Number).Task.Status; got != model.StatusReview {
-		t.Fatalf("task = %q, want the person's review", got)
+		t.Fatalf("task = %q, want the worker's review", got)
 	}
 }
 
@@ -230,7 +238,7 @@ func TestKillFinishesItsWritesWhenItsContextEndsAfterTheClaim(t *testing.T) {
 	if got := f.task(task.Number).Task.Status; got != model.StatusBlocked || f.run(task.Number).State != model.RunKilled {
 		t.Fatalf("task = %q; run = %#v, want the task blocked once the run is killed", got, f.run(task.Number))
 	}
-	watchAssertRunnerStatus(t, f.task(task.Number).History, run.ID, model.StatusBlocked)
+	killAssertRunnerStatus(t, f.task(task.Number).History, run.ID, model.StatusBlocked)
 }
 
 // hookedHerdr is the in-memory herdr with one-shot hooks before or after a method's call.
@@ -415,4 +423,29 @@ func killWaitForSignal(t *testing.T, waited <-chan error, want syscall.Signal) {
 	case <-deadline.C:
 		t.Fatalf("child process did not exit after %s", want)
 	}
+}
+
+func killAssertRunnerNote(t *testing.T, history []model.Event, run int64, want string) {
+	t.Helper()
+	for _, event := range history {
+		var note model.NoteData
+		if event.Kind == model.KindNote && event.Run == run && event.Session == "" && reflect.DeepEqual(event.Tags, []string{model.TagRunner}) && json.Unmarshal(event.Data, &note) == nil && (want == "" || note.Text == want) {
+			return
+		}
+	}
+	if want == "" {
+		t.Fatalf("history = %#v, want a runner note carrying run %d and no session", history, run)
+	}
+	t.Fatalf("history = %#v, want runner note %q carrying run %d and no session", history, want, run)
+}
+
+func killAssertRunnerStatus(t *testing.T, history []model.Event, run int64, want model.Status) {
+	t.Helper()
+	for _, event := range history {
+		var patch model.Patch
+		if event.Kind == model.KindSet && event.Run == run && event.Session == "" && json.Unmarshal(event.Data, &patch) == nil && patch.Status != nil && *patch.Status == want {
+			return
+		}
+	}
+	t.Fatalf("history = %#v, want %s status write carrying run %d and no session", history, want, run)
 }
