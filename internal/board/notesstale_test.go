@@ -37,22 +37,28 @@ func TestTaskPageAStaleNotesSaveReopensAgainstTheNotesLastLoaded(t *testing.T) {
 	}}})
 }
 
-// The other board's save landed after this board's last load: the refusal loads the task, and the second ctrl+s
-// names the notes that load brought, so it replaces them with no refresh between.
-func TestTaskPageAStaleNotesSaveLoadsTheHomesNotesForTheSecondSave(t *testing.T) {
+// staleHome refuses every notes save stale and holds the notes another board wrote.
+func staleHome(task model.Task, notes string) *fakeHome {
+	theirs := task
+	theirs.Notes = notes
+	return &fakeHome{set: &model.Refusal{Code: model.CodeStale, Msg: "notes changed"}, detail: store.TaskDetail{Task: theirs}}
+}
+
+// The other board's save landed after this board's last load: the executor reads the home's notes as the stale
+// refusal comes back, so a ctrl+s pressed at once names them and replaces them, with no refresh between.
+func TestTaskPageAStaleNotesSaveReopensOnTheHomesNotesForAnImmediateSecondSave(t *testing.T) {
 	task := model.Task{Number: 41, Title: "Shared draft", Notes: "before", Status: model.StatusOpen}
 	s := w4TaskPage(t, 90, task, nil)
 	s, _ = s.Update(press('e'))
 	s, _ = s.Update(tea.PasteMsg{Content: " mine"})
 	s, save := s.Update(ctrl('s'))
 
-	s, load := s.Update(board.FailedOf(save[0], &model.Refusal{Code: model.CodeStale, Msg: "notes changed"}))
-	wantEffects(t, load, []board.Effect{board.LoadTask{Task: 41}})
-	theirs := task
-	theirs.Notes = "theirs"
-	s, _ = s.Update(board.TaskLoaded{Detail: store.TaskDetail{Task: theirs}})
-	if text := s.Text(); !strings.Contains(text, "before mine") {
-		t.Fatalf("after the load = %q, want the typed text kept", text)
+	s, more := board.Feed(s, board.Answer(staleHome(task, "theirs"), save[0]))
+	if len(more) != 0 {
+		t.Fatalf("effects after the refusal = %#v, want none: the second save waits on no load", more)
+	}
+	if text := s.Text(); !strings.Contains(text, "NOTES  editing") || !strings.Contains(text, "before mine") {
+		t.Fatalf("after the refusal = %q, want the editor back with the typed text", text)
 	}
 
 	_, retry := s.Update(ctrl('s'))
@@ -62,19 +68,15 @@ func TestTaskPageAStaleNotesSaveLoadsTheHomesNotesForTheSecondSave(t *testing.T)
 	}}})
 }
 
-// A stale refusal that arrives while a prompt has the keys waits for it to close; the load that answers meanwhile
-// still gives the waiting text the home's notes.
-func TestTaskPageAStaleNotesSaveWaitingForAPromptTakesTheHomesNotes(t *testing.T) {
+// A stale refusal that arrives while a prompt has the keys waits for it to close, still holding the home's notes.
+func TestTaskPageAStaleNotesSaveWaitingForAPromptKeepsTheHomesNotes(t *testing.T) {
 	task := model.Task{Number: 41, Title: "Shared draft", Notes: "before", Status: model.StatusOpen}
 	s := w4TaskPage(t, 90, task, nil)
 	s, _ = s.Update(press('e'))
 	s, _ = s.Update(tea.PasteMsg{Content: " mine"})
 	s, save := s.Update(ctrl('s'))
 	s, _ = s.Update(press('R'))
-	s, _ = s.Update(board.FailedOf(save[0], &model.Refusal{Code: model.CodeStale, Msg: "notes changed"}))
-	theirs := task
-	theirs.Notes = "theirs"
-	s, _ = s.Update(board.TaskLoaded{Detail: store.TaskDetail{Task: theirs}})
+	s, _ = board.Feed(s, board.Answer(staleHome(task, "theirs"), save[0]))
 	s, _ = s.Update(named(tea.KeyEsc))
 	if text := s.Text(); !strings.Contains(text, "NOTES  editing") || !strings.Contains(text, "before mine") {
 		t.Fatalf("after the prompt closed = %q, want the editor back with the typed text", text)

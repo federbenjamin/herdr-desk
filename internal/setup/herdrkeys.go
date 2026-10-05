@@ -3,12 +3,12 @@ package setup
 import (
 	"regexp"
 	"strings"
+
+	"github.com/federbenjamin/herdr-desk/internal/herdrconf"
 )
 
-const (
-	keysOpen  = "# >>> herdr-desk keys"
-	keysClose = "# <<< herdr-desk keys"
-)
+// keysFence marks the block of bindings herdr-desk owns in herdr's config.
+var keysFence = herdrconf.Fence{Open: "# >>> herdr-desk keys", Close: "# <<< herdr-desk keys"}
 
 // deskKeys are the bindings herdr-desk writes, in order.
 var deskKeys = []struct{ key, command string }{
@@ -24,11 +24,7 @@ var keyLine = regexp.MustCompile(`^\s*key\s*=\s*["']([^"']*)["']`)
 // Our bindings sit in one block fenced by "# >>> herdr-desk keys" and "# <<< herdr-desk keys". A block already there is
 // rewritten in place, so a second run returns the text unchanged.
 func WriteHerdrKeys(configText string, force bool) (out string, bound []string, skipped []string) {
-	lines := strings.SplitAfter(configText, "\n")
-	if lines[len(lines)-1] == "" {
-		lines = lines[:len(lines)-1]
-	}
-	before, after, hadBlock := splitBlock(lines)
+	before, after, hadBlock := keysFence.Split(configText)
 
 	var block strings.Builder
 	for _, k := range deskKeys {
@@ -50,36 +46,7 @@ func WriteHerdrKeys(configText string, force bool) (out string, bound []string, 
 	if len(bound) == 0 && !hadBlock {
 		return configText, bound, skipped
 	}
-	var sb strings.Builder
-	sb.WriteString(strings.Join(before, ""))
-	if len(bound) > 0 {
-		if !hadBlock && sb.Len() > 0 {
-			if !strings.HasSuffix(sb.String(), "\n") {
-				sb.WriteString("\n")
-			}
-			sb.WriteString("\n")
-		}
-		sb.WriteString(keysOpen + "\n" + block.String() + keysClose + "\n")
-	}
-	sb.WriteString(strings.Join(after, ""))
-	return sb.String(), bound, skipped
-}
-
-// splitBlock returns the lines before and after our fenced block, without the block. With no complete block
-// it returns every line as before.
-func splitBlock(lines []string) (before, after []string, found bool) {
-	open := -1
-	for i, l := range lines {
-		switch strings.TrimSpace(l) {
-		case keysOpen:
-			open = i
-		case keysClose:
-			if open >= 0 {
-				return lines[:open:open], lines[i+1:], true
-			}
-		}
-	}
-	return lines, nil, false
+	return keysFence.Place(before, block.String(), after, hadBlock), bound, skipped
 }
 
 // dropBinding looks for a [[keys.command]] table whose key is key. It reports whether one exists and, when

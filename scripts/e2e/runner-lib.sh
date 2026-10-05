@@ -16,9 +16,10 @@ DB="$E2E/home/data/herdr-desk/desk.db"
 mkdir -p "$E2E/work"
 # shellcheck disable=SC2034 # read by the scripts that source this file
 WORK=$(cd "$E2E/work" && pwd -P)
-# The plugin a real-herdr script links (link_event_plugin), and whether it did.
+# The plugin a real-herdr script links (link_event_plugin), whether it did, and the file it logs each event to.
 EVENT_PLUGIN=desk-e2e
 EVENT_PLUGIN_LINKED=0
+EVENT_LOG="$E2E/herdr-events.log"
 
 # use_fake_herdr: point DESK_HERDR at scripts/e2e/fake-herdr.py, with its state in $E2E/herdr. Every call names herdr
 # through DESK_HERDR; a bare `herdr` finds the guard in $E2E/fakebin, which fails, never a real herdr. A shim named sh
@@ -67,22 +68,31 @@ need_real_herdr() {
 }
 
 # link_event_plugin <command...>: link a temp plugin, desk-e2e, into the real herdr with the two event hooks of the
-# repo's manifest, each running the command. Nothing else of the manifest is linked. It refuses to run when a plugin
-# with that id is already linked, and runner_cleanup unlinks it.
+# repo's manifest, each running the command. Nothing else of the manifest is linked. Every event it gets, and
+# pane.exited, which runs no command, is logged to EVENT_LOG first, so a failed script shows what herdr sent. It
+# refuses to run when a plugin with that id is already linked, and runner_cleanup unlinks it.
 link_event_plugin() {
   local plug="$E2E/event-plugin"
   if herdr plugin list --plugin "$EVENT_PLUGIN" --json 2>/dev/null | jq -e '.result.plugins | length > 0' >/dev/null 2>&1; then
     fail "(env) a plugin with the id $EVENT_PLUGIN is already linked"
   fi
   mkdir -p "$plug"
-  python3 - "$plug/herdr-plugin.toml" "$EVENT_PLUGIN" "$@" <<'PY'
+  {
+    printf '#!/bin/sh\n'
+    # shellcheck disable=SC2016 # the $ is the logger's, expanded when herdr runs it
+    printf 'printf "%%s\\t%%s\\t%%s\\n" "$(date +%%T)" "$HERDR_PLUGIN_EVENT" "$HERDR_PLUGIN_EVENT_JSON" >>%q\n' "$EVENT_LOG"
+    printf '[ "$#" = 0 ] || exec "$@"\n'
+  } >"$plug/log-event.sh"
+  chmod +x "$plug/log-event.sh"
+  python3 - "$plug/herdr-plugin.toml" "$EVENT_PLUGIN" "$plug/log-event.sh" "$@" <<'PY'
 import json, sys
 
-dst, plugin_id = sys.argv[1:3]
-command = json.dumps(sys.argv[3:])
+dst, plugin_id, logger = sys.argv[1:4]
+command = json.dumps([logger] + sys.argv[4:])
 out = 'id = "%s"\nname = "%s"\nversion = "0.0.0"\nmin_herdr_version = "0.9.0"\nplatforms = ["linux", "macos"]\n' % (plugin_id, plugin_id)
 for event in ("pane.agent_status_changed", "pane.closed"):
     out += '\n[[events]]\non = "%s"\ncommand = %s\n' % (event, command)
+out += '\n[[events]]\non = "pane.exited"\ncommand = %s\n' % json.dumps([logger])
 open(dst, "w").write(out)
 PY
   run 0 herdr plugin link "$plug" --enabled
@@ -98,46 +108,20 @@ home_event_command() {
     ${HERDR_SOCKET_PATH:+"HERDR_SOCKET_PATH=$HERDR_SOCKET_PATH"} "$BIN/herdr-desk" hook herdr-event)
 }
 
-# wrap_claude <key>: in the home's config, make the first word of the [agent] <key> template (worker or coordinator),
-# which the claude-code profile writes as claude, a wrapper that logs <key> to $CLAUDE_CALLS, then runs the real
-# claude. The wrapper's paths are written into it, because a pane under the real herdr does not inherit this script's
-# environment. It puts this script's herdr-desk first on PATH, so the `herdr-desk` the agent runs is the one under
-# test, not an installed one. Count the real sessions with claude_calls <key>.
-CLAUDE_CALLS="$E2E/claude-calls.txt"
-wrap_claude() {
-  local key=$1 real wrap="$E2E/count-claude-$1"
-  real=$(command -v claude) || fail "(env) no claude"
-  cat >"$wrap" <<SH
-#!/bin/sh
-printf '%s\n' '$key' >>'$CLAUDE_CALLS'
-PATH='$BIN':"\$PATH"
-export PATH
-exec '$real' "\$@"
-SH
-  chmod +x "$wrap"
-  python3 - "$E2E/home/config/herdr-desk/config.toml" "$wrap" "$key" <<'PY' || fail "the profile's $key template does not start with claude"
-import re, sys
-
-path, wrap, key = sys.argv[1:4]
-text = open(path).read()
-text, n = re.subn(r"(?m)^(%s\s*=\s*\[\s*)(['\"])claude\2" % key, lambda m: m.group(1) + '"%s"' % wrap, text)
-if n != 1:
-    sys.exit("no %s template starting with claude" % key)
-open(path, "w").write(text)
-PY
-}
-
-# claude_calls <key>: how many times the wrapper for that template ran.
-claude_calls() { grep -cx "$1" "$CLAUDE_CALLS" 2>/dev/null || true; }
-
 # real_coordinator_up <start_runs>: for the scripts that run a real coordinator session (b02, b03) on the real herdr, with
-# the stub as the worker. The home gets a root with self isolation, so any number of stub runs may share it, and the
-# profile's coordinator template with its first word wrapped, so each real session is counted.
+# the stub as the worker. The home gets a root with self isolation, so any number of stub runs may share it, holding
+# the two files JOBS names, and the profile's coordinator template with its first word wrapped (wrap_claude). No
+# CLAUDE_CODE_* marker of the session that runs the script reaches the coordinator.
 real_coordinator_up() {
   need_real_herdr
-  command -v claude >/dev/null 2>&1 || fail "(env) no claude"
+  claude_guard
+  unset_claude_markers
   build
   mkdir -p "$WORK/shared"
+  printf 'Teh first line.\n' >"$WORK/shared/a.txt"
+  printf 'One line.\n' >"$WORK/shared/b.txt"
+  # shellcheck disable=SC2034 # read by the scripts that source this file
+  JOBS="fix the typo in $WORK/shared/a.txt and add a second line to $WORK/shared/b.txt"
   add_root "$WORK/shared" self "scratch space for stub workers; any number of runs may share it"
   RC_NOTIFY=none
   RC_CAP=2
@@ -193,24 +177,30 @@ coordinator_turn_done() {
   case "$(coordinator_status)" in idle | done) ;; *) return 1 ;; esac
 }
 
-# xy_tasks: exactly two tasks exist, one whose title names X and one whose title names Y, for "fix X and update Y".
-# X_TASK and Y_TASK are their numbers.
-xy_tasks() {
+# ab_tasks: exactly two tasks exist, one whose title or notes name a.txt and the other b.txt, for the two jobs of JOBS.
+# A_TASK and B_TASK are their numbers.
+ab_tasks() {
   local json
   json=$(on home herdr-desk list --all --json)
   [ "$(jq '.tasks | length' <<<"$json")" = 2 ] || return 1
-  X_TASK=$(jq -r '[.tasks[] | select(.title | test("\\bX\\b"))] | if length == 1 then .[0].number else "" end' <<<"$json")
-  Y_TASK=$(jq -r '[.tasks[] | select(.title | test("\\bY\\b"))] | if length == 1 then .[0].number else "" end' <<<"$json")
-  [ -n "$X_TASK" ] && [ -n "$Y_TASK" ] && [ "$X_TASK" != "$Y_TASK" ]
+  A_TASK=$(names_file a "$json")
+  B_TASK=$(names_file b "$json")
+  [ -n "$A_TASK" ] && [ -n "$B_TASK" ] && [ "$A_TASK" != "$B_TASK" ]
+}
+
+# names_file <a|b> <list json>: the number of the one task whose title or notes name <a|b>.txt; empty unless one does.
+names_file() {
+  jq -r --arg f "$1" '[.tasks[] | select((.title + " " + (.notes // "")) | test("\\b" + $f + "\\.txt\\b"))]
+    | if length == 1 then .[0].number else "" end' <<<"$2"
 }
 
 # tasks_seen: the tasks' numbers and titles, for a failure message.
 tasks_seen() { on home herdr-desk list --all --json | jq -c '[.tasks[] | {number, title}]'; }
 
-# one_run_each: exactly two runs exist, one for X_TASK and one for Y_TASK.
+# one_run_each: exactly two runs exist, one for A_TASK and one for B_TASK.
 one_run_each() {
   [ "$(sqlite3 "$DB" "SELECT group_concat(task, ',') FROM (SELECT task FROM runs ORDER BY task)")" = \
-    "$(printf '%s\n' "$X_TASK" "$Y_TASK" | sort -n | paste -sd, -)" ]
+    "$(printf '%s\n' "$A_TASK" "$B_TASK" | sort -n | paste -sd, -)" ]
 }
 
 # end_real_coordinator: close what the script opened, check it is closed, and check the session count.
@@ -286,13 +276,27 @@ answer_trust_question() {
   herdr_do pane send-keys "$pane" Enter >/dev/null || fail "could not send Enter to pane $pane"
 }
 
-# runner_cleanup: show SHOW_PANE's screen when the script failed, close every pane the fake holds or every workspace
+# show_events: print the events the temp plugin logged and the home's herdr-desk.log on stderr, each when it exists.
+show_events() {
+  local f
+  for f in "$EVENT_LOG" "$E2E/home/state/herdr-desk/herdr-desk.log"; do
+    [ -s "$f" ] || continue
+    say "--- $f ---" >&2
+    cut -c1-400 "$f" >&2
+    say "--- end of $f ---" >&2
+  done
+}
+
+# runner_cleanup: show SHOW_PANE's screen and show_events when the script failed, close every pane the fake holds or every workspace
 # a run row named, unlink the temp plugin, then the shared cleanup, which stops the tickers. Only workspaces named by
 # a run row are closed on the real herdr.
 runner_cleanup() {
   local rc=$?
   local id
-  if [ "$rc" != 0 ]; then show_pane; fi
+  if [ "$rc" != 0 ]; then
+    show_pane
+    show_events
+  fi
   if [ "$HERDR_REAL" = 1 ]; then track_workspaces; fi
   if [ "$HERDR_REAL" = 0 ] && [ -f "$E2E/herdr/state.json" ]; then
     FAKE_HERDR_EVENTS=0

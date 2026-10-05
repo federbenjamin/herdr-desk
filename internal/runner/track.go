@@ -83,26 +83,14 @@ func (r *Runner) track(ctx context.Context, run model.Run, pane herdr.Pane, foun
 	if !ok {
 		return nil
 	}
-	if hb.From == hb.To && hb.IfStatus != "" {
-		// The row keeps the run's state and writes only the task's status: with the task out of IfStatus it has
-		// nothing to write, and a repeat must write and report nothing.
-		d, err := r.o.Store.GetTask(ctx, run.Task)
-		if err != nil {
-			r.logErr("T%d: read the task", run.Task, err)
-			return err
-		}
-		if d.Task.Status != hb.IfStatus {
-			return nil
-		}
-	}
 	_, _, err := r.handBack(ctx, run, hb, nil)
 	return err
 }
 
 // outcome is the one outcome table: the hand-back that the pane's state now asks of a running or idle run, and
 // false when it asks none. A row whose run state is the run's own is no write, so a repeated event changes nothing;
-// the one exception, a blocked pane on an idle run, writes the task's status only from review (IfStatus), and track
-// skips it when the task is not in review.
+// the one exception, a blocked pane on an idle run, is a status-only hand-back from review (IfStatus), which the store
+// writes nothing for, note included, when the task is not in review.
 func outcome(run model.Run, pane herdr.Pane, found, wrote bool) (store.HandBack, bool) {
 	if run.State != model.RunRunning && run.State != model.RunIdle {
 		return store.HandBack{}, false

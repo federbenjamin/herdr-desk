@@ -27,7 +27,7 @@ func (t *awayTransport) RoundTrip(_ context.Context, method string, _ []byte) ([
 	case api.MethodTasksList:
 		return []byte(`{"result":{"tasks":[]}}`), nil
 	case api.MethodRunsList:
-		return []byte(`{"result":[]}`), nil
+		return []byte(`{"result":{"runs":[]}}`), nil
 	}
 	return []byte(`{"result":{}}`), nil
 }

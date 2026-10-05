@@ -23,9 +23,12 @@ func (a *app) runsCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		runs, err := c.ReconcileRuns(a.ctx)
+		runs, unchecked, err := c.ReconcileRuns(a.ctx)
 		if err != nil {
 			return err
+		}
+		if unchecked != "" {
+			fmt.Fprintf(a.env.Stderr, "herdr-desk runs: %s\n", unchecked)
 		}
 		if !all {
 			runs = onlyLive(runs)
@@ -125,7 +128,7 @@ func (a *app) runCmd() *cobra.Command {
 		}
 		if err == nil && r.State == model.RunFailed {
 			// The spawn failed in this call: a caller that reads only the exit code must not take it for a start.
-			return &exitError{code: exitRefused, msg: fmt.Sprintf("run %d failed: %s", r.ID, r.Reason)}
+			return &model.Refusal{Code: model.CodeRunFailed, Msg: fmt.Sprintf("run %d failed: %s", r.ID, r.Reason)}
 		}
 		return err
 	})

@@ -373,3 +373,42 @@ func TestHandBackWritesItsReasonOnTheRun(t *testing.T) {
 		t.Fatalf("run = %#v, %v; want reason %q", cur, err, "spawn: no herdr")
 	}
 }
+
+// Two processes can see one blocked pane on an idle run whose task is in review, each before the other writes: the
+// second's status-only hand-back must find the task already blocked and write nothing, its note included.
+func TestHandBackStatusOnlyWritesNothingOnceTheTaskLeftIfStatus(t *testing.T) {
+	ctx := context.Background()
+	st := openStore(t, store.Options{})
+	task := mustAdd(t, st, "asks a question", model.StatusReady, "")
+	run, err := st.StartRun(ctx, task.Number, policyRoute, store.RunCaps{Slots: 1, PerDay: 1000})
+	if err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	if ok, err := st.UpdateRun(ctx, run.ID, model.RunStarting, store.RunUpdate{State: model.RunRunning}); err != nil || !ok {
+		t.Fatalf("run it = (%t, %v)", ok, err)
+	}
+	if _, claimed, err := st.HandBack(ctx, run, store.HandBack{From: model.RunRunning, To: model.RunIdle, Status: model.StatusReview,
+		Note: "went idle without handing back"}); err != nil || !claimed {
+		t.Fatalf("idle hand-back = (%t, %v)", claimed, err)
+	}
+	blocked := store.HandBack{From: model.RunIdle, To: model.RunIdle, Status: model.StatusBlocked, IfStatus: model.StatusReview,
+		Tags: []string{model.TagRunner}, Note: "the worker is waiting for an answer in pane w1-1"}
+	for i, want := range []bool{true, false} {
+		if _, claimed, err := st.HandBack(ctx, run, blocked); err != nil || claimed != want {
+			t.Fatalf("blocked hand-back #%d = (%t, %v), want claimed %t", i+1, claimed, err, want)
+		}
+	}
+	d, err := st.GetTask(ctx, task.Number)
+	if err != nil {
+		t.Fatal(err)
+	}
+	notes := 0
+	for _, e := range d.History {
+		if e.Kind == model.KindNote && strings.Contains(string(e.Data), "waiting for an answer") {
+			notes++
+		}
+	}
+	if d.Task.Status != model.StatusBlocked || notes != 1 {
+		t.Fatalf("task = %q with %d waiting notes, want blocked with one", d.Task.Status, notes)
+	}
+}

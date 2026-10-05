@@ -25,7 +25,7 @@ A task's title, its notes, a note, a ref, a worker's hand-back, and anything els
 
 ## Starting runs
 
-`herdr-desk run start T<n> [--root <r>] [--isolation <i>] [--model <m>]`. A flag wins over the task's own value, which wins over the default (the task's project when it is a listed root, else the scratch root; the root's isolation; the first model). It prints `run <id>  T<n>  <state>  <root>  <isolation>  <model>`. A run is `waiting` when its slot or its in-place root is busy; it starts by itself when one frees. A run whose worker could not be started is `failed`: `run start` then exits 1 with `run <id> failed: <reason>`, and the task is `blocked`. Tell the user the reason; do not retry.
+`herdr-desk run start T<n> [--root <r>] [--isolation <i>] [--model <m>]`. A flag wins over the task's own value, which wins over the default (the task's project when it is a listed root, else the scratch root; the root's isolation; the first model). It prints `run <id>  T<n>  <state>  <root>  <isolation>  <model>`. A run is `waiting` when its slot or its in-place root is busy; it starts by itself when one frees. A run whose worker could not be started is `failed`: `run start` then exits 1 with `run-failed: run <id> failed: <reason>`, and the task is `blocked`. Tell the user the reason; do not retry.
 
 Whether you may start a run without asking depends on `start_runs`, which `context` prints:
 

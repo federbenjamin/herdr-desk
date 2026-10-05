@@ -88,7 +88,7 @@ func TestRunStartWhoseSpawnFailsExitsOneWithTheReason(t *testing.T) {
 			args = append(args, "--json")
 		}
 		result := runHomeDesk(t, home, args...)
-		if result.exit != 1 || !strings.Contains(result.stdout, "failed") || !regexp.MustCompile(`run \d+ failed: spawn: \S`).MatchString(result.stderr) {
+		if result.exit != 1 || !strings.Contains(result.stdout, "failed") || !regexp.MustCompile(`^herdr-desk run start: run-failed: run \d+ failed: spawn: \S`).MatchString(result.stderr) {
 			t.Fatalf("run start (json %t) = exit %d, stdout %q, stderr %q; want exit 1, the failed run, and its reason", json, result.exit, result.stdout, result.stderr)
 		}
 	}

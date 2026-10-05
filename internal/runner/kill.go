@@ -155,18 +155,20 @@ func (r *Runner) close(ctx context.Context, h Herdr, run model.Run, pane herdr.P
 	return true
 }
 
-// keepOpen records on the run, in the state it is in now, that its pane did not close, so Jobs closes it again.
-// A run that is no longer its task's newest is only logged.
+// keepOpen records on the run that its pane did not close, so Jobs closes it again: in the state the store holds
+// when the run is its task's newest, else in run.State, the state its caller knows an older run to be in.
 func (r *Runner) keepOpen(ctx context.Context, run model.Run, pane herdr.Pane) {
 	if run.LeftOpen {
 		return
 	}
 	open := true
+	state := run.State
 	cur, ok, err := r.o.Store.CurrentRun(ctx, run.Task)
 	if err == nil && ok && cur.ID == run.ID {
-		ok, err = r.o.Store.UpdateRun(ctx, run.ID, cur.State, store.RunUpdate{LeftOpen: &open, Workspace: pane.Workspace, Pane: pane.ID})
-	} else if err == nil {
-		ok, err = false, errors.New("a newer run owns the task")
+		state = cur.State
+	}
+	if err == nil {
+		ok, err = r.o.Store.UpdateRun(ctx, run.ID, state, store.RunUpdate{LeftOpen: &open, Workspace: pane.Workspace, Pane: pane.ID})
 	}
 	if err == nil && !ok {
 		err = errors.New("the run changed state")

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/federbenjamin/herdr-desk/internal/model"
@@ -16,7 +17,9 @@ import (
 // cap-reached once today's runs reach runner.max_runs_per_day, counted in the transaction that inserts the run. The
 // store decides starting or waiting; a starting run is spawned, and the sidebar rows are reported. A task that
 // already has a starting, waiting, or running run gets that run and no error. A task whose run was idle gets a new
-// run, and the idle run's pane is closed. A spawn that fails returns the failed run, its reason on it, and no error.
+// run once the idle run's pane is closed (closeReplaced); while that pane may still be open, the new run fails. A
+// spawn that fails returns the failed run, its reason on it, and no error. A run whose state cannot be read back
+// after its spawn is an error.
 func (r *Runner) Start(ctx context.Context, a store.Actor, task int, route store.RunRoute) (model.Run, error) {
 	if err := r.mayStart(ctx, a); err != nil {
 		return model.Run{}, err
@@ -56,16 +59,20 @@ func (r *Runner) Start(ctx context.Context, a store.Actor, task int, route store
 	if err != nil {
 		return model.Run{}, err
 	}
-	if hadRun && prev.State == model.RunIdle && h != nil && prev.Pane != "" {
-		// StartRun ended the idle run; its worker is still at its prompt in the old pane, and must not go on working
-		// in the root beside the new run.
-		r.closePane(ctx, h, prev, runPane(prev))
+	open := ""
+	if hadRun && prev.State == model.RunIdle && prev.Pane != "" {
+		open = r.closeReplaced(ctx, h, prev)
 	}
 	how := run.Isolation
 	if run.Model != "" {
 		how += ", " + run.Model
 	}
 	r.note(ctx, store.Actor{Run: run.ID}, task, []string{model.TagRunner}, fmt.Sprintf("run %d %s: %s (%s)", run.ID, run.State, run.Root, how))
+	if open != "" {
+		r.fail(ctx, run, run.State, fmt.Sprintf("run %d was not started: the pane %s of idle run %d may still be open (%s); the ticker closes it again",
+			run.ID, prev.Pane, prev.ID, open))
+		return r.readBack(ctx, run)
+	}
 	if run.State != model.RunStarting {
 		r.report(ctx, run, false)
 		return run, nil
@@ -73,10 +80,44 @@ func (r *Runner) Start(ctx context.Context, a store.Actor, task int, route store
 	if r.spawn(ctx, h, d.Task, run) {
 		r.report(ctx, run, true)
 	}
-	if cur, ok, err := r.o.Store.CurrentRun(ctx, task); err == nil && ok && cur.ID == run.ID {
-		run = cur
+	return r.readBack(ctx, run)
+}
+
+// closeReplaced closes the pane of the idle run StartRun just ended: its worker is still at its prompt there and must
+// not go on working in the root beside the new run. The pane is the one herdr lists with the run's pane id in the
+// run's workspace (paneByID); an id herdr lists in no workspace of the run's is another pane, and is left alone. It
+// returns "" when no pane of the run is left open, else why one may be; then the run is marked left open, so Jobs
+// closes the pane again.
+func (r *Runner) closeReplaced(ctx context.Context, h Herdr, prev model.Run) string {
+	prev.State = model.RunEnded
+	panes, err := h.Panes(ctx)
+	if err != nil {
+		r.logErr("T%d run %d: list herdr panes to close the idle run's pane", prev.Task, prev.ID, err)
+		r.keepOpen(ctx, prev, runPane(prev))
+		return "herdr did not list its panes: " + clip(err.Error())
 	}
-	return run, nil
+	pane, ok := paneByID(panes, runPane(prev))
+	if !ok {
+		return ""
+	}
+	if k := r.closePane(ctx, h, prev, pane); k.alive {
+		return strings.Join(k.problems, "; ")
+	}
+	return ""
+}
+
+// readBack returns the run as the store holds it now: its spawn, or a failure, moved it on from the row StartRun
+// inserted. A run that cannot be read back is an error, logged, never the inserted row's state.
+func (r *Runner) readBack(ctx context.Context, run model.Run) (model.Run, error) {
+	cur, ok, err := r.o.Store.CurrentRun(ctx, run.Task)
+	if err == nil && ok && cur.ID == run.ID {
+		return cur, nil
+	}
+	if err == nil {
+		err = fmt.Errorf("a newer run owns T%d", run.Task)
+	}
+	r.logErr("T%d run %d: read the run back", run.Task, run.ID, err)
+	return model.Run{}, fmt.Errorf("T%d run %d: its state could not be read back: %w", run.Task, run.ID, err)
 }
 
 // mayStart refuses an agent session that is not the recorded coordinator's: a person and the coordinator may
@@ -95,9 +136,12 @@ func (r *Runner) mayStart(ctx context.Context, a store.Actor) error {
 	return &model.Refusal{Code: model.CodeNotAllowed, Msg: "only a person or the desk's coordinator may start a run"}
 }
 
-// midnight is the start of today, local time: runner.max_runs_per_day counts the runs started since.
-func (r *Runner) midnight() time.Time {
-	now := r.o.Now()
+// midnight is the start of the runner's today: runner.max_runs_per_day counts the runs started since.
+func (r *Runner) midnight() time.Time { return Midnight(r.o.Now()) }
+
+// Midnight is the start of now's day, local time: the one rule for the day runner.max_runs_per_day counts, which the
+// cap and the status's count of today's runs both use.
+func Midnight(now time.Time) time.Time {
 	y, m, d := now.Date()
 	return time.Date(y, m, d, 0, 0, 0, 0, now.Location())
 }

@@ -92,3 +92,32 @@ func TestWriteHerdrSidebarLeavesAnExistingUserTableUntouched(t *testing.T) {
 		t.Fatalf("WriteHerdrSidebar() with a user token = %q, %q; want unchanged config and no note", got, gotNote)
 	}
 }
+
+// Whether the config defines the table is read from the decoded config, not its lines: a table header inside a
+// multi-line string is text, so the row is still added, and a dotted key under another table is the user's table.
+func TestWriteHerdrSidebarReadsTheDecodedConfig(t *testing.T) {
+	inString := "motd = \"\"\"\n[ui.sidebar.agents]\nrows = []\n\"\"\"\n"
+	out, note := sidebar.WriteHerdrSidebar(inString)
+	if note != "" || !strings.HasPrefix(out, inString+"\n# >>> herdr-desk sidebar\n[ui.sidebar.agents]\n") {
+		t.Fatalf("WriteHerdrSidebar(a header in a multi-line string) = %q, %q; want the fenced block appended", out, note)
+	}
+
+	dotted := "[ui]\nsidebar.agents.rows = [\n  [\"agent\"],\n  [{ token = \"$desk\" }],\n]\n"
+	if got, gotNote := sidebar.WriteHerdrSidebar(dotted); got != dotted || gotNote != "" {
+		t.Fatalf("WriteHerdrSidebar(a dotted user table showing $desk) = %q, %q; want unchanged and no note", got, gotNote)
+	}
+
+	commented := "[ui.sidebar.agents]\nrows = [[\"agent\"]] # [{ token = \"$desk\" }]\n"
+	if got, gotNote := sidebar.WriteHerdrSidebar(commented); got != commented || !strings.Contains(gotNote, "herdr: add ") {
+		t.Fatalf("WriteHerdrSidebar($desk only in a comment) = %q, %q; want unchanged with the add note", got, gotNote)
+	}
+}
+
+// A config that does not parse is left as it is, and the note says the row was not added and what to add.
+func TestWriteHerdrSidebarLeavesAConfigThatDoesNotParse(t *testing.T) {
+	broken := "theme = \n"
+	out, note := sidebar.WriteHerdrSidebar(broken)
+	if out != broken || !strings.Contains(note, "does not parse") || !strings.Contains(note, `token = "$desk"`) {
+		t.Fatalf("WriteHerdrSidebar(a broken config) = %q, %q; want it unchanged with a note naming the parse failure and the row", out, note)
+	}
+}

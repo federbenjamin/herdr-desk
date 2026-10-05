@@ -11,6 +11,12 @@ BIN="$E2E/bin"
 # A hermetic script never finds a herdr on PATH: the name is sealed to a path that does not exist.
 export DESK_HERDR="$E2E/no-herdr"
 PIDS=()
+# The caller's own XDG folders as the script began, NAME=value for each one set: a real claude runs on these, never
+# on a machine's temp folders (claude_wrapper).
+CALLER_XDG=()
+for v in XDG_CONFIG_HOME XDG_STATE_HOME XDG_DATA_HOME XDG_CACHE_HOME; do
+  if [ -n "${!v+x}" ]; then CALLER_XDG+=("$v=${!v}"); fi
+done
 TMUX_SOCK="desk-e2e-$$"
 OUT=""
 ERR=""
@@ -82,9 +88,114 @@ cleanup() {
   done
   tmux -L "$TMUX_SOCK" kill-server >/dev/null 2>&1 || true
   wait 2>/dev/null || true
+  local moved=""
+  if [ -n "$CLAUDE_SEEN" ]; then
+    moved=$(claude_resolves 2>&1) && [ "$moved" = "$CLAUDE_SEEN" ] && moved=""
+  fi
   rm -rf "$E2E"
+  if [ -n "$moved" ]; then
+    say "E2E FAIL: (env) the user's claude moved during the test: it was $CLAUDE_SEEN; it is now $moved" >&2
+    exit 1
+  fi
 }
 trap cleanup EXIT
+
+# The real claude. A script that starts one calls claude_wrapper (or wrap_claude) first, which runs claude_guard.
+
+# CLAUDE_REAL is the user's claude, as PATH finds it when claude_guard runs; CLAUDE_SEEN is where it and
+# ~/.local/bin/claude resolve then. cleanup checks them again and fails (env) when either moved.
+CLAUDE_REAL=""
+CLAUDE_SEEN=""
+CLAUDE_CALLS="$E2E/claude-calls.txt"
+AGENT_BIN="$E2E/agent-bin"
+
+# claude_resolves: "<path> -> <target>" for CLAUDE_REAL and, when it exists, ~/.local/bin/claude; fails when a target
+# is not a file.
+claude_resolves() {
+  python3 - "$CLAUDE_REAL" "$HOME/.local/bin/claude" <<'PY'
+import os, sys
+
+real, local = sys.argv[1:3]
+paths = [real] + ([local] if os.path.lexists(local) and local != real else [])
+ok = True
+for p in paths:
+    target = os.path.realpath(p)
+    print("%s -> %s" % (p, target))
+    ok = ok and os.path.isfile(target)
+sys.exit(0 if ok else 1)
+PY
+}
+
+# claude_guard: record where the user's claude resolves; fail (env) when there is none or it does not resolve.
+claude_guard() {
+  [ -z "$CLAUDE_REAL" ] || return 0
+  CLAUDE_REAL=$(command -v claude) || fail "(env) no claude"
+  CLAUDE_SEEN=$(claude_resolves) || {
+    local seen=$CLAUDE_SEEN
+    CLAUDE_SEEN=""
+    fail "(env) the user's claude does not resolve: $seen"
+  }
+}
+
+# claude_wrapper <key>: write CLAUDE_WRAP, a program that runs the user's claude for that key. It logs the key to
+# $CLAUDE_CALLS (claude_calls counts them), gives claude the caller's own XDG folders (unset when the caller had none)
+# in place of a machine's temp ones, drops every CLAUDE_CODE_* variable and CLAUDECODE it inherited, turns claude's
+# updater off, and puts AGENT_BIN first on PATH, so the `herdr-desk` claude and its hooks run is this build on the
+# home's temp folders. Its values are written into it: a pane under the real herdr does not inherit this script's
+# environment.
+claude_wrapper() {
+  local key=$1 kv
+  claude_guard
+  CLAUDE_WRAP="$E2E/claude-$key"
+  mkdir -p "$AGENT_BIN"
+  {
+    printf '#!/bin/bash\n'
+    printf 'XDG_CONFIG_HOME=%q XDG_STATE_HOME=%q XDG_DATA_HOME=%q XDG_CACHE_HOME=%q exec %q "$@"\n' \
+      "$E2E/home/config" "$E2E/home/state" "$E2E/home/data" "$E2E/home/cache" "$BIN/herdr-desk"
+  } >"$AGENT_BIN/herdr-desk"
+  {
+    printf '#!/bin/bash\n'
+    printf '%s %q >>%q\n' "printf '%s\n'" "$key" "$CLAUDE_CALLS"
+    printf 'unset XDG_CONFIG_HOME XDG_STATE_HOME XDG_DATA_HOME XDG_CACHE_HOME\n'
+    for kv in "${CALLER_XDG[@]}"; do printf 'export %s=%q\n' "${kv%%=*}" "${kv#*=}"; done
+    # shellcheck disable=SC2016 # the $ is the wrapper's, expanded when it runs
+    printf 'for v in $(compgen -e); do case $v in CLAUDE_CODE_* | CLAUDECODE) unset "$v" ;; esac; done\n'
+    printf 'export DISABLE_AUTOUPDATER=1\n'
+    # shellcheck disable=SC2016 # the $PATH is the wrapper's
+    printf 'export PATH=%q:"$PATH"\n' "$AGENT_BIN"
+    printf 'exec %q "$@"\n' "$CLAUDE_REAL"
+  } >"$CLAUDE_WRAP"
+  chmod +x "$AGENT_BIN/herdr-desk" "$CLAUDE_WRAP"
+}
+
+# wrap_claude <key>: claude_wrapper <key>, and in the home's config make CLAUDE_WRAP the first word of the [agent]
+# <key> template (worker or coordinator), which the claude-code profile writes as claude.
+wrap_claude() {
+  local key=$1
+  claude_wrapper "$key"
+  python3 - "$E2E/home/config/herdr-desk/config.toml" "$CLAUDE_WRAP" "$key" <<'PY' || fail "the profile's $key template does not start with claude"
+import re, sys
+
+path, wrap, key = sys.argv[1:4]
+text = open(path).read()
+text, n = re.subn(r"(?m)^(%s\s*=\s*\[\s*)(['\"])claude\2" % key, lambda m: m.group(1) + '"%s"' % wrap, text)
+if n != 1:
+    sys.exit("no %s template starting with claude" % key)
+open(path, "w").write(text)
+PY
+}
+
+# unset_claude_markers: unset every CLAUDE_CODE_* variable and CLAUDECODE this script inherited from the session that
+# runs it, so nothing it starts reads as part of that session.
+unset_claude_markers() {
+  local v
+  for v in $(compgen -e); do
+    case $v in CLAUDE_CODE_* | CLAUDECODE) unset "$v" ;; esac
+  done
+}
+
+# claude_calls <key>: how many times the wrapper for that key ran.
+claude_calls() { grep -cx "$1" "$CLAUDE_CALLS" 2>/dev/null || true; }
 
 build() {
   mkdir -p "$BIN"
@@ -234,14 +345,29 @@ PY
   client_config "$E2E_HOME"
 }
 
+# PAIR_SSH is the ssh of the client's default [client] command, up to the home's target.
+PAIR_SSH=(ssh -o BatchMode=yes -o ConnectTimeout=5 -o ControlMaster=auto -o "ControlPath={control}" -o ControlPersist=60)
+
 # client_config <home-target>: write the client's config; its [client] command is the default ssh one, run to reach
 # this machine's home folders with this build's binary.
 client_config() {
+  local words w
+  words=$(for w in "${PAIR_SSH[@]}" "{home}" env "XDG_CONFIG_HOME=$E2E/home/config" "XDG_STATE_HOME=$E2E/home/state" \
+    "XDG_DATA_HOME=$E2E/home/data" "XDG_CACHE_HOME=$E2E/home/cache" "$BIN/herdr-desk" rpc; do printf '"%s", ' "$w"; done)
   rssh "cat >$RDIR/config/herdr-desk/config.toml && chmod 600 $RDIR/config/herdr-desk/config.toml" <<TOML
 [client]
 home = "$1"
-command = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-o", "ControlMaster=auto", "-o", "ControlPath={control}", "-o", "ControlPersist=60", "{home}", "env", "XDG_CONFIG_HOME=$E2E/home/config", "XDG_STATE_HOME=$E2E/home/state", "XDG_DATA_HOME=$E2E/home/data", "XDG_CACHE_HOME=$E2E/home/cache", "$BIN/herdr-desk", "rpc"]
+command = [${words%, }]
 TOML
+}
+
+# floor_command: the client's [client] command with `true` in place of the remote herdr-desk, quoted for the client's
+# shell: the cost of the pair's reused connection alone.
+floor_command() {
+  local w
+  for w in "${PAIR_SSH[@]}" "$E2E_HOME" true; do
+    printf '%q ' "${w//\{control\}/$RDIR/state/herdr-desk/ssh-%C}"
+  done
 }
 
 # cn <args...>: run herdr-desk on the client machine as a person, or as the session in CN_SESSION. Its stdin and

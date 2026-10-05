@@ -4,14 +4,12 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/federbenjamin/herdr-desk/internal/api"
 	"github.com/federbenjamin/herdr-desk/internal/board"
 	"github.com/federbenjamin/herdr-desk/internal/model"
-	"github.com/federbenjamin/herdr-desk/internal/runner"
 	"github.com/federbenjamin/herdr-desk/internal/store"
 )
 
@@ -24,17 +22,12 @@ type deskContext struct {
 	Today         int              `json:"today"` // runs started since local midnight
 	MaxRunsPerDay int              `json:"max_runs_per_day"`
 	MaxRunMinutes int              `json:"max_run_minutes"`
-	Roots         []contextRoot    `json:"roots"` // the scratch root last
+	Roots         []api.Root       `json:"roots"` // the scratch root last
 	Models        []string         `json:"models"`
 	Board         []contextSection `json:"board"`
-	Runs          []model.Run      `json:"runs"` // the live runs
+	Runs          []model.Run      `json:"runs"`                // the live runs
+	Unchecked     string           `json:"unchecked,omitempty"` // why the live runs were not checked against herdr
 	Changes       store.Changes    `json:"changes"`
-}
-
-type contextRoot struct {
-	Path      string `json:"path"`
-	About     string `json:"about"`
-	Isolation string `json:"isolation"`
 }
 
 type contextSection struct {
@@ -50,10 +43,6 @@ func (a *app) contextCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 	}
 	cmd.RunE = a.do(func(_ *cobra.Command, _ []string) error {
-		cfg, err := a.config()
-		if err != nil {
-			return err
-		}
 		actor, err := a.actor()
 		if err != nil {
 			return err
@@ -66,7 +55,7 @@ func (a *app) contextCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		runs, err := c.ReconcileRuns(a.ctx)
+		runs, unchecked, err := c.ReconcileRuns(a.ctx)
 		if err != nil {
 			return err
 		}
@@ -79,26 +68,29 @@ func (a *app) contextCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
+		// Every figure is the home's, from its own config and store: a client's config says nothing of the desk.
 		d := deskContext{
-			StartRuns:     cfg.Coordinator.StartRuns,
+			StartRuns:     st.StartRuns,
 			RunnerState:   st.RunnerState,
 			NoTicker:      st.NoTicker(),
-			Cap:           cfg.Runner.Cap,
-			Today:         startedToday(runs, time.Now()),
-			MaxRunsPerDay: cfg.Runner.MaxRunsPerDay,
-			MaxRunMinutes: cfg.Runner.MaxRunMinutes,
-			Models:        slices.Clone(cfg.Agent.Models),
+			Cap:           st.RunnerCap,
+			Today:         st.Today,
+			MaxRunsPerDay: st.MaxRunsPerDay,
+			MaxRunMinutes: st.MaxRunMinutes,
+			Roots:         st.Roots,
+			Models:        st.Models,
 			Runs:          onlyLive(runs),
+			Unchecked:     unchecked,
 			Changes:       changes,
+		}
+		if d.Roots == nil {
+			d.Roots = []api.Root{}
 		}
 		if d.Models == nil {
 			d.Models = []string{}
 		}
 		if d.Changes.Events == nil {
 			d.Changes.Events = []model.Event{}
-		}
-		for _, r := range runner.Roots(cfg, a.paths) {
-			d.Roots = append(d.Roots, contextRoot{Path: r.Path, About: r.About, Isolation: r.Isolation})
 		}
 		for _, s := range board.Sections() {
 			sec := contextSection{Title: s.Title, Tasks: []model.Task{}}
@@ -117,19 +109,6 @@ func (a *app) contextCmd() *cobra.Command {
 	})
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the context as one JSON object")
 	return cmd
-}
-
-// startedToday counts the runs started since now's local midnight, as runner.max_runs_per_day counts them.
-func startedToday(runs []model.Run, now time.Time) int {
-	y, m, d := now.Date()
-	midnight := time.Date(y, m, d, 0, 0, 0, 0, now.Location())
-	n := 0
-	for _, r := range runs {
-		if !r.StartedTS.Before(midnight) {
-			n++
-		}
-	}
-	return n
 }
 
 func (a *app) printContext(d deskContext) {
@@ -162,6 +141,9 @@ func (a *app) printContext(d deskContext) {
 		}
 	}
 	a.say("\nlive runs:")
+	if d.Unchecked != "" {
+		a.say("  (%s)", d.Unchecked)
+	}
 	if len(d.Runs) == 0 {
 		a.say("  -")
 	}

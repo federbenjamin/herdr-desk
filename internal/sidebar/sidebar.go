@@ -9,6 +9,9 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/pelletier/go-toml/v2"
+
+	"github.com/federbenjamin/herdr-desk/internal/herdrconf"
 	"github.com/federbenjamin/herdr-desk/internal/model"
 )
 
@@ -99,156 +102,81 @@ func cut(s string, n int) string {
 	return strings.TrimRight(string([]rune(s)[:n-1]), " ") + "…"
 }
 
-const (
-	blockOpen  = "# >>> herdr-desk sidebar"
-	blockClose = "# <<< herdr-desk sidebar"
-)
+// fence marks the block herdr-desk owns in herdr's config.
+var fence = herdrconf.Fence{Open: "# >>> herdr-desk sidebar", Close: "# <<< herdr-desk sidebar"}
 
 // deskRow is the sidebar row that shows the token. A row that needs a person is bold: a run's "needs you" and the
 // coordinator's "need you" both contain "need". The row sets no colour of its own.
 const deskRow = `[{ token = "$desk", rules = [{ contains = "need", bold = true }] }]`
 
 // block is herdr's default agent rows (herdr 0.9.1) with the $desk row after them.
-const block = blockOpen + `
-[ui.sidebar.agents]
+const block = `[ui.sidebar.agents]
 rows = [
   ["state_icon", "machine", "workspace", "tab"],
   ["agent"],
   ` + deskRow + `,
 ]
-` + blockClose + "\n"
+`
+
+// addRow is the note that tells the user to add the row to a table of their own.
+const addRow = "herdr: add " + deskRow + " to your [ui.sidebar.agents] rows"
 
 // WriteHerdrSidebar edits herdr's config text so its agent cards show the $desk row. A config with no
-// [ui.sidebar.agents] table gets one, fenced by "# >>> herdr-desk sidebar" and "# <<< herdr-desk sidebar"; a fenced
-// block already there is rewritten in place, so a second run returns the text unchanged. A config that has the table
-// itself is the user's to edit: the text comes back unchanged, and note, when its rows do not show $desk yet, says
-// what to add.
+// ui.sidebar.agents table gets one, fenced by "# >>> herdr-desk sidebar" and "# <<< herdr-desk sidebar"; a fenced
+// block already there is rewritten in place, so a second run returns the text unchanged. A config that defines
+// anything under ui.sidebar.agents itself is the user's to edit: the text comes back unchanged, and note, when no
+// value under it names $desk yet, says what to add. A config that does not parse comes back unchanged with a note
+// saying so.
 func WriteHerdrSidebar(configText string) (out string, note string) {
-	lines := strings.SplitAfter(configText, "\n")
-	if lines[len(lines)-1] == "" {
-		lines = lines[:len(lines)-1]
+	before, after, found := fence.Split(configText)
+	if found {
+		return fence.Place(before, block, after, true), ""
 	}
-	if before, after, ok := fenced(lines); ok {
-		return strings.Join(before, "") + block + strings.Join(after, ""), ""
+	var doc map[string]any
+	if err := toml.Unmarshal([]byte(configText), &doc); err != nil {
+		return configText, "herdr: the config does not parse, so the $desk row was not added (" + err.Error() + "); " + addRow
 	}
-	if hasAgentsTable(lines) {
-		if !showsToken(lines) {
-			note = "herdr: add " + deskRow + " to your [ui.sidebar.agents] rows"
-		}
-		return configText, note
+	agents, ok := lookup(doc, "ui", "sidebar", "agents")
+	if !ok {
+		return fence.Place(before, block, after, false), ""
 	}
-	var sb strings.Builder
-	sb.WriteString(configText)
-	if configText != "" {
-		if !strings.HasSuffix(configText, "\n") {
-			sb.WriteString("\n")
-		}
-		sb.WriteString("\n")
+	if !names(agents, "$"+Token) {
+		note = addRow
 	}
-	sb.WriteString(block)
-	return sb.String(), ""
+	return configText, note
 }
 
-// fenced returns the lines before and after the fenced block, without it; false when there is no complete block.
-func fenced(lines []string) (before, after []string, ok bool) {
-	open := -1
-	for i, l := range lines {
-		switch strings.TrimSpace(l) {
-		case blockOpen:
-			open = i
-		case blockClose:
-			if open >= 0 {
-				return lines[:open:open], lines[i+1:], true
-			}
+// lookup returns the value at the dotted path in a decoded TOML document.
+func lookup(doc map[string]any, path ...string) (any, bool) {
+	var v any = doc
+	for _, k := range path {
+		table, ok := v.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		if v, ok = table[k]; !ok {
+			return nil, false
 		}
 	}
-	return nil, nil, false
+	return v, true
 }
 
-var (
-	tableHeader = regexp.MustCompile(`^\[\[?\s*([A-Za-z0-9_."' -]+?)\s*\]\]?\s*(#.*)?$`)
-	keyLine     = regexp.MustCompile(`^([A-Za-z0-9_."' -]+?)\s*=(.*)$`)
-)
-
-// hasAgentsTable reports whether the config defines anything under ui.sidebar.agents: the table, a sub-table such as
-// rows_by_agent, or a dotted key. The lines of a value spread over several lines are not read as headers.
-func hasAgentsTable(lines []string) bool {
-	table := ""
-	depth := 0
-	for _, l := range lines {
-		text := strings.TrimSpace(l)
-		if depth > 0 {
-			depth += bracketDepth(text)
-			continue
-		}
-		if text == "" || strings.HasPrefix(text, "#") {
-			continue
-		}
-		if m := tableHeader.FindStringSubmatch(text); m != nil {
-			table = keyPath(m[1])
-			if underAgents(table) {
+// names reports whether s is a string anywhere in the decoded value v.
+func names(v any, s string) bool {
+	switch v := v.(type) {
+	case string:
+		return v == s
+	case map[string]any:
+		for _, e := range v {
+			if names(e, s) {
 				return true
 			}
-			continue
 		}
-		if m := keyLine.FindStringSubmatch(text); m != nil {
-			path := keyPath(m[1])
-			if table != "" {
-				path = table + "." + path
-			}
-			if underAgents(path) {
+	case []any:
+		for _, e := range v {
+			if names(e, s) {
 				return true
 			}
-			depth = max(bracketDepth(m[2]), 0)
-		}
-	}
-	return false
-}
-
-// keyPath is a dotted TOML key with its whitespace and quotes taken out.
-func keyPath(k string) string {
-	return strings.NewReplacer(" ", "", "\t", "", `"`, "", "'", "").Replace(k)
-}
-
-func underAgents(path string) bool {
-	return path == "ui.sidebar.agents" || strings.HasPrefix(path, "ui.sidebar.agents.")
-}
-
-// bracketDepth is the brackets and braces s opens less those it closes, outside strings and a comment.
-func bracketDepth(s string) int {
-	depth := 0
-	var quote rune
-	escaped := false
-	for _, c := range s {
-		switch {
-		case quote != 0:
-			switch {
-			case escaped:
-				escaped = false
-			case c == '\\' && quote == '"':
-				escaped = true
-			case c == quote:
-				quote = 0
-			}
-		case c == '"' || c == '\'':
-			quote = c
-		case c == '#':
-			return depth
-		case c == '[' || c == '{':
-			depth++
-		case c == ']' || c == '}':
-			depth--
-		}
-	}
-	return depth
-}
-
-// showsToken reports whether a line that is not a comment names the $desk token.
-func showsToken(lines []string) bool {
-	for _, l := range lines {
-		text := strings.TrimSpace(l)
-		if !strings.HasPrefix(text, "#") && strings.Contains(text, `"$`+Token+`"`) {
-			return true
 		}
 	}
 	return false

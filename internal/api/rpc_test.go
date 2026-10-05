@@ -28,7 +28,7 @@ func TestServeRPCWritesOneEnvelopeForResultsRefusalsAndBadRequests(t *testing.T)
 	}{
 		{
 			name:  "result",
-			input: `{"method":"status","params":{}}`,
+			input: `{"version":1,"method":"status","params":{}}`,
 			check: func(t *testing.T, response api.RPCResponse) {
 				t.Helper()
 				if response.Refusal != nil || response.Error != nil || !json.Valid(response.Result) {
@@ -38,7 +38,7 @@ func TestServeRPCWritesOneEnvelopeForResultsRefusalsAndBadRequests(t *testing.T)
 		},
 		{
 			name:  "refusal",
-			input: `{"method":"tasks.get","params":{"number":999}}`,
+			input: `{"version":1,"method":"tasks.get","params":{"number":999}}`,
 			check: func(t *testing.T, response api.RPCResponse) {
 				t.Helper()
 				if response.Result != nil || response.Error != nil || response.Refusal == nil || response.Refusal.Code != model.CodeUnknownTask {
@@ -68,7 +68,7 @@ func TestServeRPCWritesOneEnvelopeForResultsRefusalsAndBadRequests(t *testing.T)
 		},
 		{
 			name:  "home failure",
-			input: `{"method":"status","params":{}}`,
+			input: `{"version":1,"method":"status","params":{}}`,
 			setup: func(t *testing.T, home *testutil.Home) {
 				t.Helper()
 				if err := os.MkdirAll(filepath.Dir(home.Paths.DB()), 0o700); err != nil {

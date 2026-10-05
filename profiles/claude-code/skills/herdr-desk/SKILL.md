@@ -61,7 +61,7 @@ Never retry blind. Read the code first.
 | 2 | usage error, or the refusal `bad-input` | fix the arguments |
 | 3 | the store or the home could not be reached or read (`home-unreachable`, `scan-failed`) | do not retry in a loop; tell the user. `note` and `decide` are queued and sent later (stdout says `queued`) |
 
-Refusal codes you may see: `unknown-task`, `unknown-project`, `unknown-step`, `unknown-event`, `empty-title`, `empty-text`, `secret-detected`, `not-allowed`, `stale-run`, `stale`, `no-run`, `runner-off`, `runner-paused`, `cap-reached`, `no-herdr`, `backup-off`, `bad-input`, `home-unreachable`, `scan-failed`.
+Refusal codes you may see: `unknown-task`, `unknown-project`, `unknown-step`, `unknown-event`, `empty-title`, `empty-text`, `secret-detected`, `not-allowed`, `stale-run`, `stale`, `no-run`, `runner-off`, `runner-paused`, `cap-reached`, `no-herdr`, `run-failed`, `backup-off`, `bad-input`, `home-unreachable`, `scan-failed`.
 
 - `secret-detected` names the pattern, never the text. Remove the secret and write the call again.
 - `stale-run` is final: a newer run owns the task, so do not write to it again.

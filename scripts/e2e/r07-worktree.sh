@@ -43,9 +43,10 @@ wait_file "$STUB/worker-run2.env"
 [ "$(git -C "$APP" branch --list 'desk/*' | wc -l | tr -d ' ')" = 1 ] || fail "the second run made another branch: $(git -C "$APP" branch --list 'desk/*')"
 say "the second run reused the worktree ok"
 
-# A worktree root that is not a git repository cannot be cut from.
+# A worktree root that is not a git repository cannot be cut from: the start fails, exit 1 with the run's reason.
 run 0 on home herdr-desk add -t "Nowhere to cut" --desk
-run 0 on home herdr-desk run start T2 --root "$PLAIN" --model sonnet
+run 1 on home herdr-desk run start T2 --root "$PLAIN" --model sonnet
+err_has "run-failed: run 3 failed: spawn: "
 wait_task 2 blocked
 task_has_note 2 "spawn: " || fail "T2 has no 'spawn: ' note: $(task_notes 2)"
 run_is 3 failed || fail "run 3 is $(run_field 3 state)"

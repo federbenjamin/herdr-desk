@@ -186,14 +186,19 @@ func (c *Client) Step(ctx context.Context, a store.Actor, number int, op model.S
 	return t, err
 }
 
-// Append sends one journal event. queued=true means the home did not answer, and the event is in the outbox.
+// Append sends one journal event. queued=true means the home did not answer, and the event is in the outbox, stamped
+// with the time Append was called: the replay keeps the time it was written, not the time the home stopped answering.
 func (c *Client) Append(ctx context.Context, r AppendRequest) (ev model.Event, queued bool, err error) {
 	if !r.valid() {
 		return model.Event{}, false, fmt.Errorf("an append of kind %q must set exactly the field its kind names", r.Kind)
 	}
+	written := time.Now().UTC()
 	err = c.call(ctx, MethodEventsAppend, r, &ev)
 	if !isUnreachable(err) {
 		return ev, false, err
+	}
+	if r.Actor.TS == nil {
+		r.Actor.TS = &written
 	}
 	if qerr := c.enqueue(r); qerr != nil {
 		return model.Event{}, false, errors.Join(err, qerr)
@@ -213,16 +218,17 @@ func (c *Client) SessionView(ctx context.Context, session string) (model.Session
 
 // ListRuns returns the runner's runs. It never reconciles.
 func (c *Client) ListRuns(ctx context.Context) ([]model.Run, error) {
-	var runs []model.Run
-	err := c.call(ctx, MethodRunsList, runsRequest{}, &runs)
-	return runs, err
+	var l RunList
+	err := c.call(ctx, MethodRunsList, runsRequest{}, &l)
+	return l.Runs, err
 }
 
-// ReconcileRuns has the home check its live runs against herdr once, then returns the runner's runs.
-func (c *Client) ReconcileRuns(ctx context.Context) ([]model.Run, error) {
-	var runs []model.Run
-	err := c.call(ctx, MethodRunsList, runsRequest{Reconcile: true}, &runs)
-	return runs, err
+// ReconcileRuns has the home check its live runs against herdr once, then returns the runner's runs. unchecked is
+// why the check could not run, "" when it ran: the runs are then the store's, unchecked.
+func (c *Client) ReconcileRuns(ctx context.Context) (runs []model.Run, unchecked string, err error) {
+	var l RunList
+	err = c.call(ctx, MethodRunsList, runsRequest{Reconcile: true}, &l)
+	return l.Runs, l.Unchecked, err
 }
 
 // Status asks for the home's status without forwarding the outbox first.

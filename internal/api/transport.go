@@ -104,7 +104,7 @@ func (t *commandTransport) RoundTrip(ctx context.Context, method string, params 
 	if argv[0] == "" {
 		return nil, errors.New("[client] command names no program")
 	}
-	req, err := json.Marshal(RPCRequest{Method: method, Params: params})
+	req, err := json.Marshal(RPCRequest{Version: WireVersion, Method: method, Params: params})
 	if err != nil {
 		return nil, err
 	}
@@ -158,8 +158,10 @@ func tail(b []byte) string {
 }
 
 // ServeRPC reads one RPCRequest from r, answers it against the home's store, and writes one RPCResponse to w. A
-// request over 1 MiB or one that does not parse gets a bad-request error; a store that cannot be opened gets an error
-// a retry may clear. It returns an error only when the response cannot be written.
+// request over 1 MiB, one that does not parse, or one with a field the request does not have gets a bad-request
+// error. A request of another wire version gets an error that is not a bad request, naming both versions, so a
+// client keeps what it queued until the two binaries match; so does a store that cannot be opened. It returns an
+// error only when the response cannot be written.
 func ServeRPC(ctx context.Context, p config.Paths, c config.Config, r io.Reader, w io.Writer) error {
 	resp := serveRPC(ctx, p, c, r)
 	b, err := json.Marshal(resp)
@@ -178,8 +180,19 @@ func serveRPC(ctx context.Context, p config.Paths, c config.Config, r io.Reader)
 	case len(body) > maxBody:
 		return RPCResponse{Error: &RPCError{BadRequest: true, Message: fmt.Sprintf("the request is over %d bytes", maxBody)}}
 	}
+	// The version is read first, leniently: a request of another version may carry fields this one does not know.
+	var version struct {
+		Version int `json:"version"`
+	}
+	if err := json.Unmarshal(body, &version); err != nil {
+		return RPCResponse{Error: &RPCError{BadRequest: true, Message: "the request does not parse: " + err.Error()}}
+	}
+	if version.Version != WireVersion {
+		return RPCResponse{Error: &RPCError{Message: fmt.Sprintf(
+			"the client speaks wire version %d and this home speaks %d: install the same herdr-desk on both", version.Version, WireVersion)}}
+	}
 	var req RPCRequest
-	if err := json.Unmarshal(body, &req); err != nil {
+	if err := decodeStrict(body, &req); err != nil {
 		return RPCResponse{Error: &RPCError{BadRequest: true, Message: "the request does not parse: " + err.Error()}}
 	}
 	rn, err := runner.Open(p, c)

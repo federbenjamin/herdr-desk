@@ -59,7 +59,7 @@ func (s State) taskKey(k string) (State, []Effect) {
 			return s, nil
 		}
 		s.editing = true
-		s.notes, s.notesFrom, s.notesReread, s.notesTop = newNotes(t.Notes), t.Notes, false, 0
+		s.notes, s.notesFrom, s.notesTop = newNotes(t.Notes), t.Notes, 0
 	case "t":
 		s.steps = true
 		s.stepSel = 0

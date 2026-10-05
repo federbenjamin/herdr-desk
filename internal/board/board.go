@@ -130,6 +130,16 @@ func (m runModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // wrote is the executor's answer to a write that succeeded, with the write.
 type wrote struct{ effect Effect }
 
+// staleNotes is a notes save's stale refusal with the notes the home held when it came back. Its text and its
+// refusal are the refusal's.
+type staleNotes struct {
+	err   error
+	notes string
+}
+
+func (e staleNotes) Error() string { return e.err.Error() }
+func (e staleNotes) Unwrap() error { return e.err }
+
 // feed applies one message of Run's program to s. A write that succeeded reaches s as a Tick, once s has dropped
 // the notes save it carried, which can no longer fail.
 func feed(s State, msg tea.Msg) (State, []Effect) {
@@ -246,6 +256,12 @@ func (x *executor) run(ctx context.Context, e Effect) tea.Msg {
 		return Added{Task: t}
 	case SetTask:
 		_, err := x.home.SetTask(ctx, user, e.Task, e.Patch)
+		if r, ok := model.AsRefusal(err); ok && r.Code == model.CodeStale && e.Patch.NotesWere != nil {
+			// The editor reopens on the home's notes now, so the next ctrl+s replaces them with no refresh between.
+			if d, gerr := x.home.GetTask(ctx, e.Task); gerr == nil {
+				err = staleNotes{err: err, notes: d.Task.Notes}
+			}
+		}
 		return afterWrite(err)
 	case StepTask:
 		_, err := x.home.Step(ctx, user, e.Task, e.Op)

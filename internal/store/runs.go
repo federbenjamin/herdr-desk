@@ -349,7 +349,7 @@ func slotOpen(ctx context.Context, q querier, cap int, route RunRoute) (bool, er
 type HandBack struct {
 	From, To string       // the claim; To "" leaves the run in From
 	Status   model.Status // the task's new status; "" leaves it
-	IfStatus model.Status // "" → always; else Status is written only while the task's status is IfStatus
+	IfStatus model.Status // "" → always; else Status is written only while the task's status is IfStatus, and a status-only hand-back (From equals To) writes nothing else then either
 	Tags     []string     // the note's tags
 	Note     string       // "" writes no note
 	Reason   string       // written on the run row with the claim; "" leaves it
@@ -360,7 +360,8 @@ type HandBack struct {
 var ErrNoteWithheld = errors.New("the hand-back's note was withheld")
 
 // HandBack claims the run and writes hb's note, reason, and status in one transaction, as the run's actor, and
-// returns the task and whether the claim held. A claim that finds the run out of From writes nothing. A run that is
+// returns the task and whether the claim held. A claim that finds the run out of From writes nothing, and so does a
+// status-only hand-back (From equals To, IfStatus set) that finds the task out of IfStatus. A run that is
 // not its task's newest is refused stale-run, as checkRunRules refuses its worker. The status write never ends a run:
 // To alone decides the run's state.
 //
@@ -392,6 +393,14 @@ func (s *Store) HandBack(ctx context.Context, run model.Run, hb HandBack) (model
 		prepare: func(tx *sql.Tx) (int, any, error) {
 			if err := checkNewestRun(ctx, tx, run.ID, run.Task); err != nil {
 				return 0, nil, err
+			}
+			if hb.IfStatus != "" && hb.From == hb.To {
+				// A status-only hand-back: with the task out of IfStatus it has nothing to write, its note included,
+				// so two processes that saw the same pane write one note between them.
+				cur, err := readTask(ctx, tx, run.Task)
+				if err != nil || cur.Status != hb.IfStatus {
+					return 0, nil, err
+				}
 			}
 			ok, err := updateRun(ctx, tx, run.ID, hb.From, RunUpdate{State: hb.To, Reason: hb.Reason}, s.now())
 			if err != nil || !ok {

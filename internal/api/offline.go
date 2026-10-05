@@ -42,12 +42,8 @@ func (c *Client) lockOutbox() (unlock func() error, err error) {
 	return config.Lock(c.o.Paths.Outbox() + ".lock")
 }
 
-// enqueue appends r to the outbox, stamped with the time it was written so a replay keeps it.
+// enqueue appends r, which Append stamped with the time it was written, to the outbox.
 func (c *Client) enqueue(r AppendRequest) error {
-	if r.Actor.TS == nil {
-		now := time.Now().UTC()
-		r.Actor.TS = &now
-	}
 	line, err := json.Marshal(r)
 	if err != nil {
 		return err

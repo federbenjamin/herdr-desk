@@ -317,7 +317,7 @@ func TestCoordinatorSkillStatesEachRuleThePlanLists(t *testing.T) {
 		{"a ready task is a go-ahead", "`ready` is a go-ahead"},
 		{"the cap is stated, not worked around", "say so"},
 		{"at cap, approved work still queues as waiting", "still gets `run start` when `cap` runs are live"},
-		{"a failed spawn exits 1 and is reported", "exits 1 with `run <id> failed: <reason>`"},
+		{"a failed spawn exits 1 and is reported", "exits 1 with `run-failed: run <id> failed: <reason>`"},
 		{"how to start a run", "herdr-desk run start"},
 		{"how to add a task", "herdr-desk add"},
 		{"auto mode", "`auto`"},

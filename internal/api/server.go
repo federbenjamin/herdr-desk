@@ -1,10 +1,13 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"time"
 
 	"github.com/federbenjamin/herdr-desk/internal/backup"
 	"github.com/federbenjamin/herdr-desk/internal/config"
@@ -52,15 +55,29 @@ type badRequest struct{ err error }
 
 func (b badRequest) Error() string { return b.err.Error() }
 
-// bind is the one decode-and-call adapter every method goes through.
+// bind is the one decode-and-call adapter every method goes through. A field the params type does not have is a bad
+// request: a request is never answered with part of it dropped.
 func bind[Req any](fn func(ctx context.Context, r Req) (any, error)) method {
 	return func(ctx context.Context, params []byte) (any, error) {
 		var r Req
-		if err := json.Unmarshal(params, &r); err != nil {
+		if err := decodeStrict(params, &r); err != nil {
 			return nil, badRequest{err}
 		}
 		return fn(ctx, r)
 	}
+}
+
+// decodeStrict decodes one JSON value from b into v, refusing a field v does not have and anything after the value.
+func decodeStrict(b []byte, v any) error {
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return errors.New("the request holds more than one JSON value")
+	}
+	return nil
 }
 
 // homeServer is the server over r's store, as every command on the home and `herdr-desk rpc` serve it.
@@ -105,15 +122,19 @@ func NewServer(o ServerOptions) *Server {
 			return st.SessionEvents(ctx, r.Session)
 		}),
 		MethodRunsList: bind(func(ctx context.Context, r runsRequest) (any, error) {
+			var out RunList
 			if r.Reconcile && o.Runner != nil {
-				// A failed reconcile is logged by the runner; the list is still the store's truth now.
-				_ = o.Runner.Reconcile(ctx)
+				// A failed reconcile is logged by the runner and told to the caller; the list is still the store's now.
+				if err := o.Runner.Reconcile(ctx); err != nil {
+					out.Unchecked = "the live runs were not checked against herdr: " + err.Error()
+				}
 			}
 			runs, err := st.ListRuns(ctx)
 			if runs == nil {
 				runs = []model.Run{}
 			}
-			return runs, err
+			out.Runs = runs
+			return out, err
 		}),
 		MethodCoordinatorChanges: bind(func(ctx context.Context, r changesRequest) (any, error) {
 			return st.Changes(ctx, r.Actor, maxChanges)
@@ -156,16 +177,31 @@ func (s *Server) status(ctx context.Context) (Status, error) {
 	if info, ok := ticker.Running(o.Paths); ok {
 		tk = TickerStatus{Running: true, PID: info.PID, StartedTS: &info.StartedTS}
 	}
+	today := 0
+	if err == nil {
+		today, err = o.Store.RunsSince(ctx, runner.Midnight(time.Now()))
+	}
+	roots := []Root{}
+	for _, r := range runner.Roots(o.Config, o.Paths) {
+		roots = append(roots, Root{Path: r.Path, About: r.About, Isolation: r.Isolation})
+	}
+	c := o.Config
 	return Status{
-		Version:      version.Version,
-		Ticker:       tk,
-		RunnerOn:     o.Config.Runner.Enabled,
-		RunnerState:  runnerState,
-		RunnerPaused: paused,
-		RunnerCap:    o.Config.Runner.Cap,
-		Tasks:        counts,
-		BackupTS:     backupTS,
-		BackupError:  backupErr,
+		Version:       version.Version,
+		Ticker:        tk,
+		RunnerOn:      c.Runner.Enabled,
+		RunnerState:   runnerState,
+		RunnerPaused:  paused,
+		RunnerCap:     c.Runner.Cap,
+		StartRuns:     c.Coordinator.StartRuns,
+		MaxRunsPerDay: c.Runner.MaxRunsPerDay,
+		MaxRunMinutes: c.Runner.MaxRunMinutes,
+		Today:         today,
+		Roots:         roots,
+		Models:        append([]string{}, c.Agent.Models...),
+		Tasks:         counts,
+		BackupTS:      backupTS,
+		BackupError:   backupErr,
 	}, err
 }
 

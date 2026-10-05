@@ -175,7 +175,7 @@ func TestTheMethodTableHasChangesAndNoCoordinatorGetOrSet(t *testing.T) {
 	}
 	ask := func(method string) api.RPCResponse {
 		t.Helper()
-		body, _ := json.Marshal(api.RPCRequest{Method: method, Params: json.RawMessage(`{"actor":{}}`)})
+		body, _ := json.Marshal(api.RPCRequest{Version: api.WireVersion, Method: method, Params: json.RawMessage(`{"actor":{}}`)})
 		var out strings.Builder
 		if err := api.ServeRPC(context.Background(), home.Paths, cfg, strings.NewReader(string(body)), &out); err != nil {
 			t.Fatalf("ServeRPC %s: %v", method, err)

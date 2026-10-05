@@ -45,10 +45,15 @@ const (
 // maxBody is the largest request rpc reads.
 const maxBody = 1 << 20
 
-// RPCRequest is one call: a method and its params.
+// WireVersion is the version of RPCRequest and RPCResponse this binary speaks. A home answers only a request of its
+// own version: a client and its home run the same herdr-desk.
+const WireVersion = 1
+
+// RPCRequest is one call: the wire version, a method, and its params.
 type RPCRequest struct {
-	Method string          `json:"method"`
-	Params json.RawMessage `json:"params"`
+	Version int             `json:"version"`
+	Method  string          `json:"method"`
+	Params  json.RawMessage `json:"params"`
 }
 
 // RPCResponse is one answer. Exactly one field is set: the result, a refusal with its stable code, or an error.
@@ -106,10 +111,26 @@ type Status struct {
 	RunnerState  string `json:"runner_state"`
 	RunnerPaused bool   `json:"runner_paused"`
 	RunnerCap    int    `json:"runner_cap"` // runner.cap
+	// The home's own config and day count, which herdr-desk context shows: StartRuns is [coordinator] start_runs, Today
+	// the runs started since the home's local midnight, counted as max_runs_per_day counts them, and Roots
+	// runner.Roots, the scratch root last.
+	StartRuns     string   `json:"start_runs"`
+	MaxRunsPerDay int      `json:"max_runs_per_day"`
+	MaxRunMinutes int      `json:"max_run_minutes"`
+	Today         int      `json:"today"`
+	Roots         []Root   `json:"roots"`
+	Models        []string `json:"models"`
 	// BackupTS is the last successful backup run, nil when none is recorded. BackupError is the error of the
 	// last attempt when it failed after that run, "" otherwise. Both come from the backup state file.
 	BackupTS    *time.Time `json:"backup_ts"`
 	BackupError string     `json:"backup_error"`
+}
+
+// Root is one root a run may take, as Status lists it.
+type Root struct {
+	Path      string `json:"path"`
+	About     string `json:"about"`
+	Isolation string `json:"isolation"`
 }
 
 // NoTicker reports whether the runner is on or paused, so live runs may be working, while no ticker runs: the run
@@ -126,6 +147,13 @@ type TickerStatus struct {
 	Running   bool       `json:"running"`
 	PID       int        `json:"pid"`
 	StartedTS *time.Time `json:"started_ts"`
+}
+
+// RunList is what runs.list returns: every run, by id, and, when the caller asked for a reconcile that could not
+// run, why. The runs are then the store's as they stood, not checked against herdr.
+type RunList struct {
+	Runs      []model.Run `json:"runs"`
+	Unchecked string      `json:"unchecked,omitempty"`
 }
 
 // TaskList is what tasks.list returns, and what Client.ListTasks returns when it answers from the snapshot.

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/federbenjamin/herdr-desk/internal/api"
@@ -227,15 +228,23 @@ func TestServerAppendsEachAllowedKindWithOnlyItsMatchingField(t *testing.T) {
 	}
 }
 
-func TestServerDerivesEventWhoFromActorSessionAndIgnoresJSONWho(t *testing.T) {
+// who is never the caller's to say: a request that names it is refused whole, and the event's who comes from the
+// actor's session.
+func TestServerDerivesEventWhoFromActorSessionAndRefusesJSONWho(t *testing.T) {
 	srv := newServer(t, nil)
-	body := []byte(`{
+	claimed := answer(t, srv, api.MethodEventsAppend, []byte(`{
 		"actor":{"session":"agent-session","who":"user"},
 		"kind":"note",
 		"note":{"text":"the actor is an agent"}
-	}`)
-
-	resp := answer(t, srv, api.MethodEventsAppend, body)
+	}`))
+	if claimed.Error == nil || !claimed.Error.BadRequest || !strings.Contains(claimed.Error.Message, `unknown field "who"`) {
+		t.Fatalf("a request naming who = %+v, want a bad request naming the field", claimed)
+	}
+	resp := answer(t, srv, api.MethodEventsAppend, []byte(`{
+		"actor":{"session":"agent-session"},
+		"kind":"note",
+		"note":{"text":"the actor is an agent"}
+	}`))
 	requireResult(t, resp)
 	var event model.Event
 	if err := json.Unmarshal(resp.Result, &event); err != nil {

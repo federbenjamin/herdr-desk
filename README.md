@@ -134,6 +134,11 @@ argv word, never run through a shell. ssh keeps one connection open for 60 secon
 within a minute does not pay for a new one. Set `command` to use `tailscale ssh`, a jump host, or any
 program that carries stdin to `herdr-desk rpc` on the home and its stdout back.
 
+Each request carries the wire version of the binary that sent it. A home of another version refuses the
+request with an error naming both versions, and a client keeps what it queued until it reaches a home of its
+own version: install the same herdr-desk on both machines. A request with a field the home does not know is
+refused whole.
+
 A client never opens a store, runs a ticker, or tracks runs: `herdr-desk ticker` and `herdr-desk coordinator`
 there print where to run them and exit 0, `herdr-desk rpc` exits 2, and `herdr-desk hook herdr-event`
 exits 0 before any transport.
@@ -175,7 +180,8 @@ a run, paused the runner, or started a run without being the coordinator; or `ru
 archived or `done` task), `stale-run` (a newer run owns the task), `stale` (a notes save read notes that
 have since changed: nothing is written), `no-run` (the task has no live run to kill, or `herdr-desk worker`'s
 run is not running), `runner-off`, `runner-paused`, `cap-reached` (`run start` once today's runs reach
-`runner.max_runs_per_day`), `no-herdr`, `backup-off`, `bad-input` (exit 2), `home-unreachable` (exit 3),
+`runner.max_runs_per_day`), `no-herdr`, `run-failed` (`run start` whose run failed to start in the same call;
+its reason follows), `backup-off`, `bad-input` (exit 2), `home-unreachable` (exit 3),
 `scan-failed` (exit 3). `herdr-desk ticker status` is the one command that exits 1 with no code on
 stderr: it exits 1 when the home does not answer, so a script can ask whether it does.
 
@@ -193,7 +199,7 @@ stderr: it exits 1 when the home does not answer, so a script can ask whether it
 | `herdr-desk decide <text> [--tag <k:v>]… [--replaces e<id>] [--task <task>]` | appends a decision |
 | `herdr-desk session [<id>] [--md] [--all] [--continues <old-id>]` | prints the session's journal view; `--json` prints it with the keys `session`, `work`, `todo`, `decisions`; `--all` shows hidden lines; `--continues` first links the session to an older one |
 | `herdr-desk capture` | on a terminal (stdin and stdout both terminals, no `--json`), the capture popup: one line (words starting `#` set the thread, `@` the project, the rest is the title); Enter adds the task and prints `T<n>`; a refused line shows its error under the line and stays there; an empty line, `esc`, or `ctrl+c` exits 0 with no task. While the home has not answered an `enter`, keys wait, and `esc` ends the popup once it answers. Anywhere else it reads lines on stdin: with stdin a terminal it prompts `capture: ` on stderr, and after a refusal prints the error and asks again; with stdin not a terminal it reads one line and exits with the code of its refusal, as every command does. An empty line ends it with exit 0 |
-| `herdr-desk run start <task> [--root <r>] [--isolation <i>] [--model <m>] [--json]` | the one way to start a run; prints `run <id>  T<n>  <state>  <root>  <isolation>  <model>`. When the spawn fails in this call it prints the `failed` run, then `run <id> failed: <reason>` on stderr, and exits 1. [The runner](#the-runner) says what it asks and refuses |
+| `herdr-desk run start <task> [--root <r>] [--isolation <i>] [--model <m>] [--json]` | the one way to start a run; prints `run <id>  T<n>  <state>  <root>  <isolation>  <model>`. When the run fails to start in this call it prints the `failed` run, then `run-failed: run <id> failed: <reason>` on stderr, and exits 1. [The runner](#the-runner) says what it asks and refuses |
 | `herdr-desk runs [--all] [--json]` | checks the live runs against herdr once, then lists them, oldest first: `run <id>  T<n>  <state>  <root>  <isolation>  <model>  <elapsed>` (`-` for a field not decided yet); `no live runs` when none. `--all` lists every run; `--json` prints the array |
 | `herdr-desk runs kill <task>` | kills the processes in the task's pane, closes the pane, ends the run `killed`, and blocks the task; prints `T<n> blocked`. `no-run` when the task has no live run; an agent gets `not-allowed`. When the pane did not close, a process outlived the kill, or herdr could not say what ran in the pane (so nothing was signalled), the task is still blocked, the note on it says what is left, and the command exits 3; the ticker closes that pane again on its next tick |
 | `herdr-desk runner [status]` · `pause` · `resume` | prints `runner <state>`, and ` · <live>/<cap> live` when the state is `on` or `paused`, then ` · no ticker: …` when no ticker runs (the board's header ends `· no ticker` too, and `context` prints the same line), since nothing then stops a run at `max_run_minutes`. `pause` starts no new runs, live runs go on, and the pause survives a restart; an agent gets `not-allowed` |
@@ -396,7 +402,8 @@ It refuses, in this order: `not-allowed` for an agent session that is not the co
 (`not-allowed`); `cap-reached` once today's runs reach `max_runs_per_day`. Today's count and the new run are
 written in one transaction, so starts at once from many processes never pass the cap. A task that already
 has a `starting`, `waiting`, or `running` run prints that run and exits 0. A task whose run is `idle`
-ends that run, closes its pane, and starts a new one; setting the task `done` ends it too. An agent that sets
+ends that run, closes its pane, and starts a new one; while that pane may still be open (herdr would not close it)
+the new run fails, `run-failed`, and the ticker closes the pane again. Setting the task `done` ends an idle run too. An agent that sets
 `ready` is refused unless `start_runs` is `auto`.
 
 **States.** A run is `starting`, `waiting`, `running`, or `idle` while live, and `ended`, `failed`, or
@@ -454,6 +461,8 @@ ticker:
 4. closes again a pane a kill could not close, and blocks a task left `started` after its newest run ended.
 
 `herdr-desk runs` and `herdr-desk context` check the runs once when called; the board's refresh does not.
+When the check cannot run (no herdr on the home, herdr not answering), they list the runs as the store has
+them and say why the check did not run: `runs` on stderr, `context` under `live runs:`.
 
 ### The sidebar row
 
@@ -467,7 +476,8 @@ a timer, so a row shows when a run started, not how long it has run, and the car
 
 `herdr-desk setup` writes the herdr config block that shows the token, in a fenced block, backing the file
 up first as it does for keys. When your herdr config already has its own `[ui.sidebar.agents]` table, setup
-leaves it alone and prints the row to add by hand.
+leaves it alone and prints the row to add by hand. A herdr config that does not parse as TOML is left alone too,
+and setup says so.
 
 ## Running the ticker
 

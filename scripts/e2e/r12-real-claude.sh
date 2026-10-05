@@ -12,7 +12,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/runner-lib.sh"
 # The real herdr: lib.sh sealed DESK_HERDR, and this script is one of those that want it open.
 unset DESK_HERDR
 need_real_herdr
-command -v claude >/dev/null 2>&1 || fail "(env) no claude"
+claude_guard
 build
 run 0 on home herdr-desk setup --profile claude-code --no-herdr --runner on
 wrap_claude worker
@@ -20,7 +20,7 @@ home_event_command
 link_event_plugin "${EVENT_CMD[@]}"
 
 run 0 on home herdr-desk add -t "desk e2e: hand this task back" \
-  -n "Do nothing else: run the hand-back command from this message with --ref none, then stop. Run it with the herdr-desk binary at $BIN/herdr-desk in place of plain herdr-desk: another herdr-desk may be installed on this machine." --desk
+  -n "Do nothing else: run the hand-back command from this message with --ref none, then stop. Run it with the herdr-desk at $AGENT_BIN/herdr-desk in place of plain herdr-desk: another herdr-desk may be installed on this machine." --desk
 run 0 on home herdr-desk run start T1
 wait_run 1 running 120
 track_workspaces

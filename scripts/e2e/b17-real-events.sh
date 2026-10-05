@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# H36: on the real herdr, the idle, done, and working statuses reach a plugin's pane.agent_status_changed hook, a pane's
-# close reaches pane.closed, and `herdr pane get` returns the agent's session. The probe that measured herdr 0.9.1 saw
-# only `blocked`; this checks the others. Run it in a separate named herdr session (HERDR_SOCKET_PATH). A temp plugin,
+# H36: on the real herdr, the idle, working, and blocked statuses reach a plugin's pane.agent_status_changed hook, a
+# pane's close reaches pane.closed, and `herdr pane get` returns the agent's session. herdr's report-agent takes idle,
+# working, blocked, and unknown: it refuses done, so a run's hand-back reaches the hook as idle. Run it in a separate named herdr session (HERDR_SOCKET_PATH). A temp plugin,
 # desk-e2e, logs each event to a file and is unlinked at exit; the one workspace the script opens is closed at exit.
 # Nothing of herdr-desk runs: it is the contract the event hook rests on.
 # shellcheck source=scripts/e2e/lib.sh
@@ -38,7 +38,7 @@ PANE=$(jq -r .result.root_pane.pane_id <<<"$created")
 printf '%s\n' "$WS" >>"$E2E/workspaces.txt"
 
 # Statuses first: herdr ignores reported states once a pane has an agent session.
-for state in idle "done" working; do
+for state in idle working blocked; do
   herdr pane report-agent "$PANE" --source desk-e2e --agent stub --state "$state" >/dev/null || fail "herdr refused report-agent $state"
   wait_long 10 "the $state event to reach the hook" status_seen "$state" ||
     {

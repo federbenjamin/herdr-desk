@@ -29,6 +29,7 @@ const (
 	CodeRunnerPaused    = "runner-paused"    // run start while the runner is paused
 	CodeCapReached      = "cap-reached"      // run start once today's runs reach runner.max_runs_per_day
 	CodeNoHerdr         = "no-herdr"         // run start, or a command that opens a pane, with no usable herdr
+	CodeRunFailed       = "run-failed"       // run start whose run failed to start in the same call: the run's reason follows
 	CodeBadInput        = "bad-input"        // exit 2: a value the store does not know (a status, an isolation, a step op, a session id) or a merged event with no branch
 	CodeHomeUnreachable = "home-unreachable" // exit 3
 	CodeScanFailed      = "scan-failed"      // exit 3

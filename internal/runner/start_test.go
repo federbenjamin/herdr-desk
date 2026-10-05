@@ -8,7 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/federbenjamin/herdr-desk/internal/herdr"
 	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/runner"
 	"github.com/federbenjamin/herdr-desk/internal/store"
 )
 
@@ -131,6 +133,83 @@ func TestStartEndsAnIdleRunAndStartsANewOne(t *testing.T) {
 	// The idle worker is still at its prompt: left open, it could go on working in the root beside the new run.
 	if closed := f.herdr.Closed(); !slices.Contains(closed, old.Pane) || slices.Contains(closed, got.Pane) {
 		t.Fatalf("closed panes = %v, want the idle run's pane %s closed and the new pane %s open", closed, old.Pane, got.Pane)
+	}
+}
+
+// An idle run's pane that herdr will not close still holds a worker at its prompt: the new run must not start
+// beside it, and the old run carries the retry the ticker owes, though it is no longer its task's newest.
+func TestStartOverAnIdleRunWhosePaneDoesNotCloseFailsTheNewRunAndMarksTheOldOneLeftOpen(t *testing.T) {
+	f := newFixture(t, "", "self")
+	task, old, r := f.start()
+	if ok, err := f.store.UpdateRun(f.ctx, old.ID, model.RunRunning, store.RunUpdate{State: model.RunIdle}); err != nil || !ok {
+		t.Fatalf("idle the run = (%t, %v)", ok, err)
+	}
+	f.herdr.Fail("ClosePane", fmt.Errorf("herdr is busy"))
+	got, err := r.Start(f.ctx, store.Actor{}, task.Number, store.RunRoute{Root: f.root})
+	if err != nil {
+		t.Fatalf("Start over an idle run: %v", err)
+	}
+	if got.ID == old.ID || got.State != model.RunFailed || !strings.Contains(got.Reason, "pane "+old.Pane+" of idle run") {
+		t.Fatalf("new run = %#v, want a failed run whose reason names the idle run's pane %s", got, old.Pane)
+	}
+	if len(f.herdr.Workspaces()) != 1 {
+		t.Fatalf("workspaces = %#v, want no new worker beside the open pane", f.herdr.Workspaces())
+	}
+	if runs := f.runs(); runs[0].State != model.RunEnded || !runs[0].LeftOpen {
+		t.Fatalf("old run = %#v, want ended and marked left open", runs[0])
+	}
+	f.herdr.Fail("ClosePane", nil)
+	r.Jobs(f.ctx)
+	if !slices.Contains(f.herdr.Closed(), old.Pane) || f.runs()[0].LeftOpen {
+		t.Fatalf("after a tick: closed = %v, old run = %#v; want the pane closed and the mark cleared", f.herdr.Closed(), f.runs()[0])
+	}
+}
+
+// herdr may give a closed pane's id to a pane in another workspace: replacing an idle run must close only the pane
+// herdr lists with the run's id in the run's own workspace.
+func TestStartOverAnIdleRunLeavesAPaneThatReusedItsIdInAnotherWorkspace(t *testing.T) {
+	f := newFixture(t, "", "self")
+	task, old, r := f.start()
+	if ok, err := f.store.UpdateRun(f.ctx, old.ID, model.RunRunning, store.RunUpdate{State: model.RunIdle}); err != nil || !ok {
+		t.Fatalf("idle the run = (%t, %v)", ok, err)
+	}
+	f.herdr.Remove(old.Pane)
+	f.herdr.Set(old.Pane, "someone-else", "working") // the same id, in no workspace of the run's
+	got, err := r.Start(f.ctx, store.Actor{}, task.Number, store.RunRoute{Root: f.root})
+	if err != nil {
+		t.Fatalf("Start over an idle run: %v", err)
+	}
+	if got.State != model.RunRunning {
+		t.Fatalf("new run = %#v, want running: the idle run's own pane is gone", got)
+	}
+	if slices.Contains(f.herdr.Closed(), old.Pane) {
+		t.Fatalf("closed panes = %v, want the other workspace's pane %s left open", f.herdr.Closed(), old.Pane)
+	}
+}
+
+// failingSpawn is herdr whose workspace create fails after closing the store, so the run cannot be read back.
+type failingSpawn struct {
+	runner.Herdr
+	st *store.Store
+}
+
+func (h failingSpawn) CreateWorkspace(context.Context, string, string, []string) (herdr.Created, error) {
+	_ = h.st.Close()
+	return herdr.Created{}, fmt.Errorf("herdr is gone")
+}
+
+// A spawn whose run cannot be read back must not be reported as the starting row StartRun inserted: run start
+// exits 0 for that.
+func TestStartReturnsAnErrorWhenTheRunCannotBeReadBackAfterItsSpawn(t *testing.T) {
+	f := newFixture(t, "", "self")
+	task := f.armThread("cannot read back", "agent")
+	r := f.runnerWith(failingSpawn{Herdr: f.herdr, st: f.store})
+	run, err := r.Start(f.ctx, store.Actor{}, task.Number, store.RunRoute{Root: f.root})
+	if err == nil || !strings.Contains(err.Error(), "could not be read back") {
+		t.Fatalf("Start = %#v, %v; want an error that the run could not be read back", run, err)
+	}
+	if !strings.Contains(f.logged(), "read the run back") {
+		t.Fatalf("log = %q, want the failed read logged", f.logged())
 	}
 }
 
