@@ -148,10 +148,6 @@ func applyProfile(cfg *config.Config, profile string) ([]string, error) {
 		apply()
 		lines = append(lines, "agent."+name+": set by the claude-code profile")
 	}
-	fill("router", len(cfg.Agent.Router) > 0, func() {
-		cfg.Agent.Router = []string{"claude", "-p", "--safe-mode", "--tools", "", "--system-prompt-file", "{system}",
-			"--json-schema", "{schema}", "--max-budget-usd", "0.10", "--no-session-persistence", "--output-format", "json"}
-	})
 	fill("worker", len(cfg.Agent.Worker) > 0, func() {
 		cfg.Agent.Worker = []string{"claude", "--model", "{model}", "--permission-mode", "auto", "--session-id", "{session}", "--", "{message}"}
 	})

@@ -99,11 +99,7 @@ func TestRunAppliesClaudeCodeProfileAndWritesSkill(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load profile config: %v", err)
 	}
-	wantRouter := []string{"claude", "-p", "--safe-mode", "--tools", "", "--system-prompt-file", "{system}", "--json-schema", "{schema}", "--max-budget-usd", "0.10", "--no-session-persistence", "--output-format", "json"}
 	wantWorker := []string{"claude", "--model", "{model}", "--permission-mode", "auto", "--session-id", "{session}", "--", "{message}"}
-	if !reflect.DeepEqual(got.Agent.Router, wantRouter) {
-		t.Errorf("router argv = %#v; want %#v", got.Agent.Router, wantRouter)
-	}
 	if !reflect.DeepEqual(got.Agent.Worker, wantWorker) {
 		t.Errorf("worker argv = %#v; want %#v", got.Agent.Worker, wantWorker)
 	}
@@ -129,7 +125,10 @@ func TestRunAppliesClaudeCodeProfileAndWritesSkill(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("second Run() error = %v", err)
 	}
-	for _, line := range []string{"agent.router: kept", "agent.worker: kept", "agent.session_env: kept", "skill: " + skillFile + " unchanged"} {
+	if strings.Contains(secondOut.String(), "agent.router") {
+		t.Errorf("second Run report = %q; want no agent.router line: the router is gone", secondOut.String())
+	}
+	for _, line := range []string{"agent.worker: kept", "agent.session_env: kept", "skill: " + skillFile + " unchanged"} {
 		if !strings.Contains(secondOut.String(), line) {
 			t.Errorf("second Run report = %q; want %q", secondOut.String(), line)
 		}

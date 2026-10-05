@@ -19,14 +19,14 @@ import (
 
 // Config is the file $XDG_CONFIG_HOME/herdr-desk/config.toml.
 type Config struct {
-	Client     Client      `toml:"client"`
-	Runner     Runner      `toml:"runner"`
-	Roots      []Root      `toml:"roots"`
-	Agent      Agent       `toml:"agent"`
-	Router     RouterFiles `toml:"router"`
-	Notify     Notify      `toml:"notify"`
-	SecretScan SecretScan  `toml:"secret_scan"`
-	Backup     Backup      `toml:"backup"`
+	Client      Client      `toml:"client"`
+	Runner      Runner      `toml:"runner"`
+	Roots       []Root      `toml:"roots"`
+	Agent       Agent       `toml:"agent"`
+	Coordinator Coordinator `toml:"coordinator"`
+	Notify      Notify      `toml:"notify"`
+	SecretScan  SecretScan  `toml:"secret_scan"`
+	Backup      Backup      `toml:"backup"`
 }
 
 // Client is set on client machines only. Home is an ssh target; Command is the argv template that carries one
@@ -42,38 +42,42 @@ func DefaultClientCommand() []string {
 	return []string{"ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-o", "ControlMaster=auto", "-o", "ControlPath={control}", "-o", "ControlPersist=60", "{home}", "herdr-desk", "rpc"}
 }
 
-// Runner: Enabled is shown by the board; AgentsMayArm and OnMerged are read by the store. The four
-// limits are written by setup and read by the runner (U2).
+// Runner: Enabled is shown by the board; OnMerged is read by the store. The three limits are written by setup and
+// read by the runner.
 type Runner struct {
 	Enabled       bool   `toml:"enabled"`
 	Cap           int    `toml:"cap"`
 	MaxRunsPerDay int    `toml:"max_runs_per_day"`
 	MaxRunMinutes int    `toml:"max_run_minutes"`
-	PollSeconds   int    `toml:"poll_seconds"`
-	AgentsMayArm  bool   `toml:"agents_may_arm" comment:"WARNING: true lets any agent start unattended runs that spend your quota"`
 	OnMerged      string `toml:"on_merged"` // "review" | "done"
 }
 
-// Root: written by `herdr-desk roots`; read by the router (U2).
+// Root: written by `herdr-desk roots`; read by run start's route.
 type Root struct {
 	Path      string `toml:"path"`
 	About     string `toml:"about"`
 	Isolation string `toml:"isolation"` // "" | self | worktree | in-place
 }
 
-// Agent: Router, Worker, and Models are written by a profile and read by the runner. SessionEnv is read by the
-// CLI.
+// Agent: Worker, Coordinator, and Models are written by a profile and read by the runner. SessionEnv is read by
+// the CLI.
 type Agent struct {
-	Router     []string `toml:"router"`
-	Worker     []string `toml:"worker"`
-	SessionEnv string   `toml:"session_env"`
-	Models     []string `toml:"models"` // the models the router may pick; the worker's {model}
+	Worker      []string `toml:"worker"`
+	Coordinator []string `toml:"coordinator"`
+	SessionEnv  string   `toml:"session_env"`
+	Models      []string `toml:"models"` // the models a run may use; the first is the default; the worker's {model}
 }
 
-// RouterFiles replaces the built-in router prompt and schema; "" keeps the built-in.
-type RouterFiles struct {
-	System string `toml:"system"` // a file path
-	Schema string `toml:"schema"` // a file path
+// The values of [coordinator] start_runs.
+const (
+	StartRunsPropose = "propose"
+	StartRunsAuto    = "auto"
+)
+
+// Coordinator: StartRuns is "propose" (the coordinator proposes runs and waits for a go-ahead) or "auto" (it starts
+// them unasked, and an agent may set a task ready).
+type Coordinator struct {
+	StartRuns string `toml:"start_runs" comment:"WARNING: auto lets the coordinator and any agent start runs that spend your quota unasked"`
 }
 
 // Notify: written by setup; read by the runner (U2).
@@ -91,16 +95,18 @@ type Backup struct {
 	GitRemote string `toml:"git_remote"`
 }
 
-// Default is the config of a fresh herdr-desk: runner off, cap 1, 20 runs a day, 180 minutes, poll 30,
-// on_merged "review".
+// Default is the config of a fresh herdr-desk: runner off, cap 1, 20 runs a day, 180 minutes, on_merged
+// "review", start_runs "propose".
 func Default() Config {
-	return Config{Runner: Runner{
-		Cap:           1,
-		MaxRunsPerDay: 20,
-		MaxRunMinutes: 180,
-		PollSeconds:   30,
-		OnMerged:      "review",
-	}}
+	return Config{
+		Runner: Runner{
+			Cap:           1,
+			MaxRunsPerDay: 20,
+			MaxRunMinutes: 180,
+			OnMerged:      "review",
+		},
+		Coordinator: Coordinator{StartRuns: StartRunsPropose},
+	}
 }
 
 // Load reads the config at path. A missing file is Default(), nil; unknown keys and bad values are errors.
@@ -132,7 +138,7 @@ func Load(path string) (Config, error) {
 }
 
 // Save writes the config to path, 0600, through a temp file and a rename. The comment above
-// agents_may_arm is part of the struct, so every save keeps it. A file that already holds these bytes at 0600 is
+// start_runs is part of the struct, so every save keeps it. A file that already holds these bytes at 0600 is
 // left alone: there is nothing to write.
 func (c Config) Save(path string) error {
 	b, err := toml.Marshal(c)
@@ -230,12 +236,18 @@ func LockHeld(path string) (bool, error) {
 	return false, unix.Flock(int(f.Fd()), unix.LOCK_UN)
 }
 
-// Validate checks on_merged, that the runner's four limits are at least 1, each root's isolation, and that
-// client.home can be an ssh target: it is one argv element of the [client] command, so it may not start with "-",
-// hold whitespace or a control character, or be over 255 bytes. An empty on_merged reads as "review".
+// Validate checks on_merged, start_runs, that the runner's three limits are at least 1, each root's isolation, and
+// that client.home can be an ssh target: it is one argv element of the [client] command, so it may not start with
+// "-", hold whitespace or a control character, or be over 255 bytes. An empty on_merged reads as "review", an empty
+// start_runs as "propose".
 func (c Config) Validate() error {
 	if _, ok := model.OnMergedStatus(c.Runner.OnMerged); !ok {
 		return fmt.Errorf("runner.on_merged must be \"review\" or \"done\", not %q", c.Runner.OnMerged)
+	}
+	switch c.Coordinator.StartRuns {
+	case "", StartRunsPropose, StartRunsAuto:
+	default:
+		return fmt.Errorf("coordinator.start_runs must be %q or %q, not %q", StartRunsPropose, StartRunsAuto, c.Coordinator.StartRuns)
 	}
 	for _, l := range []struct {
 		key string
@@ -244,7 +256,6 @@ func (c Config) Validate() error {
 		{"runner.cap", c.Runner.Cap},
 		{"runner.max_runs_per_day", c.Runner.MaxRunsPerDay},
 		{"runner.max_run_minutes", c.Runner.MaxRunMinutes},
-		{"runner.poll_seconds", c.Runner.PollSeconds},
 	} {
 		if l.n < 1 {
 			return fmt.Errorf("%s must be at least 1, not %d", l.key, l.n)

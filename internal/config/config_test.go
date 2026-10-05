@@ -70,8 +70,11 @@ func TestDefaultStartsRunnerWithPublishedLimits(t *testing.T) {
 	t.Parallel()
 
 	c := config.Default()
-	if c.Runner.Enabled || c.Runner.Cap != 1 || c.Runner.MaxRunsPerDay != 20 || c.Runner.MaxRunMinutes != 180 || c.Runner.PollSeconds != 30 || c.Runner.OnMerged != "review" {
+	if c.Runner.Enabled || c.Runner.Cap != 1 || c.Runner.MaxRunsPerDay != 20 || c.Runner.MaxRunMinutes != 180 || c.Runner.OnMerged != "review" {
 		t.Errorf("Default().Runner = %#v; want disabled runner with documented limits", c.Runner)
+	}
+	if c.Coordinator.StartRuns != config.StartRunsPropose {
+		t.Errorf("Default().Coordinator.StartRuns = %q; want propose", c.Coordinator.StartRuns)
 	}
 }
 
@@ -128,7 +131,7 @@ func TestSaveReplacesExistingFileSecurelyAndKeepsWarningWithItsField(t *testing.
 		t.Fatal(err)
 	}
 	c := config.Default()
-	c.Runner.AgentsMayArm = true
+	c.Coordinator.StartRuns = config.StartRunsAuto
 	if err := c.Save(path); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
@@ -152,13 +155,13 @@ func TestSaveReplacesExistingFileSecurelyAndKeepsWarningWithItsField(t *testing.
 		t.Fatal(err)
 	}
 	warning := strings.Index(string(text), "WARNING:")
-	field := strings.Index(string(text), "agents_may_arm")
+	field := strings.Index(string(text), "start_runs")
 	if warning < 0 || field < 0 || warning > field {
-		t.Fatalf("saved config does not put WARNING before agents_may_arm:\n%s", text)
+		t.Fatalf("saved config does not put WARNING before start_runs:\n%s", text)
 	}
 	between := string(text[warning:field])
 	if strings.Count(between, "\n") != 1 {
-		t.Errorf("WARNING is not directly above agents_may_arm: %q", between)
+		t.Errorf("WARNING is not directly above start_runs: %q", between)
 	}
 
 	blocked := filepath.Join(t.TempDir(), "not-a-directory")
