@@ -13,9 +13,11 @@ import (
 	"github.com/federbenjamin/herdr-desk/internal/model"
 )
 
-// task is the task the task page shows: the loaded detail's, else the list's, else only its number.
-func (s State) task() model.Task {
-	n := s.shown()
+// task is the task the task page shows.
+func (s State) task() model.Task { return s.loaded(s.shown()) }
+
+// loaded is task n as last loaded: the loaded detail's, else the list's, else only its number.
+func (s State) loaded(n int) model.Task {
 	if s.hasDetail && s.detail.Task.Number == n {
 		return s.detail.Task
 	}
@@ -159,16 +161,10 @@ func (s State) notesKey(m tea.KeyPressMsg) (State, []Effect) {
 		return s, nil
 	case "ctrl+s":
 		t := s.task()
-		if t.Notes != s.notesFrom {
-			// Someone wrote the notes while the editor was open; a save would replace their text.
-			s.notesFrom = t.Notes
-			s.status = taskID(t.Number) + "'s notes changed while you edited: ctrl+s replaces them, esc keeps them"
-			return s, nil
-		}
 		s.editing = false
-		v := s.notes.Value()
-		s.sent = append(slices.Clip(s.sent), sent{task: t.Number, notes: &v, from: s.notesFrom})
-		return s, []Effect{SetTask{Task: t.Number, Patch: model.Patch{Notes: &v}}}
+		v, from := s.notes.Value(), s.notesFrom
+		s.sent = append(slices.Clip(s.sent), sent{task: t.Number, notes: &v, from: from})
+		return s, []Effect{SetTask{Task: t.Number, Patch: model.Patch{Notes: &v, NotesWere: &from}}}
 	}
 	s.notes = typeNotes(s.notes, m)
 	return s, nil

@@ -108,8 +108,10 @@ func resolveProject(ctx context.Context, q querier, project string) (string, err
 }
 
 // SetTask patches a task. A patch that changes no field and carries no ref writes no event and returns the
-// task. An agent may not ask for ready or done; review with Merged writes the OnMerged status. checkRunRules
-// runs in the write's transaction, and a status change away from started ends the task's live run there too.
+// task. A patch that sets Notes with NotesWere is refused stale, writing nothing, when the task's notes are no
+// longer NotesWere. An agent may not ask for ready or done; review with Merged writes the OnMerged status. The
+// notes check and checkRunRules run in the write's transaction, and a status change away from started ends the
+// task's live run there too.
 func (s *Store) SetTask(ctx context.Context, a Actor, number int, p model.Patch) (model.Task, error) {
 	if p.Title != nil && strings.TrimSpace(*p.Title) == "" {
 		return model.Task{}, refuse(model.CodeEmptyTitle, "a task needs a title")
@@ -139,6 +141,9 @@ func (s *Store) SetTask(ctx context.Context, a Actor, number int, p model.Patch)
 			cur, err := readTask(ctx, tx, number)
 			if err != nil {
 				return 0, nil, err
+			}
+			if p.Notes != nil && p.NotesWere != nil && *p.NotesWere != cur.Notes {
+				return 0, nil, refuse(model.CodeStale, "T%d's notes changed since they were read; read them again", number)
 			}
 			if err := s.checkRunRules(ctx, tx, a, cur, p); err != nil {
 				return 0, nil, err

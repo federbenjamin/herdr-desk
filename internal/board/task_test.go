@@ -122,7 +122,7 @@ func TestTaskPageEditorsAndIsolationEmitSetTask(t *testing.T) {
 				press('e'),
 				ctrl('s'),
 			},
-			want: board.SetTask{Task: 7, Patch: model.Patch{Notes: w4String("existing note")}},
+			want: board.SetTask{Task: 7, Patch: model.Patch{Notes: w4String("existing note"), NotesWere: w4String("existing note")}},
 		},
 		{
 			name: "submitting root preserves its populated value",
@@ -183,7 +183,7 @@ func TestTaskPagePasteAppendsToTheOpenNotesEditor(t *testing.T) {
 	_, effects = s.Update(ctrl('s'))
 	wantEffects(t, effects, []board.Effect{board.SetTask{
 		Task:  44,
-		Patch: model.Patch{Notes: w4String("existing pasted")},
+		Patch: model.Patch{Notes: w4String("existing pasted"), NotesWere: w4String("existing")},
 	}})
 }
 
@@ -312,7 +312,7 @@ func TestTaskPageAFailedNotesSaveOpensTheEditorAgainWithTheText(t *testing.T) {
 	s, _ = s.Update(press('e'))
 	s, _ = s.Update(tea.PasteMsg{Content: " two"})
 	s, effects := s.Update(ctrl('s'))
-	wantEffects(t, effects, []board.Effect{board.SetTask{Task: 21, Patch: model.Patch{Notes: w4String("draft two")}}})
+	wantEffects(t, effects, []board.Effect{board.SetTask{Task: 21, Patch: model.Patch{Notes: w4String("draft two"), NotesWere: w4String("draft")}}})
 	if strings.Contains(s.Text(), "editing") {
 		t.Fatalf("ctrl+s left the editor open: %q", s.Text())
 	}
@@ -321,7 +321,7 @@ func TestTaskPageAFailedNotesSaveOpensTheEditorAgainWithTheText(t *testing.T) {
 		t.Fatalf("a failed save = %q, want the editor back with the text and the error", text)
 	}
 	_, effects = s.Update(ctrl('s'))
-	wantEffects(t, effects, []board.Effect{board.SetTask{Task: 21, Patch: model.Patch{Notes: w4String("draft two")}}})
+	wantEffects(t, effects, []board.Effect{board.SetTask{Task: 21, Patch: model.Patch{Notes: w4String("draft two"), NotesWere: w4String("draft")}}})
 }
 
 func TestTaskPageANotesSaveThatFailsWhileAPromptIsOpenWaitsForItToClose(t *testing.T) {
@@ -340,7 +340,7 @@ func TestTaskPageANotesSaveThatFailsWhileAPromptIsOpenWaitsForItToClose(t *testi
 		t.Fatalf("after the prompt closed = %q, want the editor back with the text and the error", text)
 	}
 	_, effects := s.Update(ctrl('s'))
-	wantEffects(t, effects, []board.Effect{board.SetTask{Task: 25, Patch: model.Patch{Notes: w4String("draft two")}}})
+	wantEffects(t, effects, []board.Effect{board.SetTask{Task: 25, Patch: model.Patch{Notes: w4String("draft two"), NotesWere: w4String("draft")}}})
 }
 
 func TestTaskPageAFailedNotesSaveIsNotLostToALaterSave(t *testing.T) {
@@ -353,12 +353,12 @@ func TestTaskPageAFailedNotesSaveIsNotLostToALaterSave(t *testing.T) {
 	s, _ = s.Update(board.FailedOf(save[0], errors.New("dial home: connection refused")))
 	s, _ = s.Update(tea.PasteMsg{Content: " three"})
 	s, effects := s.Update(ctrl('s'))
-	wantEffects(t, effects, []board.Effect{board.SetTask{Task: 26, Patch: model.Patch{Notes: w4String("draft three")}}})
+	wantEffects(t, effects, []board.Effect{board.SetTask{Task: 26, Patch: model.Patch{Notes: w4String("draft three"), NotesWere: w4String("draft")}}})
 	if text := s.Text(); !strings.Contains(text, "NOTES  editing") || !strings.Contains(text, "draft two") || !strings.HasSuffix(text, "dial home: connection refused") {
 		t.Fatalf("after a later save = %q, want the editor back with the failed text and its error", text)
 	}
 	_, effects = s.Update(ctrl('s'))
-	wantEffects(t, effects, []board.Effect{board.SetTask{Task: 26, Patch: model.Patch{Notes: w4String("draft two")}}})
+	wantEffects(t, effects, []board.Effect{board.SetTask{Task: 26, Patch: model.Patch{Notes: w4String("draft two"), NotesWere: w4String("draft")}}})
 }
 
 func TestTaskPageAFailedNotesSaveKeepsTheNotesItStartedFrom(t *testing.T) {
@@ -376,13 +376,8 @@ func TestTaskPageAFailedNotesSaveKeepsTheNotesItStartedFrom(t *testing.T) {
 	if text := s.Text(); !strings.Contains(text, "NOTES  editing") || !strings.Contains(text, "base mine") {
 		t.Fatalf("after the prompt closed = %q, want the editor back with the text", text)
 	}
-	s, effects := s.Update(ctrl('s'))
-	wantEffects(t, effects, nil)
-	if text := s.Text(); !strings.Contains(text, "NOTES  editing") || !strings.HasSuffix(text, "T27's notes changed while you edited: ctrl+s replaces them, esc keeps them") {
-		t.Fatalf("a save over notes loaded after the failure = %q, want the editor open and a warning", text)
-	}
-	_, effects = s.Update(ctrl('s'))
-	wantEffects(t, effects, []board.Effect{board.SetTask{Task: 27, Patch: model.Patch{Notes: w4String("base mine")}}})
+	_, effects := s.Update(ctrl('s'))
+	wantEffects(t, effects, []board.Effect{board.SetTask{Task: 27, Patch: model.Patch{Notes: w4String("base mine"), NotesWere: w4String("base")}}})
 }
 
 func TestTaskPageEachFailedNotesSaveGivesBackItsOwnText(t *testing.T) {
@@ -411,7 +406,7 @@ func TestTaskPageEachFailedNotesSaveGivesBackItsOwnText(t *testing.T) {
 				}
 				var effects []board.Effect
 				s, effects = s.Update(ctrl('s'))
-				wantEffects(t, effects, []board.Effect{board.SetTask{Task: 28, Patch: model.Patch{Notes: w4String(save.text)}}})
+				wantEffects(t, effects, []board.Effect{board.SetTask{Task: 28, Patch: model.Patch{Notes: w4String(save.text), NotesWere: w4String("draft")}}})
 			}
 		})
 	}
@@ -489,7 +484,7 @@ func TestTaskPageNotesSavesThatLandBeforeOneRefreshAreNotKept(t *testing.T) {
 	}
 }
 
-func TestTaskPageNotesSaveWarnsWhenTheNotesChangedWhileEditing(t *testing.T) {
+func TestTaskPageNotesSaveNamesTheNotesTheEditorStartedFrom(t *testing.T) {
 	task := model.Task{Number: 22, Title: "Shared notes", Notes: "mine", Status: model.StatusOpen}
 	s := w4TaskPage(t, 90, task, nil)
 	s, _ = s.Update(press('e'))
@@ -497,13 +492,8 @@ func TestTaskPageNotesSaveWarnsWhenTheNotesChangedWhileEditing(t *testing.T) {
 	theirs := task
 	theirs.Notes = "theirs"
 	s, _ = s.Update(board.TaskLoaded{Detail: store.TaskDetail{Task: theirs}})
-	s, effects := s.Update(ctrl('s'))
-	wantEffects(t, effects, nil)
-	if text := s.Text(); !strings.Contains(text, "NOTES  editing") || !strings.HasSuffix(text, "T22's notes changed while you edited: ctrl+s replaces them, esc keeps them") {
-		t.Fatalf("a save over changed notes = %q, want the editor open and a warning", text)
-	}
-	_, effects = s.Update(ctrl('s'))
-	wantEffects(t, effects, []board.Effect{board.SetTask{Task: 22, Patch: model.Patch{Notes: w4String("mine!")}}})
+	_, effects := s.Update(ctrl('s'))
+	wantEffects(t, effects, []board.Effect{board.SetTask{Task: 22, Patch: model.Patch{Notes: w4String("mine!"), NotesWere: w4String("mine")}}})
 }
 
 func TestTaskPageNotesEditorKeepsTheCursorLineOnScreen(t *testing.T) {

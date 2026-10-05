@@ -51,6 +51,7 @@ type Patch struct {
 	Status    *Status `json:"status,omitempty"`
 	Title     *string `json:"title,omitempty"`
 	Notes     *string `json:"notes,omitempty"`
+	NotesWere *string `json:"notes_were,omitempty"` // precondition: the notes the writer read; never stored in a set event
 	Thread    *string `json:"thread,omitempty"`
 	Root      *string `json:"root,omitempty"`
 	Isolation *string `json:"isolation,omitempty"`

@@ -154,7 +154,7 @@ type State struct {
 	add       CaptureState
 	editing   bool
 	notes     textarea.Model
-	notesFrom string // the task's notes when the editor opened, or when ctrl+s last warned that they changed
+	notesFrom string // the notes a save says it read: the task's when the editor opened, or as loaded when a save was refused stale
 	notesTop  int    // the editor's first drawn line
 	picking   bool
 	pickSel   int
@@ -279,6 +279,11 @@ func (s State) failed(m Failed) (State, []Effect) {
 		var ok bool
 		if s, u, ok = s.typed(named.effect); ok {
 			u.failed = text
+			if r, isRefusal := model.AsRefusal(m.Err); isRefusal && r.Code == model.CodeStale && !u.answer {
+				u.from = s.loaded(u.task).Notes
+				u.failed = taskID(u.task) + "'s notes changed while you edited: ctrl+s replaces them, esc keeps them"
+				text = u.failed
+			}
 			s.back = append(slices.Clip(s.back), u)
 		}
 	}
@@ -341,8 +346,8 @@ func (s State) held(tasks []model.Task) State {
 
 // giveBack opens the notes editor or the answer prompt again, with its typed text and its error on the status
 // line, when its write failed and no other input has the keys. Text whose write failed while another input was
-// open waits for that input to close. The editor keeps the notes it started from, so a save over notes loaded
-// since still warns.
+// open waits for that input to close. The editor keeps the notes it started from, so a save over notes written
+// since is still refused stale; after a stale refusal it starts from the notes as last loaded.
 func (s State) giveBack() State {
 	if s.inputOpen() || len(s.back) == 0 {
 		return s
