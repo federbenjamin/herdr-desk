@@ -90,11 +90,109 @@ PY
 }
 
 # home_event_command: set EVENT_CMD to the event hook's command for the home: this build's binary on the home's four
-# folders.
+# folders, with the PATH and the herdr socket of this script, so the hook reaches the herdr that fired it.
 home_event_command() {
+  # shellcheck disable=SC2034 # read by the scripts that source this file
   EVENT_CMD=(env -u DESK_SESSION -u DESK_RUN -u DESK_HOOKS
     "XDG_CONFIG_HOME=$E2E/home/config" "XDG_STATE_HOME=$E2E/home/state"
-    "XDG_DATA_HOME=$E2E/home/data" "XDG_CACHE_HOME=$E2E/home/cache" "$BIN/herdr-desk" hook herdr-event)
+    "XDG_DATA_HOME=$E2E/home/data" "XDG_CACHE_HOME=$E2E/home/cache" "PATH=$PATH"
+    ${HERDR_SOCKET_PATH:+"HERDR_SOCKET_PATH=$HERDR_SOCKET_PATH"} "$BIN/herdr-desk" hook herdr-event)
+}
+
+# wrap_claude <key>: in the home's config, make the first word of the [agent] <key> template (worker or coordinator),
+# which the claude-code profile writes as claude, a wrapper that logs <key> to $CLAUDE_CALLS, then runs the real
+# claude. The wrapper's paths are written into it, because a pane under the real herdr does not inherit this script's
+# environment. It puts this script's herdr-desk first on PATH, so the `herdr-desk` the agent runs is the one under
+# test, not an installed one. Count the real sessions with claude_calls <key>.
+CLAUDE_CALLS="$E2E/claude-calls.txt"
+wrap_claude() {
+  local key=$1 real wrap="$E2E/count-claude-$1"
+  real=$(command -v claude) || fail "(env) no claude"
+  cat >"$wrap" <<SH
+#!/bin/sh
+printf '%s\n' '$key' >>'$CLAUDE_CALLS'
+PATH='$BIN':"\$PATH"
+export PATH
+exec '$real' "\$@"
+SH
+  chmod +x "$wrap"
+  python3 - "$E2E/home/config/herdr-desk/config.toml" "$wrap" "$key" <<'PY' || fail "the profile's $key template does not start with claude"
+import re, sys
+
+path, wrap, key = sys.argv[1:4]
+text = open(path).read()
+text, n = re.subn(r"(?m)^(%s\s*=\s*\[\s*)(['\"])claude\2" % key, lambda m: m.group(1) + '"%s"' % wrap, text)
+if n != 1:
+    sys.exit("no %s template starting with claude" % key)
+open(path, "w").write(text)
+PY
+}
+
+# claude_calls <key>: how many times the wrapper for that template ran.
+claude_calls() { grep -cx "$1" "$CLAUDE_CALLS" 2>/dev/null || true; }
+
+# real_coordinator_up <start_runs>: for the scripts that run a real coordinator session (b02, b03) on the real herdr, with
+# the stub as the worker. The home gets a root with self isolation, so any number of stub runs may share it, and the
+# profile's coordinator template with its first word wrapped, so each real session is counted.
+real_coordinator_up() {
+  need_real_herdr
+  command -v claude >/dev/null 2>&1 || fail "(env) no claude"
+  build
+  mkdir -p "$WORK/shared"
+  add_root "$WORK/shared" self "scratch space for stub workers; any number of runs may share it"
+  RC_NOTIFY=none
+  RC_CAP=2
+  RC_START=$1
+  runner_up home
+  python3 - "$E2E/home/config/herdr-desk/config.toml" <<'PY' || fail "the config has no coordinator line"
+import re, sys
+
+path = sys.argv[1]
+text = open(path).read()
+claude = '["claude", "--permission-mode", "auto", "--session-id", "{session}", "--append-system-prompt", "{prompt}"]'
+text, n = re.subn(r"(?m)^coordinator = \[.*\]$", lambda m: "coordinator = " + claude, text)
+if n != 1:
+    sys.exit(1)
+open(path, "w").write(text)
+PY
+  wrap_claude coordinator
+}
+
+# coordinator_open: open the coordinator on the real herdr, answer claude's trust question for the scratch root as a
+# person would, and wait until herdr shows its session. COORD_PANE and COORD_SESSION name it.
+coordinator_open() {
+  run 0 on home herdr-desk coordinator
+  COORD_PANE=$(sqlite3 "$DB" "SELECT pane FROM coordinator")
+  COORD_SESSION=$(sqlite3 "$DB" "SELECT session FROM coordinator")
+  SHOW_PANE=$COORD_PANE
+  track_workspaces
+  answer_trust_question "$COORD_PANE"
+  wait_long 120 "herdr to show the coordinator's session" pane_has_session "$COORD_SESSION"
+}
+
+# tell_coordinator <text>: type the text into the coordinator's pane and press Enter, as a person would.
+tell_coordinator() {
+  herdr_do pane send-text "$COORD_PANE" "$1" >/dev/null || fail "could not type into pane $COORD_PANE"
+  sleep 1
+  herdr_do pane send-keys "$COORD_PANE" Enter >/dev/null || fail "could not press Enter in pane $COORD_PANE"
+}
+
+run_count() { sqlite3 "$DB" "SELECT count(*) FROM runs"; }
+task_count() { on home herdr-desk list --all --json | jq '.tasks | length'; }
+at_least_two_tasks() { [ "$(task_count)" -ge 2 ]; }
+at_least_two_runs() { [ "$(run_count)" -ge 2 ]; }
+
+# end_real_coordinator: close what the script opened, check it is closed, and check the session count.
+end_real_coordinator() {
+  local id
+  SHOW_PANE=""
+  track_workspaces
+  close_tracked_workspaces
+  while read -r id; do
+    wait_long 20 "workspace $id to close" workspace_closed "$id"
+  done < <(sort -u "$E2E/workspaces.txt")
+  say "every workspace this test opened is closed ok"
+  [ "$(claude_calls coordinator)" = 1 ] || fail "claude ran $(claude_calls coordinator) times as the coordinator, not once"
 }
 
 # focused_workspace: the id of the workspace herdr has focused.
@@ -102,10 +200,10 @@ focused_workspace() {
   herdr_do workspace list | jq -r '[.result.workspaces[] | select(.focused)][0].workspace_id // ""'
 }
 
-# track_workspaces: add the workspace of every run row to $E2E/workspaces.txt.
+# track_workspaces: add the workspace of every run row, and the coordinator's, to $E2E/workspaces.txt.
 track_workspaces() {
   [ -f "$DB" ] || return 0
-  sqlite3 -cmd ".timeout 5000" -cmd "PRAGMA query_only = 1" "$DB" "SELECT workspace FROM runs WHERE workspace <> ''" >>"$E2E/workspaces.txt" 2>/dev/null || true
+  sqlite3 -cmd ".timeout 5000" -cmd "PRAGMA query_only = 1" "$DB" "SELECT workspace FROM runs WHERE workspace <> '' UNION SELECT workspace FROM coordinator" >>"$E2E/workspaces.txt" 2>/dev/null || true
 }
 
 # close_tracked_workspaces: close each workspace in $E2E/workspaces.txt, which a run row named. On the real herdr
