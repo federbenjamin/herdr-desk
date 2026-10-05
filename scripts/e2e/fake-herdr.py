@@ -4,6 +4,8 @@
 State lives under $FAKE_HERDR_DIR: state.json, one <pane>.log per pane, notifications.log, and calls.log, one
 line per call: the time it began and its arguments.
 FAKE_HERDR_FAIL=<subcommand words joined by ->, for example pane-run, makes that subcommand exit 1.
+FAKE_HERDR_EVENTS=1 runs `herdr-desk hook herdr-event` in the background, as herdr runs a plugin's [[events]] hook,
+after a report-agent that changes a pane's status and after a pane closes or is reaped.
 DESK_HERDR names it, by its absolute path.
 """
 import argparse
@@ -69,12 +71,41 @@ def group_procs(pgid):
     return procs
 
 
+EVENTS = []
+
+
+def event(name, data):
+    """Queue a plugin event as herdr 0.9.1 sends it; main fires the queue once the state is saved."""
+    EVENTS.append((name, {"event": name.replace(".", "_"), "data": dict(data, type=name.replace(".", "_"))}))
+
+
+def closed(pane, p):
+    event("pane.closed", {"pane_id": pane, "workspace_id": p["workspace"]})
+
+
+def fire():
+    if os.environ.get("FAKE_HERDR_EVENTS") != "1":
+        return
+    for name, payload in EVENTS:
+        env = dict(os.environ, HERDR_PLUGIN_EVENT=name, HERDR_PLUGIN_EVENT_JSON=json.dumps(payload))
+        env.pop("FAKE_HERDR_FAIL", None)
+        subprocess.Popen(
+            ["herdr-desk", "hook", "herdr-event"],
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+
+
 def reap(st):
     """A pane whose command has run and exited is gone."""
     for pid in list(st["panes"]):
         p = st["panes"][pid]
         if p.get("pgid") and not group_procs(p["pgid"]):
             del st["panes"][pid]
+            closed(pid, p)
 
 
 def pane_or_fail(st, pane):
@@ -146,6 +177,15 @@ def cmd_pane_run(d, st, args):
     emit({"type": "pane_run", "pane_id": pane})
 
 
+def pane_info(pid, p):
+    return {
+        "pane_id": pid,
+        "workspace_id": p["workspace"],
+        "agent_status": p["status"],
+        "agent_session": {"value": p["session"]} if p["session"] else None,
+    }
+
+
 def cmd_pane_list(d, st, args):
     ap = Parser(prog="herdr pane list")
     ap.add_argument("--workspace", default=None)
@@ -154,15 +194,26 @@ def cmd_pane_list(d, st, args):
     for pid, p in st["panes"].items():
         if a.workspace and p["workspace"] != a.workspace:
             continue
-        panes.append(
-            {
-                "pane_id": pid,
-                "workspace_id": p["workspace"],
-                "agent_status": p["status"],
-                "agent_session": {"value": p["session"]} if p["session"] else None,
-            }
-        )
+        panes.append(pane_info(pid, p))
     emit({"type": "pane_list", "panes": panes})
+
+
+def cmd_pane_get(d, st, args):
+    if len(args) != 1:
+        fail("usage: herdr pane get <pane_id>")
+    pane = args[0]
+    if pane not in st["panes"]:
+        # herdr 0.9.1: the refusal is JSON on stderr, exit 1.
+        print(
+            json.dumps(
+                {"error": {"code": "pane_not_found", "message": "pane %s not found" % pane}, "id": "cli:pane:get"}
+            ),
+            file=sys.stderr,
+        )
+        save(d, st)
+        fire()
+        sys.exit(1)
+    print(json.dumps({"id": "cli:pane:get", "result": {"type": "pane_info", "pane": pane_info(pane, st["panes"][pane])}}))
 
 
 def cmd_pane_process_info(d, st, args):
@@ -198,6 +249,7 @@ def cmd_pane_close(d, st, args):
         except ProcessLookupError:
             pass
     del st["panes"][pane]
+    closed(pane, p)
     emit({"type": "ok"})
 
 
@@ -213,9 +265,15 @@ def cmd_report_agent(d, st, args):
     ap.add_argument("--agent-session-path", default=None)
     a = ap.parse_args(args)
     p = pane_or_fail(st, a.pane)
+    changed = p["status"] != a.state
     p["status"] = a.state
     if a.agent_session_id:
         p["session"] = a.agent_session_id
+    if changed:
+        event(
+            "pane.agent_status_changed",
+            {"pane_id": a.pane, "workspace_id": p["workspace"], "agent_status": a.state, "agent": a.agent},
+        )
     emit({"type": "ok"})
 
 
@@ -252,6 +310,7 @@ HANDLERS = {
     ("workspace", "create"): cmd_workspace_create,
     ("pane", "run"): cmd_pane_run,
     ("pane", "list"): cmd_pane_list,
+    ("pane", "get"): cmd_pane_get,
     ("pane", "process-info"): cmd_pane_process_info,
     ("pane", "close"): cmd_pane_close,
     ("pane", "report-agent"): cmd_report_agent,
@@ -276,6 +335,7 @@ def main(argv):
         reap(st)
         HANDLERS[key](d, st, argv[2:])
         save(d, st)
+    fire()
 
 
 if __name__ == "__main__":

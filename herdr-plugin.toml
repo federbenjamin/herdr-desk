@@ -19,6 +19,17 @@ command = ["/bin/sh", "scripts/fetch-or-build.sh"]
 platforms = ["linux", "macos"]
 command = ["herdr-desk", "ticker"]
 
+# Tracks runs by herdr's pane events: the hook asks herdr for the pane's state now and hands the
+# run back when its agent stopped, waits on a prompt, resumed, or its pane closed. A pane no run
+# owns, a client machine, or DESK_HOOKS=off exits 0 and writes nothing.
+[[events]]
+on = "pane.agent_status_changed"
+command = ["herdr-desk", "hook", "herdr-event"]
+
+[[events]]
+on = "pane.closed"
+command = ["herdr-desk", "hook", "herdr-event"]
+
 [[panes]]
 id = "board"
 title = "herdr-desk"
