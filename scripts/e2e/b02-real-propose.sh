@@ -21,13 +21,13 @@ wait_long 300 "the coordinator to finish its first turn" coordinator_turn_done
 ab_tasks || fail "the tasks are not one for a.txt and one for b.txt: $(tasks_seen)"
 ok "two tasks added by the coordinator, one for a.txt and one for b.txt"
 [ "$(run_count)" = 0 ] || fail "$(run_count) runs exist before the go-ahead"
-ok "no run in the coordinator's first turn"
+ok "no run before go"
 
 tell_coordinator "go: start the runs for T$A_TASK and T$B_TASK"
 wait_long 300 "the coordinator to start two runs" at_least_two_runs
 wait_long 300 "the coordinator to finish its second turn" coordinator_turn_done
 one_run_each || fail "the runs are not one for T$A_TASK and one for T$B_TASK: $(sqlite3 "$DB" "SELECT id, task FROM runs")"
 ab_tasks || fail "the tasks changed after the go-ahead: $(tasks_seen)"
-ok "one run for each task after go"
+ok "two runs after go, one for each task"
 end_real_coordinator
 pass

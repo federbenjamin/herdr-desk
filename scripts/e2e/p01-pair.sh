@@ -19,9 +19,8 @@ rssh "$CN_ENV python3 $RDIR/timed.py $RDIR/floor.txt $(floor_command)" || fail "
 FLOOR=$(rssh "cat $RDIR/floor.txt")
 ctimed list
 OVER=$(awk -v t="$CT" -v f="$FLOOR" 'BEGIN { printf "%.3f", t - f }')
-say "the second call took $CT s, $OVER s over the ssh floor of $FLOOR s (at most 0.15 over)"
 awk -v o="$OVER" 'BEGIN { exit !(o <= 0.15) }' || fail "the second call took $CT s, $OVER s over the ssh floor of $FLOOR s"
-ok "the second call is within 0.15 s of the ssh floor"
+ok "the second call took $CT s, $OVER s over the ssh floor of $FLOOR s (at most 0.15 over)"
 
 adders=()
 for i in 1 2 3 4 5 6; do

@@ -18,6 +18,6 @@ wait_long 300 "the coordinator to start two runs" at_least_two_runs
 wait_long 300 "the coordinator to finish its turn" coordinator_turn_done
 ab_tasks || fail "the tasks are not one for a.txt and one for b.txt: $(tasks_seen)"
 one_run_each || fail "the runs are not one for T$A_TASK and one for T$B_TASK: $(sqlite3 "$DB" "SELECT id, task FROM runs")"
-ok "one task and one run for each of a.txt and b.txt, with no go"
+ok "two runs with no go, one task and one run for each of a.txt and b.txt"
 end_real_coordinator
 pass
