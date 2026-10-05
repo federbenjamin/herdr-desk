@@ -140,6 +140,23 @@ func TestHerdrEventHookTracksAnOwnedPaneFromHerdrInsteadOfTheEventPayload(t *tes
 	assertTrackedEventRun(t, home, task, run, model.RunEnded, model.StatusReview)
 }
 
+// A worker whose process ends by itself makes herdr 0.9.1 send pane.exited, never pane.closed, with this payload in
+// HERDR_PLUGIN_EVENT_JSON and nothing on stdin (probe log, 2026-10-05); the pane is gone by the time the hook asks.
+func TestHerdrEventHookSendsAWorkerWhosePaneExitedToReview(t *testing.T) {
+	home := testutil.StartHome(t, testutil.HomeOptions{})
+	testutil.FakeHerdr(t)
+	task, run := trackedEventRun(t, home, "w3:p1")
+
+	result := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"hook", "herdr-event"}, "", map[string]string{
+		"HERDR_PLUGIN_EVENT":      "pane.exited",
+		"HERDR_PLUGIN_EVENT_JSON": `{"event":"pane_exited","data":{"type":"pane_exited","pane_id":"w3:p1","workspace_id":"w3"}}`,
+	})
+	if result.exit != 0 || result.stdout != "" || result.stderr != "" {
+		t.Fatalf("hook result = (%d, %q, %q), want silent success", result.exit, result.stdout, result.stderr)
+	}
+	assertTrackedEventRun(t, home, task, run, model.RunEnded, model.StatusReview)
+}
+
 func trackedEventRun(t *testing.T, home *testutil.Home, pane string) (model.Task, model.Run) {
 	t.Helper()
 	ctx := context.Background()

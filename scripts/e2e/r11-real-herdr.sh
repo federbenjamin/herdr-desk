@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # H38 (runner): on the real herdr, with the stub worker: `run start` opens a workspace without taking focus, the pane
-# is found by its agent session, a worker whose pane closes goes to review through herdr's real pane.closed event (no
-# ticker runs), and a kill leaves nothing. People may be working in this herdr: run it in a separate named session
-# (HERDR_SOCKET_PATH). The script links a temp plugin, desk-e2e, whose two event hooks run this script's own herdr-desk
-# on temp folders, and unlinks it at exit. It closes only the workspaces a run row of its own desk names, and nothing
-# else. A stub found by its session cannot also be seen idle (herdr ignores reported states once a pane has a session),
-# so the tracking is proven here by ending the stub and its pane; the idle rows are proven by b09.
+# is found by its agent session, a worker whose process ends by itself goes to review through herdr's real event for
+# it (pane.exited, measured on herdr 0.9.1; the ok line names the events the pane got), with no ticker running, and a
+# kill leaves nothing. People may be working in this herdr: run it in a
+# separate named session (HERDR_SOCKET_PATH), and open one focused workspace in that session first
+# (`herdr workspace create --cwd <a folder> --focus`): the focus check needs a focused workspace to compare. The script
+# links a temp plugin, desk-e2e, whose event hooks (the manifest's) run this script's own herdr-desk on temp folders,
+# and unlinks it at exit. It closes only the workspaces a run row of its own desk names, and nothing else. A stub found
+# by its session cannot also be seen idle (herdr ignores reported states once a pane has a session), so the tracking
+# is proven here by ending the stub and its pane; the idle rows are proven by b09.
 # shellcheck source=scripts/e2e/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 # shellcheck source=scripts/e2e/runner-lib.sh
@@ -20,6 +23,7 @@ runner_up home
 home_event_command
 link_event_plugin "${EVENT_CMD[@]}"
 FOCUS=$(focused_workspace)
+[ -n "$FOCUS" ] || fail "(env) no workspace has focus in this herdr session: open one with --focus first"
 
 # T1: a busy worker whose pane closes without a hand-back.
 run 0 on home herdr-desk add -t "desk e2e: close my pane" --desk
@@ -44,7 +48,7 @@ for p in $CHILDREN1; do kill -TERM "$p" 2>/dev/null || true; done
 wait_task 1 review 40
 run_is 1 ended || fail "run 1 is $(run_field 1 state)"
 task_has_note 1 "the pane closed without a hand-back" || fail "T1 has no note that its pane closed: $(task_notes 1)"
-say "pane closed → review through herdr's event ok"
+say "pane closed → review through herdr's event ok ($(grep -F "\"pane_id\":\"$PANE\"" "$EVENT_LOG" | cut -f2 | sort -u | paste -sd, -))"
 
 # T2: kill a worker with a child.
 run 0 on home herdr-desk add -t "desk e2e: kill me" --desk

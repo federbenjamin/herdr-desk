@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # H36: on the real herdr, the idle, working, and blocked statuses reach a plugin's pane.agent_status_changed hook, a
-# pane's close reaches pane.closed, and `herdr pane get` returns the agent's session. herdr's report-agent takes idle,
-# working, blocked, and unknown: it refuses done, so a run's hand-back reaches the hook as idle. Run it in a separate named herdr session (HERDR_SOCKET_PATH). A temp plugin,
-# desk-e2e, logs each event to a file and is unlinked at exit; the one workspace the script opens is closed at exit.
+# pane's close reaches pane.closed, a pane whose process ends by itself reaches pane.exited, and `herdr pane get`
+# returns the agent's session. herdr's report-agent takes idle, working, blocked, and unknown: it refuses done, so a
+# run's hand-back reaches the hook as idle. Run it in a separate named herdr session (HERDR_SOCKET_PATH). A temp plugin,
+# desk-e2e, with the manifest's event hooks, logs each event to a file and is unlinked at exit; the workspaces the
+# script opens are closed at exit, unless one went with its pane.
 # Nothing of herdr-desk runs: it is the contract the event hook rests on.
 # shellcheck source=scripts/e2e/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -61,4 +63,24 @@ wait_long 10 "pane.closed to reach the hook" event_seen pane.closed "$PANE" true
     fail "pane.closed did not reach the plugin hook"
   }
 ok "pane.closed reached the hook"
+
+# A pane whose process ends by itself, as a worker's does: herdr sends pane.exited for it, and no pane.closed. Its
+# workspace, which holds only that pane, goes with it.
+created=$(herdr workspace create --cwd "$E2E" --label "desk e2e exit" --no-focus) || fail "herdr cannot open a workspace"
+WS2=$(jq -r .result.workspace.workspace_id <<<"$created")
+PANE2=$(jq -r .result.root_pane.pane_id <<<"$created")
+{ [ -n "$WS2" ] && [ "$WS2" != null ] && [ -n "$PANE2" ] && [ "$PANE2" != null ]; } || fail "no workspace or pane in: $created"
+printf '%s\n' "$WS2" >>"$E2E/workspaces.txt"
+herdr pane run "$PANE2" "exec sleep 1" >/dev/null || fail "herdr cannot run a command in pane $PANE2"
+wait_long 15 "pane.exited to reach the hook" event_seen pane.exited "$PANE2" true ||
+  {
+    cat "$LOG" >&2
+    fail "pane.exited did not reach the plugin hook when the pane's process ended by itself"
+  }
+ok "pane.exited reached the hook on a natural exit"
+# Once gone by itself, the workspace is not the cleanup's to close: herdr may give its id to another one.
+if workspace_closed "$WS2"; then
+  grep -vFx "$WS2" "$E2E/workspaces.txt" >"$E2E/workspaces.left" || true
+  mv "$E2E/workspaces.left" "$E2E/workspaces.txt"
+fi
 pass

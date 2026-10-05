@@ -1,6 +1,7 @@
 package board_test
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -63,6 +64,41 @@ func TestTaskPageAStaleNotesSaveReopensOnTheHomesNotesForAnImmediateSecondSave(t
 
 	_, retry := s.Update(ctrl('s'))
 	wantEffects(t, retry, []board.Effect{board.SetTask{Task: 41, Patch: model.Patch{
+		Notes:     w4String("before mine"),
+		NotesWere: w4String("theirs"),
+	}}})
+}
+
+// When the home's notes cannot be read as the stale refusal comes back, the next ctrl+s still names the notes the
+// refused save named, so the editor must not promise that it replaces them; once a retry reads them, it may.
+func TestTaskPageAStaleNotesSaveWhoseReReadFailsDoesNotPromiseAReplace(t *testing.T) {
+	task := model.Task{Number: 41, Title: "Shared draft", Notes: "before", Status: model.StatusOpen}
+	s := w4TaskPage(t, 160, task, nil)
+	s, _ = s.Update(press('e'))
+	s, _ = s.Update(tea.PasteMsg{Content: " mine"})
+	s, save := s.Update(ctrl('s'))
+
+	home := staleHome(task, "theirs")
+	home.get = errors.New("the home did not answer")
+	s, _ = board.Feed(s, board.Answer(home, save[0]))
+	text := s.Text()
+	if strings.Contains(text, "ctrl+s replaces them") || !strings.Contains(text, "reading them again failed: the home did not answer") ||
+		!strings.Contains(text, "ctrl+s tries again, esc keeps them") || !strings.Contains(text, "before mine") {
+		t.Fatalf("after a refusal whose re-read failed = %q, want the typed text, the read error, and no replace promise", text)
+	}
+	s, retry := s.Update(ctrl('s'))
+	wantEffects(t, retry, []board.Effect{board.SetTask{Task: 41, Patch: model.Patch{
+		Notes:     w4String("before mine"),
+		NotesWere: w4String("before"),
+	}}})
+
+	home.get = nil
+	s, _ = board.Feed(s, board.Answer(home, retry[0]))
+	if text := s.Text(); !strings.HasSuffix(text, "T41's notes changed while you edited: ctrl+s replaces them, esc keeps them") {
+		t.Fatalf("after a refusal whose re-read worked = %q, want the replace promise", text)
+	}
+	_, last := s.Update(ctrl('s'))
+	wantEffects(t, last, []board.Effect{board.SetTask{Task: 41, Patch: model.Patch{
 		Notes:     w4String("before mine"),
 		NotesWere: w4String("theirs"),
 	}}})

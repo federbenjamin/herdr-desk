@@ -5,7 +5,9 @@ State lives under $FAKE_HERDR_DIR: state.json (each pane's tokens from report-me
 pane, notifications.log, and calls.log, one line per call: the time it began and its arguments.
 FAKE_HERDR_FAIL=<subcommand words joined by ->, for example pane-run, makes that subcommand exit 1.
 FAKE_HERDR_EVENTS=1 runs `herdr-desk hook herdr-event` in the background, as herdr runs a plugin's [[events]] hook,
-after a report-agent that changes a pane's status and after a pane closes or is reaped.
+for each event the repo's herdr-plugin.toml subscribes, as herdr 0.9.1 sends them: pane.agent_status_changed after a
+report-agent that changes a pane's status, pane.closed after a pane close, and pane.exited when a pane is reaped
+because its command ended by itself.
 DESK_HERDR names it, by its absolute path.
 """
 import argparse
@@ -16,6 +18,7 @@ import signal
 import subprocess
 import sys
 import time
+import tomllib
 
 def fail(msg):
     print("fake-herdr: " + msg, file=sys.stderr)
@@ -79,14 +82,24 @@ def event(name, data):
     EVENTS.append((name, {"event": name.replace(".", "_"), "data": dict(data, type=name.replace(".", "_"))}))
 
 
-def closed(pane, p):
-    event("pane.closed", {"pane_id": pane, "workspace_id": p["workspace"]})
+def closed(pane, p, name="pane.closed"):
+    event(name, {"pane_id": pane, "workspace_id": p["workspace"]})
+
+
+def subscribed():
+    """The events the repo's plugin manifest runs a command on."""
+    manifest = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "herdr-plugin.toml")
+    with open(manifest, "rb") as f:
+        return {e["on"] for e in tomllib.load(f).get("events", [])}
 
 
 def fire():
-    if os.environ.get("FAKE_HERDR_EVENTS") != "1":
+    if os.environ.get("FAKE_HERDR_EVENTS") != "1" or not EVENTS:
         return
+    on = subscribed()
     for name, payload in EVENTS:
+        if name not in on:
+            continue
         env = dict(os.environ, HERDR_PLUGIN_EVENT=name, HERDR_PLUGIN_EVENT_JSON=json.dumps(payload))
         env.pop("FAKE_HERDR_FAIL", None)
         subprocess.Popen(
@@ -105,7 +118,7 @@ def reap(st):
         p = st["panes"][pid]
         if p.get("pgid") and not group_procs(p["pgid"]):
             del st["panes"][pid]
-            closed(pid, p)
+            closed(pid, p, "pane.exited")
 
 
 def pane_or_fail(st, pane):

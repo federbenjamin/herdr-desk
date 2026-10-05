@@ -149,7 +149,7 @@ func TestStartOverAnIdleRunWhosePaneDoesNotCloseFailsTheNewRunAndMarksTheOldOneL
 	if err != nil {
 		t.Fatalf("Start over an idle run: %v", err)
 	}
-	if got.ID == old.ID || got.State != model.RunFailed || !strings.Contains(got.Reason, "pane "+old.Pane+" of idle run") {
+	if got.ID == old.ID || got.State != model.RunFailed || !strings.Contains(got.Reason, "pane "+old.Pane+" of run") {
 		t.Fatalf("new run = %#v, want a failed run whose reason names the idle run's pane %s", got, old.Pane)
 	}
 	if len(f.herdr.Workspaces()) != 1 {
@@ -184,6 +184,55 @@ func TestStartOverAnIdleRunLeavesAPaneThatReusedItsIdInAnotherWorkspace(t *testi
 	}
 	if slices.Contains(f.herdr.Closed(), old.Pane) {
 		t.Fatalf("closed panes = %v, want the other workspace's pane %s left open", f.herdr.Closed(), old.Pane)
+	}
+	if f.runs()[0].LeftOpen {
+		t.Fatalf("old run = %#v, want no close owed: herdr lists no pane of its own", f.runs()[0])
+	}
+}
+
+// The worker's own hook, another process, can set a running run idle after Start is called and before StartRun's
+// transaction ends it: the pane to close is the one that transaction ended, not the one Start could have read first.
+func TestStartClosesThePaneOfARunThatWentIdleJustBeforeItsTransaction(t *testing.T) {
+	f := newFixture(t, "", "self")
+	task, old, r := f.start()
+	f.onNow = func() { // Start's first clock read comes just before StartRun
+		if ok, err := f.store.UpdateRun(f.ctx, old.ID, model.RunRunning, store.RunUpdate{State: model.RunIdle}); err != nil || !ok {
+			t.Errorf("idle the run = (%t, %v)", ok, err)
+		}
+	}
+	got, err := r.Start(f.ctx, store.Actor{}, task.Number, store.RunRoute{Root: f.root})
+	if err != nil || f.onNow != nil {
+		t.Fatalf("Start over a run going idle = %v (hook left: %t)", err, f.onNow != nil)
+	}
+	if got.ID == old.ID || got.State != model.RunRunning {
+		t.Fatalf("new run = %#v, want a fresh running run", got)
+	}
+	if closed := f.herdr.Closed(); !slices.Contains(closed, old.Pane) {
+		t.Fatalf("closed panes = %v, want the pane %s of the run that went idle closed", closed, old.Pane)
+	}
+	if runs := f.runs(); runs[0].State != model.RunEnded || runs[0].LeftOpen {
+		t.Fatalf("old run = %#v, want ended with no close owed", runs[0])
+	}
+}
+
+// When herdr cannot list its panes, the ended idle run's pane may still hold its worker: the new run fails and the
+// old run keeps the close it is owed.
+func TestStartOverAnIdleRunWhenHerdrCannotListItsPanesFailsTheNewRun(t *testing.T) {
+	f := newFixture(t, "", "self")
+	task, old, r := f.start()
+	if ok, err := f.store.UpdateRun(f.ctx, old.ID, model.RunRunning, store.RunUpdate{State: model.RunIdle}); err != nil || !ok {
+		t.Fatalf("idle the run = (%t, %v)", ok, err)
+	}
+	f.herdr.Fail("Panes", fmt.Errorf("herdr is down"))
+	got, err := r.Start(f.ctx, store.Actor{}, task.Number, store.RunRoute{Root: f.root})
+	if err != nil {
+		t.Fatalf("Start over an idle run: %v", err)
+	}
+	if got.State != model.RunFailed || !strings.Contains(got.Reason, "pane "+old.Pane+" of run") || !strings.Contains(got.Reason, "herdr is down") {
+		t.Fatalf("new run = %#v, want failed with a reason naming the idle run's pane and herdr's error", got)
+	}
+	if runs := f.runs(); runs[0].State != model.RunEnded || !runs[0].LeftOpen || slices.Contains(f.herdr.Closed(), old.Pane) {
+		t.Fatalf("old run = %#v, closed = %v; want ended, its pane open and owed a close", runs[0], f.herdr.Closed())
 	}
 }
 

@@ -91,7 +91,8 @@ func (s *Store) LiveRunOnPane(ctx context.Context, pane string) (run model.Run, 
 	return runs[len(runs)-1], true, nil
 }
 
-// LeftOpenRuns returns the runs whose pane a kill or a spawn could not close, by id.
+// LeftOpenRuns returns the runs whose pane is owed a close, by id: a kill or a spawn could not close it, or StartRun
+// ended the run while idle.
 func (s *Store) LeftOpenRuns(ctx context.Context) ([]model.Run, error) {
 	return readRuns(ctx, s.db, `WHERE left_open = 1`)
 }
@@ -214,7 +215,7 @@ type RunCaps struct {
 // when slotOpen allows it under caps.Slots, else waiting. The task must exist, be neither archived nor done, and have
 // no starting, waiting, or running run (ErrRunLive, with that run). Then, while caps.PerDay runs started at or after
 // caps.Since, the start is refused cap-reached and writes nothing. An idle run of the task is ended in the same
-// transaction.
+// transaction and, when it has a pane, marked left_open: its pane is owed a close (LeftOpenRuns).
 func (s *Store) StartRun(ctx context.Context, task int, route RunRoute, caps RunCaps) (model.Run, error) {
 	var run, live model.Run
 	insert := write{
@@ -249,6 +250,17 @@ func (s *Store) StartRun(ctx context.Context, task int, route RunRoute, caps Run
 			ts := s.stamp(Actor{})
 			if err := endLiveRuns(ctx, tx, ts, `task = ? AND state = ?`, task, model.RunIdle); err != nil {
 				return 0, nil, err
+			}
+			// Every live run left in lives is idle, and its worker is still at its prompt in its pane: the close it is
+			// owed is recorded with its end, so whoever closes it (the caller, or the ticker) learns it from this
+			// transaction, never from a read made before it.
+			for _, idle := range lives {
+				if idle.Pane == "" {
+					continue
+				}
+				if _, err := tx.ExecContext(ctx, `UPDATE runs SET left_open = 1 WHERE id = ?`, idle.ID); err != nil {
+					return 0, nil, err
+				}
 			}
 			state := model.RunWaiting
 			if open, err := slotOpen(ctx, tx, caps.Slots, route); err != nil {

@@ -130,11 +130,12 @@ func (m runModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // wrote is the executor's answer to a write that succeeded, with the write.
 type wrote struct{ effect Effect }
 
-// staleNotes is a notes save's stale refusal with the notes the home held when it came back. Its text and its
-// refusal are the refusal's.
+// staleNotes is a notes save's stale refusal with the notes the home held when it came back, or, when they could
+// not be read, why (readErr). Its text and its refusal are the refusal's.
 type staleNotes struct {
-	err   error
-	notes string
+	err     error
+	notes   string
+	readErr error
 }
 
 func (e staleNotes) Error() string { return e.err.Error() }
@@ -257,10 +258,10 @@ func (x *executor) run(ctx context.Context, e Effect) tea.Msg {
 	case SetTask:
 		_, err := x.home.SetTask(ctx, user, e.Task, e.Patch)
 		if r, ok := model.AsRefusal(err); ok && r.Code == model.CodeStale && e.Patch.NotesWere != nil {
-			// The editor reopens on the home's notes now, so the next ctrl+s replaces them with no refresh between.
-			if d, gerr := x.home.GetTask(ctx, e.Task); gerr == nil {
-				err = staleNotes{err: err, notes: d.Task.Notes}
-			}
+			// The editor reopens on the home's notes, read now, so the next ctrl+s replaces them with no refresh
+			// between; a read that fails goes with the refusal, so the editor does not promise that.
+			d, gerr := x.home.GetTask(ctx, e.Task)
+			err = staleNotes{err: err, notes: d.Task.Notes, readErr: gerr}
 		}
 		return afterWrite(err)
 	case StepTask:

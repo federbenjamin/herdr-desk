@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -77,6 +78,45 @@ func TestOpenMigratesRoutingRunsToStartingWithoutLeavingThemOpen(t *testing.T) {
 	}
 	if leftOpen != 0 {
 		t.Errorf("runs.left_open = %d, want 0", leftOpen)
+	}
+}
+
+// The idle run StartRun ends still has its worker at the prompt: the close its pane is owed is written in the same
+// transaction, so no caller has to know the run was idle; an idle run with no pane owes nothing.
+func TestStartRunMarksTheIdleRunItEndsLeftOpenWhenItHasAPane(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		pane string
+		want bool
+	}{{"with a pane", "w1:p1", true}, {"with no pane", "", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			now := time.Date(2026, time.October, 4, 12, 0, 0, 0, time.UTC)
+			st := openRunPolicyStore(t, &now, false)
+			task, err := st.AddTask(ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{Title: "idle", Status: model.StatusReady}})
+			if err != nil {
+				t.Fatalf("add task: %v", err)
+			}
+			idle, err := st.StartRun(ctx, task.Number, policyRoute, store.RunCaps{Slots: 1, PerDay: 1000})
+			if err != nil {
+				t.Fatalf("start run: %v", err)
+			}
+			if ok, err := st.UpdateRun(ctx, idle.ID, model.RunStarting, store.RunUpdate{State: model.RunIdle, Workspace: "w1", Pane: tc.pane}); err != nil || !ok {
+				t.Fatalf("idle the run = (%t, %v)", ok, err)
+			}
+			next, err := st.StartRun(ctx, task.Number, policyRoute, store.RunCaps{Slots: 1, PerDay: 1000})
+			if err != nil {
+				t.Fatalf("start over the idle run: %v", err)
+			}
+			marked, err := st.LeftOpenRuns(ctx)
+			if err != nil {
+				t.Fatalf("left-open runs: %v", err)
+			}
+			got := len(marked) == 1 && marked[0].ID == idle.ID && marked[0].State == model.RunEnded
+			if got != tc.want || (len(marked) > 1) || slices.ContainsFunc(marked, func(r model.Run) bool { return r.ID == next.ID }) {
+				t.Fatalf("left-open runs = %#v, want the ended idle run %d marked: %t", marked, idle.ID, tc.want)
+			}
+		})
 	}
 }
 

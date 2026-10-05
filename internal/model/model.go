@@ -77,7 +77,7 @@ type Run struct {
 	Pane      string    `json:"pane"`
 	StartedTS time.Time `json:"started_ts"`
 	EndedTS   time.Time `json:"ended_ts"`
-	LeftOpen  bool      `json:"left_open"` // a kill or a spawn could not close its pane; the ticker closes it again
+	LeftOpen  bool      `json:"left_open"` // its pane is owed a close (a kill or a spawn could not close it, or a start ended the run idle); the ticker closes it again
 }
 
 // The run states. A run in the first four is live. A starting or running run takes one of the runner's cap slots;

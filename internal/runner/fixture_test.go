@@ -31,6 +31,19 @@ type fixture struct {
 
 	mu   sync.Mutex
 	logs []string
+
+	// onNow, when set, runs once, at the runner's next clock read, and is then cleared: a test's way to change the
+	// store between two steps of one runner call.
+	onNow func()
+}
+
+// clock is the runner's clock: now, after onNow.
+func (f *fixture) clock() time.Time {
+	if hook := f.onNow; hook != nil {
+		f.onNow = nil
+		hook()
+	}
+	return f.now
 }
 
 // newFixture returns a fixture whose config is enabled with cap 3, 20 runs a day, a 10 minute limit, the model
@@ -84,7 +97,7 @@ func (f *fixture) runnerWith(h runner.Herdr) *runner.Runner {
 		Paths:     f.paths,
 		Herdr:     h,
 		Exe:       f.exe,
-		Now:       func() time.Time { return f.now },
+		Now:       f.clock,
 		KillGrace: 10 * time.Millisecond,
 		Logf: func(format string, args ...any) {
 			f.mu.Lock()

@@ -67,10 +67,10 @@ need_real_herdr() {
   HERDR_REAL=1
 }
 
-# link_event_plugin <command...>: link a temp plugin, desk-e2e, into the real herdr with the two event hooks of the
-# repo's manifest, each running the command. Nothing else of the manifest is linked. Every event it gets, and
-# pane.exited, which runs no command, is logged to EVENT_LOG first, so a failed script shows what herdr sent. It
-# refuses to run when a plugin with that id is already linked, and runner_cleanup unlinks it.
+# link_event_plugin <command...>: link a temp plugin, desk-e2e, into the real herdr with the event hooks of the repo's
+# manifest (herdr-plugin.toml), each running the command. Nothing else of the manifest is linked. Every event it gets
+# is logged to EVENT_LOG first, and runner_cleanup prints that log, so a script shows what herdr sent. It refuses to
+# run when a plugin with that id is already linked, and runner_cleanup unlinks it.
 link_event_plugin() {
   local plug="$E2E/event-plugin"
   if herdr plugin list --plugin "$EVENT_PLUGIN" --json 2>/dev/null | jq -e '.result.plugins | length > 0' >/dev/null 2>&1; then
@@ -84,15 +84,17 @@ link_event_plugin() {
     printf '[ "$#" = 0 ] || exec "$@"\n'
   } >"$plug/log-event.sh"
   chmod +x "$plug/log-event.sh"
-  python3 - "$plug/herdr-plugin.toml" "$EVENT_PLUGIN" "$plug/log-event.sh" "$@" <<'PY'
-import json, sys
+  python3 - "$REPO/herdr-plugin.toml" "$plug/herdr-plugin.toml" "$EVENT_PLUGIN" "$plug/log-event.sh" "$@" <<'PY' || fail "could not write the temp plugin's manifest from $REPO/herdr-plugin.toml"
+import json, sys, tomllib
 
-dst, plugin_id, logger = sys.argv[1:4]
-command = json.dumps([logger] + sys.argv[4:])
+manifest, dst, plugin_id, logger = sys.argv[1:5]
+command = json.dumps([logger] + sys.argv[5:])
+events = [e["on"] for e in tomllib.load(open(manifest, "rb")).get("events", [])]
+if not events:
+    sys.exit("the manifest has no [[events]]")
 out = 'id = "%s"\nname = "%s"\nversion = "0.0.0"\nmin_herdr_version = "0.9.0"\nplatforms = ["linux", "macos"]\n' % (plugin_id, plugin_id)
-for event in ("pane.agent_status_changed", "pane.closed"):
+for event in events:
     out += '\n[[events]]\non = "%s"\ncommand = %s\n' % (event, command)
-out += '\n[[events]]\non = "pane.exited"\ncommand = %s\n' % json.dumps([logger])
 open(dst, "w").write(out)
 PY
   run 0 herdr plugin link "$plug" --enabled
@@ -276,10 +278,10 @@ answer_trust_question() {
   herdr_do pane send-keys "$pane" Enter >/dev/null || fail "could not send Enter to pane $pane"
 }
 
-# show_events: print the events the temp plugin logged and the home's herdr-desk.log on stderr, each when it exists.
-show_events() {
+# show_files <file...>: print each file that is not empty on stderr, each line cut to 400 characters.
+show_files() {
   local f
-  for f in "$EVENT_LOG" "$E2E/home/state/herdr-desk/herdr-desk.log"; do
+  for f in "$@"; do
     [ -s "$f" ] || continue
     say "--- $f ---" >&2
     cut -c1-400 "$f" >&2
@@ -287,15 +289,22 @@ show_events() {
   done
 }
 
-# runner_cleanup: show SHOW_PANE's screen and show_events when the script failed, close every pane the fake holds or every workspace
-# a run row named, unlink the temp plugin, then the shared cleanup, which stops the tickers. Only workspaces named by
-# a run row are closed on the real herdr.
+# pass: lib.sh's pass, after the events the temp plugin logged, so a script that passes shows what herdr sent too and
+# still ends E2E PASS.
+pass() {
+  show_files "$EVENT_LOG"
+  say "E2E PASS"
+}
+
+# runner_cleanup: show SHOW_PANE's screen, the events the temp plugin logged, and the home's herdr-desk.log when the
+# script failed, close every pane the fake holds or every workspace a run row named, unlink the temp plugin, then the
+# shared cleanup, which stops the tickers. Only workspaces named by a run row are closed on the real herdr.
 runner_cleanup() {
   local rc=$?
   local id
   if [ "$rc" != 0 ]; then
     show_pane
-    show_events
+    show_files "$EVENT_LOG" "$E2E/home/state/herdr-desk/herdr-desk.log"
   fi
   if [ "$HERDR_REAL" = 1 ]; then track_workspaces; fi
   if [ "$HERDR_REAL" = 0 ] && [ -f "$E2E/herdr/state.json" ]; then

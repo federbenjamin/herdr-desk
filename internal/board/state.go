@@ -285,12 +285,22 @@ func (s State) failed(m Failed) (State, []Effect) {
 			u.failed = text
 			if r, isRefusal := model.AsRefusal(m.Err); isRefusal && r.Code == model.CodeStale && !u.answer {
 				// The executor read the home's notes as the refusal came back; without them, the notes as last loaded.
+				// Only notes other than the ones the refused save named let the next ctrl+s replace them.
+				refused := u.from
 				u.from = s.loaded(u.task).Notes
+				why := ""
 				var home staleNotes
 				if errors.As(m.Err, &home) {
-					u.from = home.notes
+					if home.readErr == nil {
+						u.from = home.notes
+					} else {
+						why = " (reading them again failed: " + errText(home.readErr) + ")"
+					}
 				}
 				u.failed = taskID(u.task) + "'s notes changed while you edited: ctrl+s replaces them, esc keeps them"
+				if u.from == refused {
+					u.failed = taskID(u.task) + "'s notes changed while you edited: ctrl+s tries again, esc keeps them" + why
+				}
 				text = u.failed
 			}
 			s.back = append(slices.Clip(s.back), u)

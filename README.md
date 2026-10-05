@@ -278,7 +278,7 @@ Task page keys (the board's `n S s b r x a f k P ? q ctrl+c` work here too, for 
 |---|---|
 | `↓` `j` · `↑` | scroll |
 | `esc` | back to the board |
-| `e` | edit the notes in an editor; `ctrl+s` saves, `esc` discards. A save that fails opens the editor again with your text. When someone else changed the notes while you edited, the save is refused `stale`: your text stays, the status line says the notes changed, and a second `ctrl+s` replaces them |
+| `e` | edit the notes in an editor; `ctrl+s` saves, `esc` discards. A save that fails opens the editor again with your text. When someone else changed the notes while you edited, the save is refused `stale`: your text stays, the status line says the notes changed, and a second `ctrl+s` replaces them. When the board cannot read the home's notes at that moment, the status line says so and a second `ctrl+s` tries the save again |
 | `t` | steps mode: `↓` `j` `↑` move, `space` or `enter` toggles, `a` adds, `r` renames, `x` removes, `esc` leaves |
 | `R` · `M` | edit the root · the model (an empty line clears it) |
 | `I` | next isolation: none, `self`, `worktree`, `in-place` |
@@ -431,8 +431,8 @@ write it makes carries its run id, and a write from a run that is not the task's
 
 ### Tracking
 
-herdr's events track runs. The plugin manifest runs `herdr-desk hook herdr-event` on `pane.agent_status_changed`
-and `pane.closed`. The event is only a signal: the hook takes the pane id from it, looks for a live run on
+herdr's events track runs. The plugin manifest runs `herdr-desk hook herdr-event` on `pane.agent_status_changed`,
+`pane.closed` (a pane closed), and `pane.exited` (a pane whose process ended by itself, as a worker's does). The event is only a signal: the hook takes the pane id from it, looks for a live run on
 that pane, and when there is one asks herdr for the pane's state now. A pane no run owns, a client machine,
 and `DESK_HOOKS=off` exit 0 and write nothing. What the hook does with the pane's state:
 

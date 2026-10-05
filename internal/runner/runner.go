@@ -221,8 +221,7 @@ func (r *Runner) failStaleStarting(ctx context.Context) {
 	}
 }
 
-// closeLeftOpen closes again each pane a kill or a spawn left open, and clears the mark once herdr no longer lists
-// the pane.
+// closeLeftOpen closes each pane owed a close (LeftOpenRuns), and clears the mark once herdr no longer lists the pane.
 func (r *Runner) closeLeftOpen(ctx context.Context) {
 	runs, err := r.o.Store.LeftOpenRuns(ctx)
 	if err != nil {
@@ -236,12 +235,23 @@ func (r *Runner) closeLeftOpen(ctx context.Context) {
 	if !ok {
 		return
 	}
+	r.closeOwed(ctx, h, panes, runs)
+}
+
+// closeOwed closes the pane of each run owed a close, the one herdr lists with the run's pane id in the run's
+// workspace (paneByID), and clears a run's mark once herdr no longer lists its pane. It returns why, for each run
+// whose pane or processes may still be alive.
+func (r *Runner) closeOwed(ctx context.Context, h Herdr, panes []herdr.Pane, runs []model.Run) []string {
 	shut := false
+	var open []string
 	for _, run := range runs {
 		pane := runPane(run)
 		if _, ok := paneByID(panes, pane); ok {
 			k := r.closePane(ctx, h, run, pane)
-			r.o.Logf("herdr-desk runner: T%d: closing pane %s again: %s", run.Task, pane.ID, k)
+			r.o.Logf("herdr-desk runner: T%d: closing pane %s of run %d: %s", run.Task, pane.ID, run.ID, k)
+			if k.alive {
+				open = append(open, mayBeOpen(run, strings.Join(k.problems, "; ")))
+			}
 			if k.done == "" {
 				continue
 			}
@@ -250,6 +260,12 @@ func (r *Runner) closeLeftOpen(ctx context.Context) {
 			r.logErr("T%d run %d: clear its open pane", run.Task, run.ID, err)
 		}
 	}
+	return open
+}
+
+// mayBeOpen says that the run's pane may still be open, and why.
+func mayBeOpen(run model.Run, why string) string {
+	return fmt.Sprintf("the pane %s of run %d may still be open (%s)", run.Pane, run.ID, why)
 }
 
 // repairStarted blocks each task left started by its newest run more than a minute after that run ended: a

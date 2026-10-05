@@ -17,7 +17,8 @@ import (
 // cap-reached once today's runs reach runner.max_runs_per_day, counted in the transaction that inserts the run. The
 // store decides starting or waiting; a starting run is spawned, and the sidebar rows are reported. A task that
 // already has a starting, waiting, or running run gets that run and no error. A task whose run was idle gets a new
-// run once the idle run's pane is closed (closeReplaced); while that pane may still be open, the new run fails. A
+// run once the idle run's pane, and any other pane an older run of the task is owed a close, is closed
+// (closeReplaced); while one may still be open, the new run fails. A
 // spawn that fails returns the failed run, its reason on it, and no error. A run whose state cannot be read back
 // after its spawn is an error.
 func (r *Runner) Start(ctx context.Context, a store.Actor, task int, route store.RunRoute) (model.Run, error) {
@@ -48,10 +49,6 @@ func (r *Runner) Start(ctx context.Context, a store.Actor, task int, route store
 	if err != nil {
 		return model.Run{}, err
 	}
-	prev, hadRun, err := r.o.Store.CurrentRun(ctx, task)
-	if err != nil {
-		return model.Run{}, err
-	}
 	run, err := r.o.Store.StartRun(ctx, task, resolved, store.RunCaps{Slots: c.Runner.Cap, PerDay: c.Runner.MaxRunsPerDay, Since: r.midnight()})
 	if errors.Is(err, store.ErrRunLive) {
 		return run, nil
@@ -59,18 +56,14 @@ func (r *Runner) Start(ctx context.Context, a store.Actor, task int, route store
 	if err != nil {
 		return model.Run{}, err
 	}
-	open := ""
-	if hadRun && prev.State == model.RunIdle && prev.Pane != "" {
-		open = r.closeReplaced(ctx, h, prev)
-	}
+	open := r.closeReplaced(ctx, h, run)
 	how := run.Isolation
 	if run.Model != "" {
 		how += ", " + run.Model
 	}
 	r.note(ctx, store.Actor{Run: run.ID}, task, []string{model.TagRunner}, fmt.Sprintf("run %d %s: %s (%s)", run.ID, run.State, run.Root, how))
 	if open != "" {
-		r.fail(ctx, run, run.State, fmt.Sprintf("run %d was not started: the pane %s of idle run %d may still be open (%s); the ticker closes it again",
-			run.ID, prev.Pane, prev.ID, open))
+		r.fail(ctx, run, run.State, fmt.Sprintf("run %d was not started: %s; the ticker closes it again", run.ID, open))
 		return r.readBack(ctx, run)
 	}
 	if run.State != model.RunStarting {
@@ -83,27 +76,36 @@ func (r *Runner) Start(ctx context.Context, a store.Actor, task int, route store
 	return r.readBack(ctx, run)
 }
 
-// closeReplaced closes the pane of the idle run StartRun just ended: its worker is still at its prompt there and must
-// not go on working in the root beside the new run. The pane is the one herdr lists with the run's pane id in the
-// run's workspace (paneByID); an id herdr lists in no workspace of the run's is another pane, and is left alone. It
-// returns "" when no pane of the run is left open, else why one may be; then the run is marked left open, so Jobs
-// closes the pane again.
-func (r *Runner) closeReplaced(ctx context.Context, h Herdr, prev model.Run) string {
-	prev.State = model.RunEnded
-	panes, err := h.Panes(ctx)
+// closeReplaced closes, before run can own its root, every pane an older run of run's task is owed a close: among
+// them the idle run StartRun ended in run's own transaction, whose worker is still at its prompt there and must not
+// go on working beside run. Which runs are owed is read from the store after that transaction (LeftOpenRuns), never
+// from what Start read before it. closeOwed closes each pane and clears its mark. It returns "" when no such pane is
+// left open, else why one may be; that run keeps its mark, so Jobs closes its pane again.
+func (r *Runner) closeReplaced(ctx context.Context, h Herdr, run model.Run) string {
+	marked, err := r.o.Store.LeftOpenRuns(ctx)
 	if err != nil {
-		r.logErr("T%d run %d: list herdr panes to close the idle run's pane", prev.Task, prev.ID, err)
-		r.keepOpen(ctx, prev, runPane(prev))
-		return "herdr did not list its panes: " + clip(err.Error())
+		r.logErr("T%d run %d: read the runs whose pane is owed a close", run.Task, run.ID, err)
+		return "the runs whose pane is owed a close could not be read: " + clip(err.Error())
 	}
-	pane, ok := paneByID(panes, runPane(prev))
-	if !ok {
+	var owed []model.Run
+	for _, old := range marked {
+		if old.Task == run.Task && old.ID < run.ID {
+			owed = append(owed, old)
+		}
+	}
+	if len(owed) == 0 {
 		return ""
 	}
-	if k := r.closePane(ctx, h, prev, pane); k.alive {
-		return strings.Join(k.problems, "; ")
+	panes, err := h.Panes(ctx)
+	if err != nil {
+		r.logErr("T%d run %d: list herdr panes to close the panes of its older runs", run.Task, run.ID, err)
+		var open []string
+		for _, old := range owed {
+			open = append(open, mayBeOpen(old, "herdr did not list its panes: "+clip(err.Error())))
+		}
+		return strings.Join(open, "; ")
 	}
-	return ""
+	return strings.Join(r.closeOwed(ctx, h, panes, owed), "; ")
 }
 
 // readBack returns the run as the store holds it now: its spawn, or a failure, moved it on from the row StartRun

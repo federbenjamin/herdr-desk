@@ -18,7 +18,7 @@ jq -e "[$P.actions[].id] | sort == [\"capture\", \"open-board\", \"open-popup\"]
   fail "the actions are $(jq -c "[$P.actions[].id]" <<<"$OUT")"
 jq -e "[$P.panes[].id] | sort == [\"board\", \"board-popup\", \"capture\"]" <<<"$OUT" >/dev/null ||
   fail "the panes are $(jq -c "[$P.panes[].id]" <<<"$OUT")"
-jq -e "[$P.events[] | .on] | sort == [\"pane.agent_status_changed\", \"pane.closed\"]" <<<"$OUT" >/dev/null ||
+jq -e "[$P.events[] | .on] | sort == [\"pane.agent_status_changed\", \"pane.closed\", \"pane.exited\"]" <<<"$OUT" >/dev/null ||
   fail "the events are $(jq -c "[$P.events[]? | .on]" <<<"$OUT")"
 jq -e "[$P.events[] | .command == [\"herdr-desk\", \"hook\", \"herdr-event\"]] | all" <<<"$OUT" >/dev/null ||
   fail "an event does not run herdr-desk hook herdr-event: $(jq -c "[$P.events[]? | .command]" <<<"$OUT")"
