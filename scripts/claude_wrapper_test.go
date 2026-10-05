@@ -128,7 +128,15 @@ say done
 	if code, stderr := r.run(t, moved); code != 1 || !strings.Contains(stderr, "E2E FAIL: (env) the user's claude moved during the test") {
 		t.Fatalf("a script whose claude moved: exit %d, stderr %q; want exit 1 and the (env) failure", code, stderr)
 	}
-	if code, stderr := r.run(t, "claude_guard\nsay started\n"); code != 1 || !strings.Contains(stderr, "E2E FAIL: (env) the user's claude does not resolve") {
+	// The dangling link is skipped by `command -v`, so a claude further along PATH is what the guard finds first; the
+	// machine running the test may have none, so the test brings its own.
+	other := filepath.Join(r.dir, "other-bin")
+	if err := os.MkdirAll(other, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeExec(t, filepath.Join(other, "claude"), "#!/bin/sh\nexit 0\n")
+	path := "PATH=" + filepath.Dir(r.link) + string(os.PathListSeparator) + other + string(os.PathListSeparator) + os.Getenv("PATH")
+	if code, stderr := r.run(t, "claude_guard\nsay started\n", path); code != 1 || !strings.Contains(stderr, "E2E FAIL: (env) the user's claude does not resolve") {
 		t.Fatalf("a script whose claude did not resolve at the start: exit %d, stderr %q; want exit 1 and the (env) failure", code, stderr)
 	}
 	if err := os.Remove(r.link); err != nil {
