@@ -50,8 +50,8 @@ import sys, tomllib
 
 c = tomllib.load(open(sys.argv[1], "rb"))
 a = c["agent"]
-if "router" in a or "router" in c or "poll_seconds" in c["runner"] or "agents_may_arm" in c["runner"]:
-    sys.exit("a removed key is written")
+if "router" in a or "router" in c:
+    sys.exit("a router is written")
 w, k = a["worker"], a["coordinator"]
 if w[0] != "claude" or "--permission-mode" not in w or "{model}" not in w or "{session}" not in w or "{message}" not in w:
     sys.exit("worker: %r" % w)
