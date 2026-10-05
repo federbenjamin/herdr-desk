@@ -37,6 +37,14 @@ description = "The herdr-desk board"
 placement = "split"
 command = ["herdr-desk"]
 
+# The same board in a popup: it lays itself out to the size herdr gives it.
+[[panes]]
+id = "board-popup"
+title = "herdr-desk"
+description = "The herdr-desk board in a popup"
+placement = "popup"
+command = ["herdr-desk"]
+
 [[panes]]
 id = "capture"
 title = "herdr-desk capture"
@@ -50,6 +58,13 @@ title = "herdr-desk: open board"
 description = "Open the herdr-desk board in this workspace, or focus it when it is already open"
 contexts = ["global", "workspace"]
 command = ["sh", "scripts/open-pane.sh", "board"]
+
+[[actions]]
+id = "open-popup"
+title = "herdr-desk: open board in a popup"
+description = "Open the herdr-desk board in a popup over this workspace"
+contexts = ["global", "workspace"]
+command = ["sh", "scripts/open-pane.sh", "board-popup"]
 
 [[actions]]
 id = "capture"

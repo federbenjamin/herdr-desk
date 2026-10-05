@@ -55,6 +55,9 @@ const (
 	doneShown   = 20
 )
 
+// minHeight is the fewest rows the board draws in; below it the view is one line saying so.
+const minHeight = 10
+
 const (
 	boardFooter = "+ add  n ready  S run  s start  b blocked  r review  x done  a #agent  f focus  k kill  P pause  / search  p project  t thread  d done  ? keys"
 	shortFooter = "? keys  q quit"
@@ -188,7 +191,8 @@ func join(sep string, parts ...string) string {
 
 func taskID(n int) string { return "T" + strconv.Itoa(n) }
 
-// Text is the screen as plain text: no escape byte, lines joined by "\n", no line wider than the width.
+// Text is the screen as plain text: no escape byte, lines joined by "\n", no line wider than the width. Under 10
+// rows it is one line naming the rows the board needs.
 func (s State) Text() string { return s.view(plain) }
 
 // Render is the screen with styles, using only the terminal's 16 palette colours.
@@ -207,6 +211,9 @@ func (s State) bodyHeight(bottom int) int {
 
 func (s State) view(p palette) string {
 	w := s.width
+	if s.height < minHeight {
+		return cut(fmt.Sprintf("herdr-desk needs %d rows; this one has %d", minHeight, s.height), w)
+	}
 	bottom := s.bottom(p, w)
 	body := s.bodyHeight(len(bottom))
 	var top []string
