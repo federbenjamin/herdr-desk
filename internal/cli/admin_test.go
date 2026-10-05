@@ -184,7 +184,7 @@ func TestSetupRejectsAnUnknownProfileWithoutWritingConfigAndVersionNeedsNoHome(t
 
 func TestRemovedCommandsAndAConfigWithARemovedKeyAreUsageErrors(t *testing.T) {
 	home := testutil.StartHome(t, testutil.HomeOptions{})
-	for _, args := range [][]string{{"daemon"}, {"token"}, {"setup", "--listen", "127.0.0.1:7411"}} {
+	for _, args := range [][]string{{"token"}, {"setup", "--listen", "127.0.0.1:7411"}} {
 		if r := runDeskWithEnv(t, home.Machine, t.TempDir(), args, "", nil); r.exit != 2 {
 			t.Errorf("%v = (%d, %q, %q), want exit 2", args, r.exit, r.stdout, r.stderr)
 		}

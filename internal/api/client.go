@@ -178,8 +178,7 @@ func (c *Client) Step(ctx context.Context, a store.Actor, number int, op model.S
 	return t, err
 }
 
-// Append sends one journal event. queued=true means the home did not answer, and the event
-// is in the outbox.
+// Append sends one journal event. queued=true means the home did not answer, and the event is in the outbox.
 func (c *Client) Append(ctx context.Context, r AppendRequest) (ev model.Event, queued bool, err error) {
 	if !r.valid() {
 		return model.Event{}, false, fmt.Errorf("an append of kind %q must set exactly the field its kind names", r.Kind)
