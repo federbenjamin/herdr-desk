@@ -96,7 +96,7 @@ func agentBinary(role string, argv []string) (string, error) {
 	}
 	bin, err := exec.LookPath(argv[0])
 	if err != nil {
-		return "", fmt.Errorf("%s: cannot start %s", role, argv[0])
+		return "", fmt.Errorf("%s: cannot start %s: %w", role, argv[0], err)
 	}
 	return bin, nil
 }

@@ -208,7 +208,7 @@ stderr: it exits 1 when the home does not answer, so a script can ask whether it
 | `herdr-desk roots [list]` · `add <path> [--about <a>] [--isolation <i>]` · `remove <path>` | edits `[[roots]]`. `add` takes an existing directory (anything else is a usage error, exit 2); on a path already listed it changes only the fields whose flags you pass, and `--about ""` clears one |
 | `herdr-desk setup [--profile claude-code] [--runner on\|off] [--skill-dir <dir>] [--force] [--no-herdr]` | first-time setup; never prompts |
 | `herdr-desk hook start --format claude-code` | the session hook: reads the hook's JSON on stdin, writes the session's journal view to `<state>/sessions/<id>.md`, and prints the path. After that, every `note`, `decide`, `add`, `set`, `edit`, `capture`, and `session --continues` that succeeds for that session rewrites the file, on the home and on a client alike (a write that was queued does not, until the next one). With the home unreachable the hook prints one line saying the journal is not loaded and exits 0 |
-| `herdr-desk hook herdr-event` | herdr runs it on pane events (see [Tracking](#tracking)); it reads the pane id from the event and exits 0 on every path, writing errors to `<state>/herdr-desk.log` |
+| `herdr-desk hook herdr-event` | herdr runs it on pane events (see [Tracking](#tracking)); it reads the pane id from the event and exits 0 on every path, writing errors to `<state>/herdr-desk.log`: an event with no pane id, a config that does not load, and a store of another schema version (a binary swap) are logged too |
 | `herdr-desk backup` | runs the backup now; a failed run exits 3 naming the git step that failed, with the remote shown as `<remote>` |
 | `herdr-desk version` | prints the version. A build made from source by the herdr plugin's install step carries the plugin manifest's version with `+src`, for example `0.1.0+src` |
 
@@ -392,10 +392,12 @@ root that is not listed, an isolation that is not one of the three, or a model n
 `bad-input`. It sets the task `started` and prints the run.
 
 It refuses, in this order: `not-allowed` for an agent session that is not the coordinator; `runner-off`;
-`runner-paused`; `no-herdr`; `cap-reached` once today's runs reach `max_runs_per_day`. A task that already
+`runner-paused`; `no-herdr`; a route it cannot resolve (`bad-input`); an archived or `done` task
+(`not-allowed`); `cap-reached` once today's runs reach `max_runs_per_day`. Today's count and the new run are
+written in one transaction, so starts at once from many processes never pass the cap. A task that already
 has a `starting`, `waiting`, or `running` run prints that run and exits 0. A task whose run is `idle`
-ends that run and starts a new one; setting the task `done` ends it too. An agent that sets `ready` is
-refused unless `start_runs` is `auto`.
+ends that run, closes its pane, and starts a new one; setting the task `done` ends it too. An agent that sets
+`ready` is refused unless `start_runs` is `auto`.
 
 **States.** A run is `starting`, `waiting`, `running`, or `idle` while live, and `ended`, `failed`, or
 `killed` after. `waiting` means the run cannot start now: its `in-place` root is busy (one `in-place`
@@ -405,7 +407,8 @@ stopped without handing back; it holds its in-place root and does not count towa
 that resumes can put the desk one over `cap` until a run ends. A run left `starting` for over a minute is
 failed. `herdr-desk runner` shows one of `off` (`runner.enabled` is false), `paused`, `no-herdr`, and `on`.
 The state gates only starting runs, so a run that was live when the runner was switched off is still
-handed back. `runner pause`, `resume`, and `runs kill` are a person's acts.
+handed back, checked by the ticker, and stopped at `max_run_minutes`. `runner pause`, `resume`, and `runs kill`
+are a person's acts.
 
 **The spawn.** `worktree` isolation uses `<parent of root>/<root>-T<n>` on the branch
 `desk/T<n>-<slug>` (made on the first run, reused after). The runner creates a herdr workspace
@@ -470,9 +473,11 @@ leaves it alone and prints the row to add by hand.
 
 herdr starts the ticker (`[[startup]]` in `herdr-plugin.toml`). It is one process per home, holds
 `ticker.lock` so a second one exits 0, and once a minute does the timed jobs: the backup when one is due
-(checked hourly), then the run jobs above when `runner.enabled`. A command on a home with no ticker still
-works; only the timed jobs wait. With no herdr, run it yourself with `herdr-desk ticker &` or a service
-unit. Its errors go to `<state>/herdr-desk.log`.
+(checked hourly), then the run jobs above, whatever `runner.enabled` says: switching the runner off stops new
+runs, not the limits on live ones. A command on a home with no ticker still works; only the timed jobs wait.
+With no herdr, run it yourself with `herdr-desk ticker &` or a service unit. Its errors, and every line the
+runner logs in any process on the home (the ticker, a command, `herdr-desk rpc`, the event hook), go to
+`<state>/herdr-desk.log`.
 
 launchd, `~/Library/LaunchAgents/herdr-desk.ticker.plist`:
 

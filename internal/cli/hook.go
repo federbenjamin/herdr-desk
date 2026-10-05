@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"os"
 
 	"github.com/spf13/cobra"
 
@@ -90,10 +89,19 @@ func (a *app) hookCmd() *cobra.Command {
 }
 
 // herdrEvent tracks the pane herdr's event names. herdr runs it for every pane on the machine, so a pane no live
-// run owns costs a read-only open and one lookup. Nothing reaches herdr: errors go to the log, and it always exits 0.
+// run owns costs a read-only open and one lookup. Nothing reaches herdr: it always exits 0. A call that does not
+// track its pane for a fault says why in the log; a client, DESK_HOOKS=off, no store, and a pane no live run owns are
+// not faults and log nothing.
 func (a *app) herdrEvent() {
+	if a.env.Getenv("DESK_HOOKS") == "off" {
+		return
+	}
 	c, err := config.Load(a.paths.ConfigFile())
-	if err != nil || c.IsClient() || a.env.Getenv("DESK_HOOKS") == "off" {
+	if err != nil {
+		a.hookLog(fmt.Errorf("the config does not load, so no pane is tracked: %w", err))
+		return
+	}
+	if c.IsClient() {
 		return
 	}
 	var ev struct {
@@ -101,39 +109,39 @@ func (a *app) herdrEvent() {
 			PaneID string `json:"pane_id"`
 		} `json:"data"`
 	}
-	if json.Unmarshal([]byte(a.env.Getenv("HERDR_PLUGIN_EVENT_JSON")), &ev) != nil || ev.Data.PaneID == "" {
+	if err := json.Unmarshal([]byte(a.env.Getenv("HERDR_PLUGIN_EVENT_JSON")), &ev); err != nil || ev.Data.PaneID == "" {
+		a.hookLog(fmt.Errorf("the event %q has no data.pane_id in HERDR_PLUGIN_EVENT_JSON (%v), so no pane is tracked",
+			a.env.Getenv("HERDR_PLUGIN_EVENT"), err))
 		return
 	}
 	pane := ev.Data.PaneID
 	owned, err := paneOwned(a.ctx, a.paths, pane)
 	if err != nil {
-		a.hookLog(func() error { return fmt.Errorf("pane %s: look for its run: %w", pane, err) })
+		a.hookLog(fmt.Errorf("pane %s: look for its run: %w", pane, err))
 		return
 	}
 	if !owned {
 		return
 	}
-	a.hookLog(func() error {
-		r, err := runner.Open(a.paths, c)
-		if err != nil {
-			return fmt.Errorf("pane %s: %w", pane, err)
-		}
-		err = r.Track(a.ctx, pane)
-		if cerr := r.Close(); err == nil {
-			err = cerr
-		}
-		if err != nil {
-			return fmt.Errorf("pane %s: %w", pane, err)
-		}
-		return nil
-	})
+	r, err := runner.Open(a.paths, c)
+	if err != nil {
+		a.hookLog(fmt.Errorf("pane %s: %w", pane, err))
+		return
+	}
+	err = r.Track(a.ctx, pane)
+	if cerr := r.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		a.hookLog(fmt.Errorf("pane %s: %w", pane, err))
+	}
 }
 
-// paneOwned reports whether a live run owns the pane, through a read-only open. No store, or a store of another
-// schema version, owns nothing.
+// paneOwned reports whether a live run owns the pane, through a read-only open. No store owns nothing; a store of
+// another schema version is an error: this binary is not the one that migrated it.
 func paneOwned(ctx context.Context, p config.Paths, pane string) (bool, error) {
 	st, err := store.OpenReadOnly(p.DB(), store.Options{})
-	if errors.Is(err, store.ErrNoStore) || errors.Is(err, store.ErrSchema) {
+	if errors.Is(err, store.ErrNoStore) {
 		return false, nil
 	}
 	if err != nil {
@@ -144,20 +152,13 @@ func paneOwned(ctx context.Context, p config.Paths, pane string) (bool, error) {
 	return ok, err
 }
 
-// hookLog runs fn with the standard logger, which the runner logs through, pointed at <state>/herdr-desk.log, and
-// logs fn's error there. A log that cannot be opened drops the lines: a hook prints nothing to herdr.
-func (a *app) hookLog(fn func() error) {
-	var out io.Writer = io.Discard
-	if err := os.MkdirAll(a.paths.StateDir, 0o700); err == nil {
-		if f, err := os.OpenFile(a.paths.Log(), os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600); err == nil {
-			defer f.Close()
-			out = f
-		}
+// hookLog writes err to <state>/herdr-desk.log, where the runner the hook opens logs too. A log that cannot be opened
+// drops the line: a hook prints nothing to herdr.
+func (a *app) hookLog(err error) {
+	f, ferr := a.paths.OpenLog()
+	if ferr != nil {
+		return
 	}
-	prev := log.Writer()
-	log.SetOutput(out)
-	defer log.SetOutput(prev)
-	if err := fn(); err != nil {
-		log.Printf("herdr-desk hook herdr-event: %v", err)
-	}
+	defer f.Close()
+	log.New(f, "", log.LstdFlags).Printf("herdr-desk hook herdr-event: %v", err)
 }

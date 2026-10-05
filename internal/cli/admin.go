@@ -87,8 +87,8 @@ func (a *app) rootsCmd() *cobra.Command {
 			return c.AddRoot(r)
 		}),
 	}
-	add.Flags().StringVar(&about, "about", "", "what the root holds, for the router")
-	add.Flags().StringVar(&isolation, "isolation", "", "self, worktree, or in-place (unset: the router chooses)")
+	add.Flags().StringVar(&about, "about", "", "what the root holds, for the coordinator")
+	add.Flags().StringVar(&isolation, "isolation", "", "self, worktree, or in-place (unset: worktree for a git top, else in-place)")
 	remove := &cobra.Command{
 		Use:   "remove <path>",
 		Short: "Remove a root",

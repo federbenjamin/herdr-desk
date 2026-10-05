@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -33,7 +32,7 @@ type Options struct {
 	Every time.Duration                              // 0 → time.Minute
 	Now   func() time.Time                           // nil → time.Now
 	Logf  func(format string, args ...any)           // nil → a logger on Paths.Log()
-	Jobs  func(ctx context.Context, c config.Config) // nil → the runner's run jobs when runner.enabled
+	Jobs  func(ctx context.Context, c config.Config) // nil → the runner's run jobs
 }
 
 // Info is the ticker info file.
@@ -44,21 +43,22 @@ type Info struct {
 
 // Ticker is a running ticker.
 type Ticker struct {
-	o      Options
-	unlock func() error
-	logf   *os.File  // the log Logf writes to when the caller gave none
-	stdLog io.Writer // the standard logger's output before Start pointed it at logf
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
-	once   sync.Once
-	err    error
+	o          Options
+	unlock     func() error
+	unlockInfo func() error // the lock on the info file: held, it says the file is this ticker's
+	logf       *os.File     // the log Logf writes to when the caller gave none
+	cancel     context.CancelFunc
+	wg         sync.WaitGroup
+	once       sync.Once
+	err        error
 
 	tickMu     sync.Mutex // one tick at a time
 	backupSeen time.Time  // the last tick that checked whether a backup is due
 }
 
-// Start takes the lock, writes the info file, ticks at once, then every o.Every until Close. It returns ErrRunning
-// when another ticker holds the lock.
+// Start takes the lock, writes the info file and then locks it too, ticks at once, then every o.Every until Close.
+// It returns ErrRunning when another ticker holds the lock. A crashed ticker's info file is left behind unlocked, so
+// Stop never takes its pid for this ticker's.
 func Start(ctx context.Context, o Options) (*Ticker, error) {
 	if o.Every <= 0 {
 		o.Every = time.Minute
@@ -75,19 +75,21 @@ func Start(ctx context.Context, o Options) (*Ticker, error) {
 	}
 	t := &Ticker{o: o, unlock: unlock}
 	if t.o.Logf == nil {
-		f, err := os.OpenFile(o.Paths.Log(), os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
+		f, err := o.Paths.OpenLog()
 		if err != nil {
 			unlock()
 			return nil, err
 		}
-		// The runner logs through the standard logger, so it goes to the ticker's log too until Close.
-		t.logf, t.stdLog = f, log.Writer()
-		log.SetOutput(f)
+		t.logf = f
 		t.o.Logf = log.New(f, "herdr-desk ticker: ", log.LstdFlags).Printf
 	}
 	b, err := json.Marshal(Info{PID: os.Getpid(), StartedTS: o.Now().UTC()})
 	if err == nil {
 		err = config.WriteFileAtomic(o.Paths.TickerInfo(), b)
+	}
+	if err == nil {
+		// Lock waits rather than fails: Stop and status probe the lock for an instant.
+		t.unlockInfo, err = config.Lock(o.Paths.TickerInfo())
 	}
 	if err != nil {
 		t.Close()
@@ -113,8 +115,9 @@ func (t *Ticker) loop(ctx context.Context) {
 }
 
 // Tick does the timed jobs once: it reads the config file afresh (one that fails to load is logged and the tick
-// skipped), checks the backup on the first tick and then once an hour, then runs the run jobs. The store is opened
-// only when a job needs it and closed before Tick returns.
+// skipped), checks the backup on the first tick and then once an hour, then runs the run jobs. The run jobs run
+// whatever runner.enabled says: it stops new runs, not the deadline, the reconcile, or the repairs of live ones. The
+// store is opened only when a job needs it and closed before Tick returns.
 func (t *Ticker) Tick(ctx context.Context) {
 	t.tickMu.Lock()
 	defer t.tickMu.Unlock()
@@ -159,12 +162,12 @@ func (t *Ticker) Tick(ctx context.Context) {
 		t.o.Jobs(ctx, c)
 		return
 	}
-	if c.Runner.Enabled && open() {
+	if open() {
 		r.Jobs(ctx)
 	}
 }
 
-// Close stops the ticks, removes the info file, and releases the lock.
+// Close stops the ticks, removes the info file, and releases the locks.
 func (t *Ticker) Close() error {
 	t.once.Do(func() {
 		if t.cancel != nil {
@@ -175,9 +178,11 @@ func (t *Ticker) Close() error {
 		if err := os.Remove(t.o.Paths.TickerInfo()); err != nil && !errors.Is(err, os.ErrNotExist) {
 			errs = append(errs, err)
 		}
+		if t.unlockInfo != nil {
+			errs = append(errs, t.unlockInfo())
+		}
 		errs = append(errs, t.unlock())
 		if t.logf != nil {
-			log.SetOutput(t.stdLog)
 			errs = append(errs, t.logf.Close())
 		}
 		t.err = errors.Join(errs...)
@@ -215,21 +220,38 @@ func readInfo(p config.Paths) (Info, error) {
 	return info, json.Unmarshal(b, &info)
 }
 
-// Stop signals the running ticker and waits up to timeout for the lock to be free. It signals only while the lock
-// is held, so a stale info file never gets another process killed. No ticker is not an error.
+// Stop signals the running ticker and waits up to timeout for the lock to be free. It signals only the pid of an
+// info file the lock holder has locked: a file a crashed ticker left is not, so Stop waits, up to timeout, for the new
+// holder to publish its own, and never signals the old pid. No ticker is not an error.
 func Stop(p config.Paths, timeout time.Duration) error {
 	held, err := config.LockHeld(p.TickerLock())
 	if err != nil || !held {
 		return err
 	}
-	info, err := readInfo(p)
-	if err != nil {
-		return fmt.Errorf("a ticker holds %s but %s cannot be read: %w", p.TickerLock(), filepath.Base(p.TickerInfo()), err)
+	deadline := time.Now().Add(timeout)
+	var info Info
+	for {
+		published, err := config.LockHeld(p.TickerInfo())
+		if err != nil {
+			return err
+		}
+		if published {
+			if info, err = readInfo(p); err != nil {
+				return fmt.Errorf("a ticker holds %s but %s cannot be read: %w", p.TickerLock(), filepath.Base(p.TickerInfo()), err)
+			}
+			break
+		}
+		if held, err := config.LockHeld(p.TickerLock()); err != nil || !held {
+			return err
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("a ticker holds %s but has not published its pid in %s", p.TickerLock(), filepath.Base(p.TickerInfo()))
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 	if err := syscall.Kill(info.PID, syscall.SIGTERM); err != nil {
 		return fmt.Errorf("signal the ticker (pid %d): %w", info.PID, err)
 	}
-	deadline := time.Now().Add(timeout)
 	for {
 		held, err := config.LockHeld(p.TickerLock())
 		if err != nil || !held {

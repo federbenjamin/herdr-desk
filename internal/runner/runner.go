@@ -68,8 +68,9 @@ type Options struct {
 
 // Runner is one desk's runner.
 type Runner struct {
-	o     Options
-	owned bool // Open opened the store, so Close closes it
+	o        Options
+	owned    bool         // Open opened the store, so Close closes it
+	closeLog func() error // Open opened the log, so Close closes it
 }
 
 // New returns a runner over o.Store.

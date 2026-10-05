@@ -1,7 +1,10 @@
 // Package config owns herdr-desk's files on disk: where they live, the config file, and the locks.
 package config
 
-import "path/filepath"
+import (
+	"os"
+	"path/filepath"
+)
 
 // Paths are herdr-desk's four XDG directories; each ends in /herdr-desk.
 type Paths struct{ ConfigDir, StateDir, DataDir, CacheDir string }
@@ -36,6 +39,18 @@ func (p Paths) TickerInfo() string { return filepath.Join(p.StateDir, "ticker.js
 
 // Log is StateDir/herdr-desk.log.
 func (p Paths) Log() string { return filepath.Join(p.StateDir, "herdr-desk.log") }
+
+// OpenLog opens Log for appending, 0600 in a 0700 folder: the one opener of the log that runner.Open, the ticker, and
+// the event hook write to.
+func (p Paths) OpenLog() (*os.File, error) {
+	if err := os.MkdirAll(p.StateDir, 0o700); err != nil {
+		return nil, err
+	}
+	return os.OpenFile(p.Log(), os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
+}
+
+// CoordinatorLock is StateDir/coordinator.lock: opening the coordinator holds it, so two opens make one coordinator.
+func (p Paths) CoordinatorLock() string { return filepath.Join(p.StateDir, "coordinator.lock") }
 
 // ControlPath is StateDir/ssh-%C: the ssh control socket of the default [client] command. ssh expands %C to a hash
 // of the connection, so the path stays short.

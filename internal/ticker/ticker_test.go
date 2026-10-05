@@ -2,6 +2,7 @@ package ticker_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -11,6 +12,9 @@ import (
 	"time"
 
 	"github.com/federbenjamin/herdr-desk/internal/config"
+	"github.com/federbenjamin/herdr-desk/internal/herdr"
+	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/store"
 	"github.com/federbenjamin/herdr-desk/internal/testutil"
 	"github.com/federbenjamin/herdr-desk/internal/ticker"
 )
@@ -209,6 +213,93 @@ func TestStopSignalsASeparateRunningTicker(t *testing.T) {
 	}
 	if held, err := config.LockHeld(machine.Paths.TickerLock()); err != nil || held {
 		t.Fatalf("ticker lock after Stop() = (%t, %v), want (false, nil)", held, err)
+	}
+}
+
+// runner.enabled = false stops new runs, not the limits on live ones: a running run past max_run_minutes is stopped
+// by the ticker whatever the switch says.
+func TestTickStopsARunPastItsLimitWithTheRunnerOff(t *testing.T) {
+	testutil.FakeHerdr(t)
+	machine := testutil.NewMachine(t)
+	cfg := config.Default()
+	cfg.Runner.Enabled = false
+	cfg.Runner.MaxRunMinutes = 1
+	if err := cfg.Save(machine.Paths.ConfigFile()); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+	ctx := context.Background()
+	hourAgo := time.Now().Add(-time.Hour)
+	st, err := store.Open(machine.Paths.DB(), store.Options{Now: func() time.Time { return hourAgo }})
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	task, err := st.AddTask(ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{Title: "runs too long"}})
+	if err != nil {
+		t.Fatalf("add task: %v", err)
+	}
+	run, err := st.StartRun(ctx, task.Number, store.RunRoute{Root: t.TempDir(), Isolation: "self"}, store.RunCaps{Slots: 1, PerDay: 1000})
+	if err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	created, err := (&herdr.Client{Bin: os.Getenv("DESK_HERDR")}).CreateWorkspace(ctx, t.TempDir(), "desk T1", nil)
+	if err != nil {
+		t.Fatalf("open the run's pane: %v", err)
+	}
+	if ok, err := st.UpdateRun(ctx, run.ID, model.RunStarting, store.RunUpdate{State: model.RunRunning, Session: "s1",
+		Workspace: created.Workspace, Pane: created.Pane}); err != nil || !ok {
+		t.Fatalf("make the run running = (%t, %v)", ok, err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+
+	tk, err := ticker.Start(ctx, ticker.Options{Paths: machine.Paths, Every: time.Hour, Logf: func(string, ...any) {}})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	t.Cleanup(func() { _ = tk.Close() })
+	waitFor(t, "the ticker to stop the run past its limit", func() bool {
+		ro, err := store.OpenReadOnly(machine.Paths.DB(), store.Options{})
+		if err != nil {
+			return false
+		}
+		defer ro.Close()
+		cur, ok, err := ro.CurrentRun(ctx, task.Number)
+		return err == nil && ok && cur.State == model.RunKilled
+	})
+}
+
+// A crashed ticker leaves its info file; a new ticker that holds the lock but has not yet written its own must not
+// get the old pid signalled, which may by now name an unrelated process.
+func TestStopDoesNotSignalTheStalePidOfACrashedTicker(t *testing.T) {
+	machine := testutil.NewMachine(t)
+	bystander := exec.Command("sleep", "30")
+	if err := bystander.Start(); err != nil {
+		t.Fatalf("start a bystander process: %v", err)
+	}
+	exited := make(chan struct{})
+	go func() { _ = bystander.Wait(); close(exited) }()
+	t.Cleanup(func() { _ = bystander.Process.Kill(); <-exited })
+	stale, err := json.Marshal(ticker.Info{PID: bystander.Process.Pid, StartedTS: time.Now().Add(-time.Hour)})
+	if err != nil {
+		t.Fatalf("encode stale info: %v", err)
+	}
+	if err := config.WriteFileAtomic(machine.Paths.TickerInfo(), stale); err != nil {
+		t.Fatalf("leave the crashed ticker's info: %v", err)
+	}
+	unlock, err := config.TryLock(machine.Paths.TickerLock())
+	if err != nil {
+		t.Fatalf("take the lock as the new ticker: %v", err)
+	}
+	t.Cleanup(func() { _ = unlock() })
+
+	if err := ticker.Stop(machine.Paths, 300*time.Millisecond); err == nil {
+		t.Fatal("Stop() error = nil, want it to give up on a holder that published no pid")
+	}
+	select {
+	case <-exited:
+		t.Fatal("Stop() signalled the crashed ticker's stale pid")
+	case <-time.After(200 * time.Millisecond):
 	}
 }
 

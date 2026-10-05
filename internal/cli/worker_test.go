@@ -124,7 +124,7 @@ func TestWorkerBlocksTheTaskWhenItsTemplateCannotStart(t *testing.T) {
 		want   string
 	}{
 		{name: "empty template", worker: nil, want: "worker: cannot start"},
-		{name: "missing executable", worker: []string{"not-on-path"}, want: "worker: cannot start not-on-path"},
+		{name: "missing executable", worker: []string{"not-on-path"}, want: `worker: cannot start not-on-path: exec: "not-on-path": executable file not found in $PATH`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			home, root := runnerHome(t, test.worker)

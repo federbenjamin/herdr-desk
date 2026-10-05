@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/federbenjamin/herdr-desk/internal/config"
@@ -64,6 +65,42 @@ func TestOpenAppliesStoreConfigAndCloseOwnsItsStore(t *testing.T) {
 	}
 	if err := r.Close(); err != nil {
 		t.Fatalf("second Close() error = %v; want idempotent close", err)
+	}
+}
+
+// The runner a process opens logs to the home's herdr-desk.log, whichever process it is: an rpc request's stderr is
+// thrown away when it succeeds, and a hook's goes to herdr.
+func TestOpenLogsTheRunnersLinesToTheHomesLog(t *testing.T) {
+	m := testutil.NewMachine(t)
+	t.Setenv("DESK_HERDR", filepath.Join(t.TempDir(), "no-herdr"))
+	r, err := runner.Open(m.Paths, config.Default())
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	ctx := context.Background()
+	task, err := r.Store().AddTask(ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{Title: "live"}})
+	if err != nil {
+		t.Fatalf("add task: %v", err)
+	}
+	run, err := r.Store().StartRun(ctx, task.Number, store.RunRoute{}, store.RunCaps{Slots: 1, PerDay: 1000})
+	if err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	if ok, err := r.Store().UpdateRun(ctx, run.ID, model.RunStarting, store.RunUpdate{State: model.RunRunning, Pane: "p1"}); err != nil || !ok {
+		t.Fatalf("make the run running = (%t, %v)", ok, err)
+	}
+	if err := r.Reconcile(ctx); err == nil {
+		t.Fatal("Reconcile() with no herdr error = nil, want one")
+	}
+	if err := r.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	logged, err := os.ReadFile(m.Paths.Log())
+	if err != nil || !strings.Contains(string(logged), "herdr-desk runner: find herdr") {
+		t.Fatalf("herdr-desk.log = %q (%v), want the runner's find herdr line", logged, err)
+	}
+	if info, err := os.Stat(m.Paths.Log()); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("herdr-desk.log mode = %v (%v), want 0600", info, err)
 	}
 }
 

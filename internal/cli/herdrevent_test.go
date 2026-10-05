@@ -2,6 +2,7 @@ package cli_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"io/fs"
 	"os"
@@ -44,6 +45,54 @@ func TestHerdrEventHookDoesNotCreateStateForAnInvalidEvent(t *testing.T) {
 		t.Fatalf("hook created a store for an invalid event: %v", err)
 	}
 	assertNoHerdrCalls(t, fake)
+}
+
+// A hook that tracks nothing because of a fault must say why in the log, and still exit 0 with nothing on herdr's
+// streams: a renamed payload field, a broken config, or a store another binary migrated would otherwise stop run
+// tracking in silence.
+func TestHerdrEventHookLogsWhyItTrackedNothing(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		event string
+		spoil func(t *testing.T, home *testutil.Home)
+		want  string
+	}{
+		{"no pane id", `{"data":{"pane":"p-owned"}}`, func(*testing.T, *testutil.Home) {}, "no data.pane_id"},
+		{"config does not load", `{"data":{"pane_id":"p-owned"}}`, func(t *testing.T, home *testutil.Home) {
+			if err := os.WriteFile(home.Paths.ConfigFile(), []byte("runner = ["), 0o600); err != nil {
+				t.Fatalf("spoil the config: %v", err)
+			}
+		}, "the config does not load"},
+		{"store of another schema", `{"data":{"pane_id":"p-owned"}}`, func(t *testing.T, home *testutil.Home) {
+			db, err := sql.Open("sqlite", home.Paths.DB())
+			if err != nil {
+				t.Fatalf("open the store file: %v", err)
+			}
+			defer db.Close()
+			if _, err := db.Exec(`PRAGMA user_version = 99`); err != nil {
+				t.Fatalf("set the schema version: %v", err)
+			}
+		}, "schema version"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := testutil.StartHome(t, testutil.HomeOptions{})
+			fake := testutil.FakeHerdr(t)
+			trackedEventRun(t, home, "p-owned")
+			tc.spoil(t, home)
+			result := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"hook", "herdr-event"}, "", map[string]string{
+				"HERDR_PLUGIN_EVENT":      "pane.closed",
+				"HERDR_PLUGIN_EVENT_JSON": tc.event,
+			})
+			if result.exit != 0 || result.stdout != "" || result.stderr != "" {
+				t.Fatalf("hook result = (%d, %q, %q), want silent success", result.exit, result.stdout, result.stderr)
+			}
+			assertNoHerdrCalls(t, fake)
+			logged, err := os.ReadFile(home.Paths.Log())
+			if err != nil || !strings.Contains(string(logged), "hook herdr-event") || !strings.Contains(string(logged), tc.want) {
+				t.Fatalf("log = %q (%v), want one line naming %q", logged, err, tc.want)
+			}
+		})
+	}
 }
 
 func TestHerdrEventHookDoesNotCallHerdrForAnUnownedPane(t *testing.T) {
