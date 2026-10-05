@@ -112,6 +112,37 @@ func TestClientAddThroughACommandThatFailsLeavesTheConfigUnrewritten(t *testing.
 	}
 }
 
+// A state folder too long for ssh's control socket is reported as such, never as an unreachable home.
+func TestClientAddUnderATooLongStateFolderNamesTheSocketLimitAndSavesNothing(t *testing.T) {
+	home := testutil.StartHome(t, testutil.HomeOptions{})
+	client, homeRec, _ := recordingClient(t, home)
+	cfg, err := config.Load(client.Paths.ConfigFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Client.Command = append(cfg.Client.Command, "-o", "ControlPath={control}")
+	if err := cfg.Save(client.Paths.ConfigFile()); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(client.Paths.ConfigFile())
+	long := *client
+	long.Paths.StateDir = filepath.Join(filepath.Dir(filepath.Dir(client.Paths.StateDir)), strings.Repeat("s", 80), "herdr-desk")
+
+	err = setupClientAdd(t, &long, "desk@new-box")
+	if err == nil || !strings.Contains(err.Error(), "103-byte limit") {
+		t.Fatalf("ClientAdd under a too-long state folder = %v; want the socket length refusal", err)
+	}
+	if ref, ok := model.AsRefusal(err); ok {
+		t.Errorf("ClientAdd under a too-long state folder = %s refusal; want the length error, not a refusal", ref.Code)
+	}
+	if _, err := os.Stat(homeRec); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the [client] command ran under a too-long state folder (%v)", err)
+	}
+	if after, _ := os.ReadFile(client.Paths.ConfigFile()); string(after) != string(before) {
+		t.Errorf("config changed after a refused add:\n%s", after)
+	}
+}
+
 func TestClientAddRefusesAnInvalidTargetAsBadInputBeforeAnyRequest(t *testing.T) {
 	home := testutil.StartHome(t, testutil.HomeOptions{})
 	client, homeRec, _ := recordingClient(t, home)

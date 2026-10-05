@@ -2,6 +2,9 @@
 package config
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -52,9 +55,26 @@ func (p Paths) OpenLog() (*os.File, error) {
 // CoordinatorLock is StateDir/coordinator.lock: opening the coordinator holds it, so two opens make one coordinator.
 func (p Paths) CoordinatorLock() string { return filepath.Join(p.StateDir, "coordinator.lock") }
 
-// ControlPath is StateDir/ssh-%C: the ssh control socket of the default [client] command. ssh expands %C to a hash
-// of the connection, so the path stays short.
-func (p Paths) ControlPath() string { return filepath.Join(p.StateDir, "ssh-%C") }
+// maxSocketPath is the longest unix socket path, in bytes, that macOS binds (104 with the closing NUL); Linux allows
+// 107, so a path that fits macOS fits both.
+const maxSocketPath = 103
+
+// sshControlSuffix is what ssh adds to a ControlPath while it binds the socket: a dot and 16 random characters.
+const sshControlSuffix = 17
+
+// ControlPath is StateDir/ssh-<8 hex>, the hex the start of home's SHA-256: the ssh control socket of the default
+// [client] command, one per home. A state folder over 73 bytes leaves no room for ssh's bind suffix; ControlPath then
+// refuses with the length, the limit, and the two fixes, since ssh's own error reads as an unreachable home.
+func (p Paths) ControlPath(home string) (string, error) {
+	sum := sha256.Sum256([]byte(home))
+	path := filepath.Join(p.StateDir, "ssh-"+hex.EncodeToString(sum[:4]))
+	if n := len(path) + sshControlSuffix; n > maxSocketPath {
+		return "", fmt.Errorf("the ssh control socket %s is %d bytes with ssh's %d-byte bind suffix, over the %d-byte limit of a "+
+			"unix socket path: set XDG_STATE_HOME to a shorter folder, or set a [client] command without {control}",
+			path, n, sshControlSuffix, maxSocketPath)
+	}
+	return path, nil
+}
 
 // BackupLock is StateDir/backup.lock: a backup run holds it.
 func (p Paths) BackupLock() string { return filepath.Join(p.StateDir, "backup.lock") }

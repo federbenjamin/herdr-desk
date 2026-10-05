@@ -30,7 +30,8 @@ type Config struct {
 }
 
 // Client is set on client machines only. Home is an ssh target; Command is the argv template that carries one
-// request to the home, with {home} and {control} expanded.
+// request to the home, with {home} expanded to Home and {control} to Paths.ControlPath(Home), the ssh control socket
+// <state folder>/ssh-<8 hex>.
 type Client struct {
 	Home    string   `toml:"home"`
 	Command []string `toml:"command"` // empty → DefaultClientCommand()

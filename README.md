@@ -129,8 +129,12 @@ command = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-o", "Contro
            "-o", "ControlPath={control}", "-o", "ControlPersist=60", "{home}", "herdr-desk", "rpc"]
 ```
 
-`{home}` and `{control}` (an ssh control socket in the state folder) are filled in; each element is one
-argv word, never run through a shell. ssh keeps one connection open for 60 seconds, so a second call
+`{home}` and `{control}` are filled in; each element is one argv word, never run through a shell.
+`{control}` is the ssh control socket `<state folder>/ssh-<8 hex>`, the 8 hex the start of the home's
+SHA-256, so each home gets its own. ssh adds 17 bytes to it while it binds the socket, and macOS allows a
+socket path of 103 bytes, so the state folder (`$XDG_STATE_HOME/herdr-desk`) may be up to 73 bytes. With a
+longer one, every request fails before ssh runs, naming the length; set `XDG_STATE_HOME` to a shorter folder,
+or set a `command` without `{control}`. ssh keeps one connection open for 60 seconds, so a second call
 within a minute does not pay for a new one. Set `command` to use `tailscale ssh`, a jump host, or any
 program that carries stdin to `herdr-desk rpc` on the home and its stdout back.
 

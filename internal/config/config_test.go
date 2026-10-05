@@ -1,6 +1,9 @@
 package config_test
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -29,7 +32,6 @@ func TestResolvePathsUsesEachXDGVariableAndConstructsNamedFiles(t *testing.T) {
 		"TickerLock":  {p.TickerLock(), "/state/herdr-desk/ticker.lock"},
 		"TickerInfo":  {p.TickerInfo(), "/state/herdr-desk/ticker.json"},
 		"Log":         {p.Log(), "/state/herdr-desk/herdr-desk.log"},
-		"ControlPath": {p.ControlPath(), "/state/herdr-desk/ssh-%C"},
 		"BackupLock":  {p.BackupLock(), "/state/herdr-desk/backup.lock"},
 		"Outbox":      {p.Outbox(), "/state/herdr-desk/outbox.jsonl"},
 		"SessionsDir": {p.SessionsDir(), "/state/herdr-desk/sessions"},
@@ -43,6 +45,69 @@ func TestResolvePathsUsesEachXDGVariableAndConstructsNamedFiles(t *testing.T) {
 		if path.got != path.want {
 			t.Errorf("%s() = %q; want %q", name, path.got, path.want)
 		}
+	}
+}
+
+// stateDirOf returns a state folder path exactly n bytes long, ending in /herdr-desk as ResolvePaths makes it.
+func stateDirOf(t *testing.T, n int) string {
+	t.Helper()
+	const tail = "/herdr-desk"
+	dir := "/" + strings.Repeat("s", n-1-len(tail)) + tail
+	if len(dir) != n {
+		t.Fatalf("stateDirOf(%d) is %d bytes", n, len(dir))
+	}
+	return dir
+}
+
+// ssh binds the control socket at ControlPath plus a dot and 16 random characters, and macOS takes 103 bytes.
+func TestControlPathLeavesRoomForSSHsBindSuffixUpToA73ByteStateFolder(t *testing.T) {
+	t.Parallel()
+
+	sum := sha256.Sum256([]byte("you@home-host"))
+	for _, n := range []int{50, 60, 73} {
+		dir := stateDirOf(t, n)
+		got, err := config.Paths{StateDir: dir}.ControlPath("you@home-host")
+		if err != nil {
+			t.Fatalf("ControlPath under a %d-byte state folder: %v", n, err)
+		}
+		if want := dir + "/ssh-" + hex.EncodeToString(sum[:])[:8]; got != want {
+			t.Errorf("ControlPath under a %d-byte state folder = %q; want %q", n, got, want)
+		}
+		if bound := len(got) + 17; bound > 103 {
+			t.Errorf("ssh binds %d bytes under a %d-byte state folder; want at most 103", bound, n)
+		}
+	}
+}
+
+func TestControlPathRefusesA74ByteStateFolderNamingTheLengthLimitAndFixes(t *testing.T) {
+	t.Parallel()
+
+	_, err := config.Paths{StateDir: stateDirOf(t, 74)}.ControlPath("you@home-host")
+	if err == nil {
+		t.Fatal("ControlPath under a 74-byte state folder error = nil; want a refusal")
+	}
+	for _, part := range []string{"104 bytes", "103-byte limit", "XDG_STATE_HOME", "without {control}"} {
+		if !strings.Contains(err.Error(), part) {
+			t.Errorf("refusal %q does not name %q", err, part)
+		}
+	}
+}
+
+func TestControlPathGivesEachHomeItsOwnSocket(t *testing.T) {
+	t.Parallel()
+
+	p := config.Paths{StateDir: "/state/herdr-desk"}
+	one, err1 := p.ControlPath("you@home-one")
+	two, err2 := p.ControlPath("you@home-two")
+	again, err3 := p.ControlPath("you@home-one")
+	if err := errors.Join(err1, err2, err3); err != nil {
+		t.Fatal(err)
+	}
+	if one == two {
+		t.Errorf("two homes share the control path %q", one)
+	}
+	if one != again {
+		t.Errorf("one home's control path changed: %q then %q", one, again)
 	}
 }
 

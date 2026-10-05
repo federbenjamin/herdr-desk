@@ -361,12 +361,21 @@ command = [${words%, }]
 TOML
 }
 
+# pair_control: the client's {control} for E2E_HOME, worked out apart from the binary: <state>/ssh-<the first 8 hex
+# of the home's SHA-256>.
+pair_control() {
+  local sum
+  sum=$(printf '%s' "$E2E_HOME" | shasum -a 256)
+  printf '%s\n' "$RDIR/state/herdr-desk/ssh-${sum:0:8}"
+}
+
 # floor_command: the client's [client] command with `true` in place of the remote herdr-desk, quoted for the client's
 # shell: the cost of the pair's reused connection alone.
 floor_command() {
-  local w
+  local w control
+  control=$(pair_control)
   for w in "${PAIR_SSH[@]}" "$E2E_HOME" true; do
-    printf '%q ' "${w//\{control\}/$RDIR/state/herdr-desk/ssh-%C}"
+    printf '%q ' "${w//\{control\}/$control}"
   done
 }
 
@@ -390,7 +399,7 @@ under() { awk -v t="$1" -v l="$2" 'BEGIN { exit !(t < l) }'; }
 
 pair_cleanup() {
   [ -n "${RDIR:-}" ] || return 0
-  rssh "ssh -o ControlPath=$RDIR/state/herdr-desk/ssh-%C -O exit $E2E_HOME; rm -rf $RDIR" >/dev/null 2>&1 || true
+  rssh "ssh -o ControlPath=$(pair_control) -O exit $E2E_HOME; rm -rf $RDIR" >/dev/null 2>&1 || true
 }
 
 

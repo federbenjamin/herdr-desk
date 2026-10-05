@@ -15,6 +15,7 @@ ok "the home lists the client's task"
 
 # The add above opened the connection the next two calls reuse (ControlPersist is 60 s). The floor is the same ssh
 # command with `true` in place of `herdr-desk rpc`: what the pair's reused connection costs with no herdr-desk in it.
+rssh "test -S $(pair_control)" || fail "the client's ssh control socket is not at $(pair_control)"
 rssh "$CN_ENV python3 $RDIR/timed.py $RDIR/floor.txt $(floor_command)" || fail "the reused ssh of true failed"
 FLOOR=$(rssh "cat $RDIR/floor.txt")
 ctimed list

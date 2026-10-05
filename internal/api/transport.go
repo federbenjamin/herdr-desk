@@ -9,6 +9,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -82,8 +84,9 @@ const maxStderr = 300
 const waitDelay = time.Second
 
 // NewCommandTransport runs c's [client] command (DefaultClientCommand when empty) for each request, with {home} and
-// {control} expanded, the request on its stdin and the response read from its stdout. Each request but the untimed
-// ones is bounded by timeout (0 → none).
+// {control} (config.Paths.ControlPath of the home) expanded, the request on its stdin and the response read from its
+// stdout. Each request but the untimed ones is bounded by timeout (0 → none). A template with {control} whose control
+// path is too long for a unix socket fails before the command runs, with ControlPath's error.
 func NewCommandTransport(p config.Paths, c config.Config, timeout time.Duration) Transport {
 	return &commandTransport{p: p, c: c, timeout: timeout}
 }
@@ -100,7 +103,15 @@ func (t *commandTransport) RoundTrip(ctx context.Context, method string, params 
 	if len(template) == 0 {
 		template = config.DefaultClientCommand()
 	}
-	argv := config.Expand(template, map[string]string{"home": t.c.Client.Home, "control": t.p.ControlPath()})
+	vars := map[string]string{"home": t.c.Client.Home}
+	if slices.ContainsFunc(template, func(w string) bool { return strings.Contains(w, "{control}") }) {
+		control, err := t.p.ControlPath(t.c.Client.Home)
+		if err != nil {
+			return nil, err
+		}
+		vars["control"] = control
+	}
+	argv := config.Expand(template, vars)
 	if argv[0] == "" {
 		return nil, errors.New("[client] command names no program")
 	}

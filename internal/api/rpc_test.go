@@ -253,6 +253,48 @@ func TestCommandTransportLetsARunStartOutlastThePerRequestTimeout(t *testing.T) 
 	}
 }
 
+// longStateMachine is a machine whose state folder is too long for an ssh control socket, and a [client] command
+// that records it ran by touching marker, then answers one result.
+func longStateMachine(t *testing.T, words ...string) (p config.Paths, command []string, marker string) {
+	t.Helper()
+	machine := testutil.NewMachine(t)
+	p = machine.Paths
+	root := filepath.Dir(filepath.Dir(p.StateDir))
+	p.StateDir = filepath.Join(root, strings.Repeat("s", 80), "herdr-desk")
+	marker = filepath.Join(root, "ran")
+	command = append([]string{"sh", "-c", `touch "$0"; cat >/dev/null; printf '%s\n' '{"result":{"id":7}}'`, marker}, words...)
+	return p, command, marker
+}
+
+func TestCommandTransportRefusesATooLongControlPathBeforeRunningTheCommand(t *testing.T) {
+	p, command, marker := longStateMachine(t, "-o", "ControlPath={control}")
+	transport := api.NewCommandTransport(p, config.Config{Client: config.Client{Home: "you@home-host", Command: command}}, time.Second)
+
+	_, err := transport.RoundTrip(context.Background(), api.MethodStatus, []byte(`{}`))
+	if err == nil || !strings.Contains(err.Error(), "103-byte limit") || !strings.Contains(err.Error(), "XDG_STATE_HOME") {
+		t.Fatalf("round trip with a too-long control path error = %v; want the socket length refusal", err)
+	}
+	if _, ok := model.AsRefusal(err); ok {
+		t.Errorf("round trip with a too-long control path = refusal %v; want a plain error, not an unreachable home", err)
+	}
+	if _, statErr := os.Stat(marker); !errors.Is(statErr, os.ErrNotExist) {
+		t.Errorf("the [client] command ran despite the too-long control path (%v)", statErr)
+	}
+}
+
+func TestCommandTransportWithoutControlIgnoresTheSocketLimit(t *testing.T) {
+	p, command, marker := longStateMachine(t, "{home}")
+	transport := api.NewCommandTransport(p, config.Config{Client: config.Client{Home: "you@home-host", Command: command}}, time.Second)
+
+	response, err := transport.RoundTrip(context.Background(), api.MethodStatus, []byte(`{}`))
+	if err != nil || !strings.Contains(string(response), `"id":7`) {
+		t.Fatalf("round trip without {control} under a long state folder = %q, %v; want the home's answer", response, err)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Errorf("the [client] command did not run: %v", err)
+	}
+}
+
 type w3CountingTransport struct {
 	calls  int
 	closes int
