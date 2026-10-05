@@ -7,11 +7,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/federbenjamin/desk/internal/cli"
-	"github.com/federbenjamin/desk/internal/config"
-	"github.com/federbenjamin/desk/internal/model"
-	"github.com/federbenjamin/desk/internal/store"
-	"github.com/federbenjamin/desk/internal/testutil"
+	"github.com/federbenjamin/herdr-desk/internal/cli"
+	"github.com/federbenjamin/herdr-desk/internal/config"
+	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/store"
+	"github.com/federbenjamin/herdr-desk/internal/testutil"
 )
 
 func runDeskWithEnv(t *testing.T, machine *testutil.Machine, cwd string, args []string, stdin string, extra map[string]string, spawn func(config.Paths) error) commandResult {
@@ -130,7 +130,7 @@ func TestForwardingAQueuedSecretReportsItsRefusalOnceWithoutChangingTheCommand(t
 	if forwarded.exit != 0 || strings.TrimSpace(forwarded.stdout) != "e1" {
 		t.Fatalf("forwarding command = (%d, %q, %q), want e1 success", forwarded.exit, forwarded.stdout, forwarded.stderr)
 	}
-	wantRefusal := "desk: a queued note was refused: secret-detected: the text matches the secret pattern aws-access-key\n"
+	wantRefusal := "herdr-desk: a queued note was refused: secret-detected: the text matches the secret pattern aws-access-key\n"
 	if forwarded.stderr != wantRefusal {
 		t.Fatalf("forwarding stderr = %q, want %q", forwarded.stderr, wantRefusal)
 	}

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/federbenjamin/desk/internal/testutil"
+	"github.com/federbenjamin/herdr-desk/internal/testutil"
 )
 
 func startSessionView(t *testing.T, m *testutil.Machine, session string) string {

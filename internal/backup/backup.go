@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/federbenjamin/desk/internal/config"
-	"github.com/federbenjamin/desk/internal/gitcmd"
-	"github.com/federbenjamin/desk/internal/store"
+	"github.com/federbenjamin/herdr-desk/internal/config"
+	"github.com/federbenjamin/herdr-desk/internal/gitcmd"
+	"github.com/federbenjamin/herdr-desk/internal/store"
 )
 
 // Result is what one backup run did.
@@ -79,7 +79,7 @@ func run(ctx context.Context, st *store.Store, p config.Paths, remote string) (R
 		if _, err := git(ctx, dir, "add", "--", exportFile); err != nil {
 			return res, err
 		}
-		if _, err := git(ctx, dir, "commit", "--quiet", "-m", fmt.Sprintf("desk backup: %d events", n)); err != nil {
+		if _, err := git(ctx, dir, "commit", "--quiet", "-m", fmt.Sprintf("herdr-desk backup: %d events", n)); err != nil {
 			return res, err
 		}
 		res.Committed = true
@@ -144,6 +144,6 @@ func writeState(p config.Paths, s state) error {
 // git runs one git command in dir and returns its trimmed stdout. A daemon has no terminal, so a signing prompt
 // would hang it, and the machine may have no git identity.
 func git(ctx context.Context, dir string, args ...string) (string, error) {
-	identity := []string{"-c", "commit.gpgsign=false", "-c", "user.name=desk", "-c", "user.email=desk@localhost"}
+	identity := []string{"-c", "commit.gpgsign=false", "-c", "user.name=herdr-desk", "-c", "user.email=herdr-desk@localhost"}
 	return gitcmd.Run(ctx, dir, gitTimeout, append(identity, args...)...)
 }

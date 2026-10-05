@@ -1,4 +1,4 @@
-// Command desk is a task board and session journal for you and your agents.
+// Command herdr-desk is a task board and session journal for you and your agents.
 package main
 
 import (
@@ -9,8 +9,8 @@ import (
 
 	"github.com/charmbracelet/x/term"
 
-	"github.com/federbenjamin/desk/internal/cli"
-	"github.com/federbenjamin/desk/internal/daemon"
+	"github.com/federbenjamin/herdr-desk/internal/cli"
+	"github.com/federbenjamin/herdr-desk/internal/daemon"
 )
 
 func main() {
@@ -36,7 +36,7 @@ func isTerminal(f *os.File) bool { return term.IsTerminal(f.Fd()) }
 func workingDir(getwd func() (string, error), stderr io.Writer) string {
 	cwd, err := getwd()
 	if err != nil {
-		fmt.Fprintf(stderr, "desk: the working directory cannot be read, so it names no project: %v\n", err)
+		fmt.Fprintf(stderr, "herdr-desk: the working directory cannot be read, so it names no project: %v\n", err)
 		return ""
 	}
 	return cwd

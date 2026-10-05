@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared setup for the e2e scripts. Each script sources this file, builds desk into a temp dir,
+# Shared setup for the e2e scripts. Each script sources this file, builds herdr-desk into a temp dir,
 # and gives every named machine its own XDG directories there. Nothing outside the temp dir is
 # written unless a script says so.
 set -euo pipefail
@@ -41,10 +41,10 @@ as_agent() {
 
 cleanup() {
   local d m p
-  for d in "$E2E"/*/state/desk; do
+  for d in "$E2E"/*/state/herdr-desk; do
     [ -f "$d/daemon.json" ] || continue
     m=$(basename "$(dirname "$(dirname "$d")")")
-    on "$m" desk daemon stop >/dev/null 2>&1 || true
+    on "$m" herdr-desk daemon stop >/dev/null 2>&1 || true
   done
   for p in "${PIDS[@]:-}"; do
     if [ -n "$p" ]; then kill "$p" 2>/dev/null || true; fi
@@ -57,7 +57,7 @@ trap cleanup EXIT
 
 build() {
   mkdir -p "$BIN"
-  (cd "$REPO" && CGO_ENABLED=0 go build -o "$BIN/desk" ./cmd/desk) || fail "go build ./cmd/desk"
+  (cd "$REPO" && CGO_ENABLED=0 go build -o "$BIN/herdr-desk" ./cmd/herdr-desk) || fail "go build ./cmd/herdr-desk"
   export PATH="$BIN:$PATH"
 }
 
@@ -112,7 +112,7 @@ wait_long() {
 # wait_for <what> <command...>: poll until the command succeeds, up to 10 s.
 wait_for() { wait_long 10 "$@"; }
 
-sock() { printf '%s' "$E2E/$1/state/desk/desk.sock"; }
+sock() { printf '%s' "$E2E/$1/state/herdr-desk/desk.sock"; }
 no_sock() { [ ! -S "$(sock "$1")" ]; }
 
 free_port() {
@@ -122,9 +122,9 @@ free_port() {
 # mode <file>: its permission bits, as 600.
 mode() { stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1"; }
 
-# write_config <machine>: replace that machine's desk config with stdin.
+# write_config <machine>: replace that machine's herdr-desk config with stdin.
 write_config() {
-  local dir="$E2E/$1/config/desk"
+  local dir="$E2E/$1/config/herdr-desk"
   mkdir -p "$dir"
   cat >"$dir/config.toml"
   chmod 600 "$dir/config.toml"
@@ -132,28 +132,28 @@ write_config() {
 
 start_daemon() {
   local m=$1
-  on "$m" desk daemon run >>"$E2E/$m.daemon.log" 2>&1 &
+  on "$m" herdr-desk daemon run >>"$E2E/$m.daemon.log" 2>&1 &
   PIDS+=("$!")
   wait_for "the daemon socket on $m" test -S "$(sock "$m")"
 }
 
 stop_daemon() {
   local m=$1
-  run 0 on "$m" desk daemon stop
+  run 0 on "$m" herdr-desk daemon stop
   wait_for "the daemon on $m to stop" no_sock "$m"
 }
 
 # home_with_listen <machine> <port>: a set-up home serving TCP on 127.0.0.1:<port>, daemon running.
 home_with_listen() {
-  run 0 on "$1" desk setup --no-herdr --listen "127.0.0.1:$2"
+  run 0 on "$1" herdr-desk setup --no-herdr --listen "127.0.0.1:$2"
   start_daemon "$1"
 }
 
 # make_client <client-machine> <home-machine> <port>: the token goes in on stdin.
 make_client() {
   local token
-  token=$(on "$2" desk token show)
-  run_in 0 "$token" on "$1" desk client add "127.0.0.1:$3"
+  token=$(on "$2" herdr-desk token show)
+  run_in 0 "$token" on "$1" herdr-desk client add "127.0.0.1:$3"
 }
 
 # The terminal helpers. Every screen runs on a private tmux server (TMUX_SOCK) that cleanup kills, so nothing
@@ -254,8 +254,8 @@ board_pick() {
 # board_unpick <name>: clear the filter.
 board_unpick() { term_esc "$1"; }
 
-# task_field <machine> <task> <jq-filter>: a field of a task, from desk show --json.
-task_field() { on "$1" desk show "$2" --json | jq -r "$3"; }
+# task_field <machine> <task> <jq-filter>: a field of a task, from herdr-desk show --json.
+task_field() { on "$1" herdr-desk show "$2" --json | jq -r "$3"; }
 
 # wait_task <machine> <task> <jq-filter> <want>: poll until the field equals the value, up to 10 s.
 wait_task() {

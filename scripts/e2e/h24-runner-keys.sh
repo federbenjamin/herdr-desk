@@ -10,10 +10,10 @@ source "$(dirname "${BASH_SOURCE[0]}")/runner-lib.sh"
 build
 use_fake_herdr
 runner_up home
-run 0 on home desk add -t "run under test" --desk --status started
+run 0 on home herdr-desk add -t "run under test" --desk --status started
 mkdir -p "$E2E/docs"
 echo "the written file" >"$E2E/docs/result.md"
-run 0 as_agent home sess-a desk note "wrote the result" --task 1 --ref "$E2E/docs/result.md"
+run 0 as_agent home sess-a herdr-desk note "wrote the result" --task 1 --ref "$E2E/docs/result.md"
 
 # The seeded run's pane is one the fake herdr lists. The watch finds it by its id and workspace and, while no agent
 # session shows on it, leaves the run running.
@@ -23,7 +23,7 @@ PANE=$(jq -r .result.root_pane.pane_id <<<"$created")
 
 # The runs table is seeded while the daemon is stopped, so the daemon's own reads see the row.
 stop_daemon home
-DB="$E2E/home/data/desk/desk.db"
+DB="$E2E/home/data/herdr-desk/desk.db"
 [ -f "$DB" ] || fail "the store file is not at $DB"
 sqlite3 "$DB" "INSERT INTO runs(task, state, root, isolation, model, workspace, pane, started_ts)
   VALUES (1, 'running', '/work/example', 'worktree', 'opus', '$WS', '$PANE', '$(date -u +%Y-%m-%dT%H:%M:%SZ)')"
@@ -40,7 +40,7 @@ esac
 EOF
 chmod +x "$E2E/board-herdr"
 
-term_start board 100 30 home DESK_HERDR="$E2E/board-herdr" "$BIN/desk"
+term_start board 100 30 home DESK_HERDR="$E2E/board-herdr" "$BIN/herdr-desk"
 term_wait board "worktree · opus"
 ok "the row shows the run's isolation and model"
 term_wait board "runner ● on · 1/1 · home"
@@ -73,12 +73,12 @@ ok "after the kill the header counts 0 live runs"
 
 term_keys board P
 term_wait board "runner ◐ paused"
-run 0 on home desk runner status
+run 0 on home herdr-desk runner status
 out_has "runner paused"
 ok "P calls runner.pause or says the runner is off"
 term_keys board P
 term_wait board "runner ● on"
-run 0 on home desk runner status
+run 0 on home herdr-desk runner status
 out_has "runner on"
 ok "a second P resumes the runner"
 

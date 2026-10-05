@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # H10 (runner): a live run survives a daemon restart, a run still routing at a restart is failed, a pause survives
-# it too, and the pane's desk talks to the home that started it.
+# it too, and the pane's herdr-desk talks to the home that started it.
 # shellcheck source=scripts/e2e/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 # shellcheck source=scripts/e2e/runner-lib.sh
@@ -11,8 +11,8 @@ RC_CAP=2
 runner_up home
 route_to "$SCRATCH" in-place sonnet "stub"
 
-run 0 on home desk add -t "outlives the daemon" --desk --thread agent
-run 0 on home desk set T1 ready
+run 0 on home herdr-desk add -t "outlives the daemon" --desk --thread agent
+run 0 on home herdr-desk set T1 ready
 wait_run 1 running
 wait_file "$STUB/worker-run1.env"
 ENV="$STUB/worker-run1.env"
@@ -33,8 +33,8 @@ say "run still watched after restart ok"
 
 # A run that was still routing when the daemon stopped is failed by the next daemon.
 printf '30' >"$STUB/router-sleep"
-run 0 on home desk add -t "caught routing" --desk --thread agent
-run 0 on home desk set T2 ready
+run 0 on home herdr-desk add -t "caught routing" --desk --thread agent
+run 0 on home herdr-desk set T2 ready
 wait_run 2 routing
 wait_file "$STUB/router-pid"
 stop_daemon home
@@ -47,10 +47,10 @@ wait_long 35 "the stub router to end" pids_dead "$STUB/router-pid"
 say "stale routing run failed ok"
 
 # A pause is a file: it outlives the daemon.
-run 0 on home desk runner pause
+run 0 on home herdr-desk runner pause
 restart_daemon
-run 0 on home desk runner
+run 0 on home herdr-desk runner
 out_has "runner paused"
-[ -f "$E2E/home/state/desk/runner-paused" ] || fail "no runner-paused file in the state folder"
+[ -f "$E2E/home/state/herdr-desk/runner-paused" ] || fail "no runner-paused file in the state folder"
 say "pause kept across restart ok"
 pass

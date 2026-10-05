@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/federbenjamin/desk/internal/config"
-	"github.com/federbenjamin/desk/internal/daemon"
-	"github.com/federbenjamin/desk/internal/testutil"
+	"github.com/federbenjamin/herdr-desk/internal/config"
+	"github.com/federbenjamin/herdr-desk/internal/daemon"
+	"github.com/federbenjamin/herdr-desk/internal/testutil"
 )
 
 // brokenListener fails every Accept for good, as a listener whose socket broke does.

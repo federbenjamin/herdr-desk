@@ -14,16 +14,16 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/federbenjamin/desk/internal/api"
-	"github.com/federbenjamin/desk/internal/board"
-	"github.com/federbenjamin/desk/internal/gitcmd"
-	"github.com/federbenjamin/desk/internal/model"
-	"github.com/federbenjamin/desk/internal/store"
+	"github.com/federbenjamin/herdr-desk/internal/api"
+	"github.com/federbenjamin/herdr-desk/internal/board"
+	"github.com/federbenjamin/herdr-desk/internal/gitcmd"
+	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/store"
 )
 
 const gitTimeout = 10 * time.Second
 
-// timeFormat is how desk prints a time: UTC, to the minute, with a Z.
+// timeFormat is how herdr-desk prints a time: UTC, to the minute, with a Z.
 const timeFormat = "2006-01-02 15:04Z"
 
 // mainCheckout returns the main checkout of the git repo dir is in, "" when git says dir is in none. A worktree
@@ -438,7 +438,7 @@ func (a *app) editCmd() *cobra.Command {
 	return cmd
 }
 
-// stepOp reads the words after `desk steps <task>`.
+// stepOp reads the words after `herdr-desk steps <task>`.
 func stepOp(args []string) (model.StepOp, error) {
 	op, rest := args[0], args[1:]
 	switch {

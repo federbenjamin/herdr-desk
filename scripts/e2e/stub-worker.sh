@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The worker's stand-in for the runner's e2e scripts: stub-worker.sh <stubdir> <model> <session> <message>.
-# `desk worker` execs it. It records what it was started with, tells herdr it is an agent working, then acts by the
+# `herdr-desk worker` execs it. It records what it was started with, tells herdr it is an agent working, then acts by the
 # word in <stubdir>/mode-<DESK_TASK>: busy (default) stays working; idle and blocked report that state; exit ends at
 # once; handback sets the task to review and reports idle; children also starts a background sleep. Its own pid, and
 # the sleep's, are recorded in <stubdir>/pids-run<DESK_RUN>. The stub directory is an argument because a pane does not inherit the
@@ -44,7 +44,7 @@ idle) report idle ;;
 blocked) report blocked ;;
 exit) exit 0 ;;
 handback)
-  desk set "$task" review --ref e2e >/dev/null
+  herdr-desk set "$task" review --ref e2e >/dev/null
   report idle
   ;;
 children)

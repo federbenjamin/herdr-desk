@@ -1,4 +1,4 @@
-// Package daemon runs desk's one writer: it holds the lock, owns the store, and serves the API.
+// Package daemon runs herdr-desk's one writer: it holds the lock, owns the store, and serves the API.
 package daemon
 
 import (
@@ -18,14 +18,14 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/federbenjamin/desk/internal/api"
-	"github.com/federbenjamin/desk/internal/backup"
-	"github.com/federbenjamin/desk/internal/config"
-	"github.com/federbenjamin/desk/internal/model"
-	"github.com/federbenjamin/desk/internal/runner"
-	"github.com/federbenjamin/desk/internal/secretscan"
-	"github.com/federbenjamin/desk/internal/store"
-	"github.com/federbenjamin/desk/internal/version"
+	"github.com/federbenjamin/herdr-desk/internal/api"
+	"github.com/federbenjamin/herdr-desk/internal/backup"
+	"github.com/federbenjamin/herdr-desk/internal/config"
+	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/runner"
+	"github.com/federbenjamin/herdr-desk/internal/secretscan"
+	"github.com/federbenjamin/herdr-desk/internal/store"
+	"github.com/federbenjamin/herdr-desk/internal/version"
 )
 
 // Info is the daemon info file: written at start, and again when the runner's state changes.
@@ -86,7 +86,7 @@ func (i *Instance) setRunnerState(state string) {
 		return
 	}
 	if err := writeInfo(i.p, i.info); err != nil {
-		log.Printf("desk daemon: write the info file: %v", err)
+		log.Printf("herdr-desk daemon: write the info file: %v", err)
 	}
 }
 
@@ -202,7 +202,7 @@ func (i *Instance) serve(ln net.Listener, h http.Handler) {
 	i.servers = append(i.servers, s)
 	i.wg.Go(func() {
 		if err := s.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Printf("desk daemon: serve %s: %v; stopping", ln.Addr(), err)
+			log.Printf("herdr-desk daemon: serve %s: %v; stopping", ln.Addr(), err)
 			select {
 			case i.failed <- fmt.Errorf("serve %s: %w", ln.Addr(), err):
 			default:
@@ -224,7 +224,7 @@ func tick(ctx context.Context, p config.Paths, run func(context.Context) (backup
 				continue
 			}
 			if _, err := run(ctx); err != nil {
-				log.Printf("desk daemon: backup: %v", err)
+				log.Printf("herdr-desk daemon: backup: %v", err)
 			}
 		}
 	}

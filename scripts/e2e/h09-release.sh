@@ -12,16 +12,16 @@ trap 'rm -rf "$DIST"; cleanup' EXIT
   fail "goreleaser snapshot release"
 
 for target in darwin_arm64 darwin_amd64 linux_arm64 linux_amd64; do
-  found=$(find "$DIST" -maxdepth 1 -name "desk_*_${target}.tar.gz" | head -n 1)
+  found=$(find "$DIST" -maxdepth 1 -name "herdr-desk_*_${target}.tar.gz" | head -n 1)
   [ -n "$found" ] || fail "no archive for $target"
   say "archive: $(basename "$found")"
   grep -q "$(basename "$found")" "$DIST/checksums.txt" || fail "checksums.txt lacks $(basename "$found")"
 done
 say "checksums.txt: $(wc -l <"$DIST/checksums.txt" | tr -d ' ') lines"
 
-cask=$(find "$DIST" -name 'desk.rb' | head -n 1)
+cask=$(find "$DIST" -name 'herdr-desk.rb' | head -n 1)
 [ -n "$cask" ] || fail "no rendered cask"
-grep -q 'cask "desk" do' "$cask" || fail "the rendered file is not a desk cask"
+grep -q 'cask "herdr-desk" do' "$cask" || fail "the rendered file is not a herdr-desk cask"
 say "cask: ${cask#"$DIST"/}"
 
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -30,7 +30,7 @@ case "$(uname -m)" in
   *) ARCH=amd64 ;;
 esac
 mkdir -p "$E2E/x"
-tar -xzf "$(find "$DIST" -maxdepth 1 -name "desk_*_${OS}_${ARCH}.tar.gz" | head -n 1)" -C "$E2E/x"
-run 0 "$E2E/x/desk" version
-case "$OUT" in "desk dev") fail "the release build did not set the version" ;; desk\ *) ;; *) fail "version printed '$OUT'" ;; esac
+tar -xzf "$(find "$DIST" -maxdepth 1 -name "herdr-desk_*_${OS}_${ARCH}.tar.gz" | head -n 1)" -C "$E2E/x"
+run 0 "$E2E/x/herdr-desk" version
+case "$OUT" in "herdr-desk dev") fail "the release build did not set the version" ;; herdr-desk\ *) ;; *) fail "version printed '$OUT'" ;; esac
 pass

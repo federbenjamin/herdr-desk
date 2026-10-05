@@ -1,5 +1,5 @@
 #!/bin/sh
-# checks.sh: the one place desk's checks live. It runs go vet, the coverage gate, the gofmt check,
+# checks.sh: the one place herdr-desk's checks live. It runs go vet, the coverage gate, the gofmt check,
 # and then shellcheck, stopping at the first that fails. With --no-coverage it runs go test in place
 # of the coverage gate.
 set -eu

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/federbenjamin/desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/model"
 )
 
 func TestParseStatusAcceptsOnlyPublishedStatuses(t *testing.T) {

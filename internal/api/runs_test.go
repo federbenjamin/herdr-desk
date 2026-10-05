@@ -8,11 +8,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/federbenjamin/desk/internal/api"
-	"github.com/federbenjamin/desk/internal/config"
-	"github.com/federbenjamin/desk/internal/model"
-	"github.com/federbenjamin/desk/internal/store"
-	"github.com/federbenjamin/desk/internal/testutil"
+	"github.com/federbenjamin/herdr-desk/internal/api"
+	"github.com/federbenjamin/herdr-desk/internal/config"
+	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/store"
+	"github.com/federbenjamin/herdr-desk/internal/testutil"
 )
 
 type runnerCall struct {
@@ -53,8 +53,8 @@ func newRunsAPIHarness(t *testing.T, runner api.RunnerControl) apiHarness {
 
 	root := t.TempDir()
 	paths := config.Paths{
-		ConfigDir: filepath.Join(root, "config", "desk"),
-		DataDir:   filepath.Join(root, "data", "desk"),
+		ConfigDir: filepath.Join(root, "config", "herdr-desk"),
+		DataDir:   filepath.Join(root, "data", "herdr-desk"),
 	}
 	if err := os.MkdirAll(paths.ConfigDir, 0o700); err != nil {
 		t.Fatalf("create config directory: %v", err)

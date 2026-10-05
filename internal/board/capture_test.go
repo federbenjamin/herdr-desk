@@ -10,9 +10,9 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/federbenjamin/desk/internal/board"
-	"github.com/federbenjamin/desk/internal/model"
-	"github.com/federbenjamin/desk/internal/store"
+	"github.com/federbenjamin/herdr-desk/internal/board"
+	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/store"
 )
 
 func TestCapturePopupShowsPromptAndConvertsLineToAddTask(t *testing.T) {

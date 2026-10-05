@@ -4,7 +4,7 @@
 #
 # The stub on HERDR_BIN_PATH logs its argv and answers `pane list` from a fixture with the shape herdr 0.9.1
 # prints: one line, keys in order, the agent pane's nested objects, and a plugin pane whose cwd is its plugin's
-# folder and that carries no agent keys. Values are examples. Nothing opens on a screen; no desk binary is built.
+# folder and that carries no agent keys. Values are examples. Nothing opens on a screen; no herdr-desk binary is built.
 # shellcheck source=scripts/e2e/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
@@ -75,11 +75,11 @@ pane_list() {
   printf '{"id":"cli:pane:list","result":{"panes":[%s],"type":"pane_list"}}\n' "$*"
 }
 
-# No board pane: a pane labelled desk that is not this plugin's, and another plugin's pane.
-pane_list "$(agent_pane w1:p1 desk /example/project)" "$(plugin_pane w1:p2 Files /example/plugins/viewer)" \
+# No board pane: a pane labelled herdr-desk that is not this plugin's, and another plugin's pane.
+pane_list "$(agent_pane w1:p1 herdr-desk /example/project)" "$(plugin_pane w1:p2 Files /example/plugins/viewer)" \
   >"$E2E/none.json"
 # The board pane after a title plugin renamed it, behind an agent pane that also sits in the plugin's folder.
-pane_list "$(agent_pane w1:p1 "example › task" "$ROOT")" "$(plugin_pane w1:p3 "plugin › desk" "$ROOT")" \
+pane_list "$(agent_pane w1:p1 "example › task" "$ROOT")" "$(plugin_pane w1:p3 "plugin › herdr-desk" "$ROOT")" \
   >"$E2E/renamed.json"
 # No board pane, and an agent's pane in the plugin's folder (a checkout linked as the plugin).
 pane_list "$(agent_pane w1:p1 "desk › work" "$ROOT")" "$(plugin_pane w1:p2 Files /example/plugins/viewer)" \
@@ -106,7 +106,7 @@ not_called() { if grep -qF -- "$1" <<<"$CALLS"; then fail "herdr was called with
 
 open_pane 0 "$E2E/none.json" free board
 called "pane list"
-called "plugin pane open --plugin desk --entrypoint board --focus"
+called "plugin pane open --plugin herdr-desk --entrypoint board --focus"
 not_called "plugin pane focus"
 ok "with no board pane, board opens one"
 
@@ -118,13 +118,13 @@ not_called "plugin pane open"
 ok "with a board pane whose label was renamed, board focuses it and opens none"
 
 open_pane 0 "$E2E/agent.json" free board
-called "plugin pane open --plugin desk --entrypoint board --focus"
+called "plugin pane open --plugin herdr-desk --entrypoint board --focus"
 not_called "plugin pane focus"
 ok "an agent's pane in the plugin's folder is not taken for the board, and board opens one"
 
 open_pane 0 "$E2E/shell.json" free board
 called "plugin pane focus w1:p4"
-called "plugin pane open --plugin desk --entrypoint board --focus"
+called "plugin pane open --plugin herdr-desk --entrypoint board --focus"
 ok "a shell in the plugin's folder refuses the focus, and board opens one"
 
 STUB_LIST=fail open_pane 4 "$E2E/none.json" free board
@@ -139,11 +139,11 @@ not_called "plugin pane open"
 ok "a focus that fails for another reason than plugin_pane_not_found exits with its status and error, and opens no pane"
 
 open_pane 0 "$E2E/none.json" free capture
-called "plugin pane open --plugin desk --entrypoint capture --focus"
+called "plugin pane open --plugin herdr-desk --entrypoint capture --focus"
 ok "capture opens the popup"
 
 open_pane 0 "$E2E/none.json" busy capture
-called "plugin pane open --plugin desk --entrypoint capture --focus"
+called "plugin pane open --plugin herdr-desk --entrypoint capture --focus"
 ok "a busy popup exits 0"
 
 open_pane 2 "$E2E/none.json" free nosuch

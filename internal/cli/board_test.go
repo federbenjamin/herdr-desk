@@ -10,10 +10,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/federbenjamin/desk/internal/api"
-	"github.com/federbenjamin/desk/internal/config"
-	"github.com/federbenjamin/desk/internal/model"
-	"github.com/federbenjamin/desk/internal/testutil"
+	"github.com/federbenjamin/herdr-desk/internal/api"
+	"github.com/federbenjamin/herdr-desk/internal/config"
+	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/testutil"
 )
 
 // clientOf returns a client machine of a home served by h on 127.0.0.1.
@@ -51,15 +51,15 @@ func TestBoardJSONNeedsOnlyTheTaskListAndTheTextBoardAsksStatus(t *testing.T) {
 	result := runDeskWithEnv(t, machine, t.TempDir(), []string{"--json"}, "", nil, nil)
 	var tl api.TaskList
 	if err := json.Unmarshal([]byte(result.stdout), &tl); err != nil || result.exit != 0 {
-		t.Fatalf("desk --json = (%d, %q, %q): %v", result.exit, result.stdout, result.stderr, err)
+		t.Fatalf("herdr-desk --json = (%d, %q, %q): %v", result.exit, result.stdout, result.stderr, err)
 	}
 	if len(tl.Tasks) != 1 || tl.Tasks[0].Title != "listed" || statusCalls != 0 {
-		t.Fatalf("desk --json = %+v with %d status calls, want the list and no status call", tl, statusCalls)
+		t.Fatalf("herdr-desk --json = %+v with %d status calls, want the list and no status call", tl, statusCalls)
 	}
 
 	text := runDeskWithEnv(t, machine, t.TempDir(), nil, "", nil, nil)
 	if text.exit != 3 || statusCalls != 1 {
-		t.Fatalf("desk = (%d, %q, %q) with %d status calls, want the failed status to end it", text.exit, text.stdout, text.stderr, statusCalls)
+		t.Fatalf("herdr-desk = (%d, %q, %q) with %d status calls, want the failed status to end it", text.exit, text.stdout, text.stderr, statusCalls)
 	}
 }
 

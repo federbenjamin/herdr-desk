@@ -1,4 +1,4 @@
-// Package gitcmd runs git the one way desk allows: no prompt, a timeout, and a repository chosen by the
+// Package gitcmd runs git the one way herdr-desk allows: no prompt, a timeout, and a repository chosen by the
 // directory argument alone, never by the caller's environment.
 package gitcmd
 

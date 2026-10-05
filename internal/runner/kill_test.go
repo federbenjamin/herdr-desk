@@ -14,11 +14,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/federbenjamin/desk/internal/herdr"
-	"github.com/federbenjamin/desk/internal/herdr/herdrtest"
-	"github.com/federbenjamin/desk/internal/model"
-	"github.com/federbenjamin/desk/internal/runner"
-	"github.com/federbenjamin/desk/internal/store"
+	"github.com/federbenjamin/herdr-desk/internal/herdr"
+	"github.com/federbenjamin/herdr-desk/internal/herdr/herdrtest"
+	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/runner"
+	"github.com/federbenjamin/herdr-desk/internal/store"
 )
 
 func TestKillStopsReportedPaneProcessesClosesThePaneAndBlocksTheTask(t *testing.T) {

@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/federbenjamin/desk"
-	"github.com/federbenjamin/desk/internal/config"
-	"github.com/federbenjamin/desk/internal/model"
-	"github.com/federbenjamin/desk/internal/runner"
+	"github.com/federbenjamin/herdr-desk"
+	"github.com/federbenjamin/herdr-desk/internal/config"
+	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/runner"
 )
 
 func TestRootsKeepsConfiguredOrderThenAddsInPlaceScratch(t *testing.T) {
@@ -426,7 +426,7 @@ func TestApplyAndResolvePreferTheRootWrittenAsTheRouteOverASymlinkAlias(t *testi
 func TestRouterSystemTellsTheRouterHowToChooseAndRespond(t *testing.T) {
 	t.Parallel()
 
-	prompt := desk.RouterSystem()
+	prompt := herdrdesk.RouterSystem()
 	if strings.TrimSpace(prompt) == "" {
 		t.Fatal("RouterSystem() is empty")
 	}

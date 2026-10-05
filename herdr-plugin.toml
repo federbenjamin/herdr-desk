@@ -1,14 +1,14 @@
-# herdr-plugin.toml: manifest for the desk plugin (https://github.com/federbenjamin/desk).
+# herdr-plugin.toml: manifest for the herdr-desk plugin (https://github.com/federbenjamin/herdr-desk).
 
-id = "desk"
-name = "desk"
+id = "herdr-desk"
+name = "herdr-desk"
 version = "0.1.0"
 min_herdr_version = "0.9.0"
 description = "A task board and session journal: one home per desk, a CLI, and a board pane."
 platforms = ["linux", "macos"]
 
 # Installs a checksum-verified release binary for this version and platform, else builds from
-# source with Go. It puts `desk` on your PATH (~/.local/bin) when none is there.
+# source with Go. It puts `herdr-desk` on your PATH (~/.local/bin) when none is there.
 [[build]]
 platforms = ["linux", "macos"]
 command = ["/bin/sh", "scripts/fetch-or-build.sh"]
@@ -17,39 +17,39 @@ command = ["/bin/sh", "scripts/fetch-or-build.sh"]
 # prints a note and exits 0.
 [[startup]]
 platforms = ["linux", "macos"]
-command = ["desk", "daemon"]
+command = ["herdr-desk", "daemon"]
 
 [[panes]]
 id = "board"
-title = "desk"
-description = "The desk board"
+title = "herdr-desk"
+description = "The herdr-desk board"
 placement = "split"
-command = ["desk"]
+command = ["herdr-desk"]
 
 [[panes]]
 id = "capture"
-title = "desk capture"
+title = "herdr-desk capture"
 description = "Add a task from one line"
 placement = "popup"
-command = ["desk", "capture"]
+command = ["herdr-desk", "capture"]
 
 [[actions]]
 id = "open-board"
-title = "desk: open board"
-description = "Open the desk board in this workspace, or focus it when it is already open"
+title = "herdr-desk: open board"
+description = "Open the herdr-desk board in this workspace, or focus it when it is already open"
 contexts = ["global", "workspace"]
 command = ["sh", "scripts/open-pane.sh", "board"]
 
 [[actions]]
 id = "capture"
-title = "desk: capture"
+title = "herdr-desk: capture"
 description = "Add a task from one line in a popup"
 contexts = ["global", "workspace"]
 command = ["sh", "scripts/open-pane.sh", "capture"]
 
 [[actions]]
 id = "restart"
-title = "desk: restart daemon"
-description = "Stop the desk daemon and start a fresh one"
+title = "herdr-desk: restart daemon"
+description = "Stop the herdr-desk daemon and start a fresh one"
 contexts = ["global"]
-command = ["desk", "daemon", "restart"]
+command = ["herdr-desk", "daemon", "restart"]

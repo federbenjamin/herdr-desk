@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/federbenjamin/desk/internal/model"
-	"github.com/federbenjamin/desk/internal/testutil"
+	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/testutil"
 )
 
 func TestClaudeHookWritesAPrivateJournalViewForEveryRenderingSource(t *testing.T) {
@@ -30,7 +30,7 @@ func TestClaudeHookWritesAPrivateJournalViewForEveryRenderingSource(t *testing.T
 			if len(lines) != 3 {
 				t.Fatalf("hook %s stdout lines = %q, want exactly three lines", source, result.stdout)
 			}
-			if lines[0] != "desk journal for this session: "+path {
+			if lines[0] != "herdr-desk journal for this session: "+path {
 				t.Fatalf("hook %s first line = %q, want journal path %q", source, lines[0], path)
 			}
 			if strings.TrimSpace(lines[1]) == "" || strings.TrimSpace(lines[2]) == "" {

@@ -10,9 +10,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/federbenjamin/desk/internal/herdr"
-	"github.com/federbenjamin/desk/internal/model"
-	"github.com/federbenjamin/desk/internal/store"
+	"github.com/federbenjamin/herdr-desk/internal/herdr"
+	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/store"
 )
 
 // killTries bounds Kill's retries when a tick moves the run on between Kill's read and its write.

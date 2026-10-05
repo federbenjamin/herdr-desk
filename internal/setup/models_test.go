@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/federbenjamin/desk/internal/config"
-	"github.com/federbenjamin/desk/internal/setup"
+	"github.com/federbenjamin/herdr-desk/internal/config"
+	"github.com/federbenjamin/herdr-desk/internal/setup"
 )
 
 func TestRunClaudeCodeProfileSetsModels(t *testing.T) {

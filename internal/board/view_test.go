@@ -10,10 +10,10 @@ import (
 	"unicode"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/federbenjamin/desk/internal/api"
-	"github.com/federbenjamin/desk/internal/board"
-	"github.com/federbenjamin/desk/internal/model"
-	"github.com/federbenjamin/desk/internal/store"
+	"github.com/federbenjamin/herdr-desk/internal/api"
+	"github.com/federbenjamin/herdr-desk/internal/board"
+	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/store"
 )
 
 var w3Now = time.Date(2026, time.October, 4, 15, 4, 5, 0, time.UTC)
@@ -83,7 +83,7 @@ func TestViewWideBoardShowsEverySectionRowAndDetail(t *testing.T) {
 	s := w3State(120, w3LiveData())
 	text := s.Text()
 	w3RequireContains(t, text,
-		"desk  all ▾  thread: all ▾",
+		"herdr-desk  all ▾  thread: all ▾",
 		"runner ● on · 1/4 · home",
 		"NEEDS YOU", "IN MOTION", "ON DECK",
 		"T1", "blocked", "ship release", "↳ \"await deploy\"",
@@ -165,7 +165,7 @@ func TestViewFiltersRowsBySearchProjectAndThread(t *testing.T) {
 	s, _ = s.Update(named(tea.KeyEscape))
 	s, _ = s.Update(press('p'))
 	project := s.Text()
-	w3RequireContains(t, project, "desk  alpha ▾", "ship release", "queue agent")
+	w3RequireContains(t, project, "herdr-desk  alpha ▾", "ship release", "queue agent")
 	if strings.Contains(project, "review patch") {
 		t.Fatalf("project filter retained a beta task:\n%s", project)
 	}
@@ -254,7 +254,7 @@ func TestViewOfflineRefusesWritesButKeepsFiltersAvailable(t *testing.T) {
 	if len(effects) != 0 {
 		t.Fatalf("offline project filter emitted effects %#v", effects)
 	}
-	w3RequireContains(t, s.Text(), "desk  alpha ▾")
+	w3RequireContains(t, s.Text(), "herdr-desk  alpha ▾")
 }
 
 // w3Inject holds escape sequences that would act on a terminal: clear the screen, set the window title, blink,

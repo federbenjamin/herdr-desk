@@ -1,4 +1,4 @@
-// Package board is desk's terminal board and capture popup. State and CaptureState hold every rule and do no
+// Package board is herdr-desk's terminal board and capture popup. State and CaptureState hold every rule and do no
 // I/O; Run and Capture put them in a bubbletea program and run the effects they ask for against the home.
 package board
 
@@ -15,9 +15,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/federbenjamin/desk/internal/api"
-	"github.com/federbenjamin/desk/internal/model"
-	"github.com/federbenjamin/desk/internal/store"
+	"github.com/federbenjamin/herdr-desk/internal/api"
+	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/store"
 )
 
 // Home is what the board asks of the home. *api.Client satisfies it.

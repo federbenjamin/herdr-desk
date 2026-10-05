@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/federbenjamin/desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/model"
 )
 
-// Line is one line of the view. The json tags are the keys `desk session --json` prints, in model's
+// Line is one line of the view. The json tags are the keys `herdr-desk session --json` prints, in model's
 // snake_case style.
 type Line struct {
 	EventID  int64        `json:"event_id"` // 0 for a task line

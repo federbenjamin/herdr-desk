@@ -11,12 +11,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/federbenjamin/desk/internal/api"
-	"github.com/federbenjamin/desk/internal/cli"
-	"github.com/federbenjamin/desk/internal/config"
-	"github.com/federbenjamin/desk/internal/model"
-	"github.com/federbenjamin/desk/internal/store"
-	"github.com/federbenjamin/desk/internal/testutil"
+	"github.com/federbenjamin/herdr-desk/internal/api"
+	"github.com/federbenjamin/herdr-desk/internal/cli"
+	"github.com/federbenjamin/herdr-desk/internal/config"
+	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/store"
+	"github.com/federbenjamin/herdr-desk/internal/testutil"
 )
 
 type commandResult struct {
@@ -62,7 +62,7 @@ func requireRefusal(t *testing.T, result commandResult, command, code string, ex
 	if result.stdout != "" {
 		t.Errorf("stdout = %q, want empty on refusal", result.stdout)
 	}
-	wantPrefix := "desk " + command + ": " + code + ": "
+	wantPrefix := "herdr-desk " + command + ": " + code + ": "
 	if !strings.HasPrefix(result.stderr, wantPrefix) {
 		t.Errorf("stderr = %q, want refusal beginning %q", result.stderr, wantPrefix)
 	}
@@ -180,10 +180,10 @@ func TestListFiltersProjectsAndDeskTasksAndShowsTaskDetails(t *testing.T) {
 	requireSuccess(t, result)
 	var list api.TaskList
 	if err := json.Unmarshal([]byte(result.stdout), &list); err != nil {
-		t.Fatalf("decode desk list: %v", err)
+		t.Fatalf("decode herdr-desk list: %v", err)
 	}
 	if len(list.Tasks) != 1 || list.Tasks[0].Title != "desk task" {
-		t.Errorf("desk list = %#v, want only the task without a project", list.Tasks)
+		t.Errorf("herdr-desk list = %#v, want only the task without a project", list.Tasks)
 	}
 
 	requireSuccess(t, runHomeDesk(t, home, "set", "T2", "--root", "/repo", "--isolation", "worktree", "--model", "fast", "--archive"))
@@ -312,7 +312,7 @@ func TestBareDeskGroupsLiveTasksInBoardOrder(t *testing.T) {
 
 	result := runHomeDesk(t, home)
 	requireSuccess(t, result)
-	for _, text := range []string{"desk · home · runner off", "NEEDS YOU", "IN MOTION", "ON DECK"} {
+	for _, text := range []string{"herdr-desk · home · runner off", "NEEDS YOU", "IN MOTION", "ON DECK"} {
 		if !strings.Contains(result.stdout, text) {
 			t.Errorf("board output missing %q: %q", text, result.stdout)
 		}
@@ -333,7 +333,7 @@ func TestBareDeskGroupsLiveTasksInBoardOrder(t *testing.T) {
 	runnerHome := testutil.StartHome(t, testutil.HomeOptions{Config: cfg})
 	result = runHomeDesk(t, runnerHome)
 	requireSuccess(t, result)
-	if !strings.HasPrefix(result.stdout, "desk · home · runner on\n") {
+	if !strings.HasPrefix(result.stdout, "herdr-desk · home · runner on\n") {
 		t.Errorf("runner board = %q, want runner-on header", result.stdout)
 	}
 }

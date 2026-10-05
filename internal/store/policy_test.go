@@ -11,9 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/federbenjamin/desk/internal/model"
-	"github.com/federbenjamin/desk/internal/secretscan"
-	"github.com/federbenjamin/desk/internal/store"
+	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/secretscan"
+	"github.com/federbenjamin/herdr-desk/internal/store"
 )
 
 func openStore(t *testing.T, options store.Options) *store.Store {

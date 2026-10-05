@@ -9,9 +9,9 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/federbenjamin/desk/internal/cli"
-	"github.com/federbenjamin/desk/internal/config"
-	"github.com/federbenjamin/desk/internal/testutil"
+	"github.com/federbenjamin/herdr-desk/internal/cli"
+	"github.com/federbenjamin/herdr-desk/internal/config"
+	"github.com/federbenjamin/herdr-desk/internal/testutil"
 )
 
 func TestDaemonStatusOnAStoppedHomeExitsOneAndStartsNothing(t *testing.T) {
@@ -90,7 +90,7 @@ func TestDaemonRunAlreadyRunningPrintsOnlyThePidOfTheDaemonOnTheSocket(t *testin
 	})
 	defer late.Stop()
 	result = runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"daemon", "run"}, "", nil, nil)
-	if want := fmt.Sprintf("desk daemon: already running (pid %d)", os.Getpid()); result.exit != 0 || strings.TrimSpace(result.stdout) != want {
+	if want := fmt.Sprintf("herdr-desk daemon: already running (pid %d)", os.Getpid()); result.exit != 0 || strings.TrimSpace(result.stdout) != want {
 		t.Fatalf("daemon run once the running daemon's info file is back = (%d, %q, %q), want %q", result.exit, result.stdout, result.stderr, want)
 	}
 }

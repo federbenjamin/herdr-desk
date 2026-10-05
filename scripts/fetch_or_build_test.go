@@ -73,7 +73,7 @@ func newRig(t *testing.T) *rig {
 	r := &rig{
 		dir:     dir,
 		fixture: filepath.Join(dir, "fixture"),
-		out:     filepath.Join(dir, "out", "desk"),
+		out:     filepath.Join(dir, "out", "herdr-desk"),
 		install: filepath.Join(dir, "inst"),
 		goLog:   filepath.Join(dir, "go.log"),
 	}
@@ -111,12 +111,12 @@ func writeExec(t *testing.T, path, body string) {
 // release puts the archive and checksums.txt where the curl stub will find them.
 func (r *rig) release(t *testing.T) {
 	t.Helper()
-	asset := fmt.Sprintf("desk_%s_%s_%s.tar.gz", testVersion, runtime.GOOS, runtime.GOARCH)
+	asset := fmt.Sprintf("herdr-desk_%s_%s_%s.tar.gz", testVersion, runtime.GOOS, runtime.GOARCH)
 
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gz)
-	if err := tw.WriteHeader(&tar.Header{Name: "desk", Mode: 0o755, Size: int64(len(prebuilt))}); err != nil {
+	if err := tw.WriteHeader(&tar.Header{Name: "herdr-desk", Mode: 0o755, Size: int64(len(prebuilt))}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tw.Write([]byte(prebuilt)); err != nil {
@@ -168,7 +168,7 @@ func TestFetchOrBuildPrebuilt(t *testing.T) {
 	if got := readFile(t, r.out); got != prebuilt {
 		t.Errorf("DESK_OUT holds %q, want the released binary", got)
 	}
-	if got := readFile(t, filepath.Join(r.install, "desk")); got != prebuilt {
+	if got := readFile(t, filepath.Join(r.install, "herdr-desk")); got != prebuilt {
 		t.Errorf("the install dir holds %q, want the released binary", got)
 	}
 	if _, err := os.Stat(r.goLog); err == nil {
@@ -188,10 +188,10 @@ func TestFetchOrBuildFallsBackToSource(t *testing.T) {
 		t.Errorf("DESK_OUT holds %q, want the binary the go stub wrote", got)
 	}
 	log := readFile(t, r.goLog)
-	if !strings.Contains(log, "-o "+r.out+" ./cmd/desk") || !strings.Contains(log, "build ") {
-		t.Errorf("go was not asked to build ./cmd/desk into DESK_OUT:\n%s", log)
+	if !strings.Contains(log, "-o "+r.out+" ./cmd/herdr-desk") || !strings.Contains(log, "build ") {
+		t.Errorf("go was not asked to build ./cmd/herdr-desk into DESK_OUT:\n%s", log)
 	}
-	if want := "-X github.com/federbenjamin/desk/internal/version.Version=" + testVersion + "+src"; !strings.Contains(log, want) {
+	if want := "-X github.com/federbenjamin/herdr-desk/internal/version.Version=" + testVersion + "+src"; !strings.Contains(log, want) {
 		t.Errorf("go was not asked to set the version to the manifest's with a +src suffix (%s):\n%s", want, log)
 	}
 	if !strings.Contains(log, filepath.Join(r.dir, "repo")) {
@@ -208,7 +208,7 @@ func TestFetchOrBuildReplacesTheDeskItInstalledBefore(t *testing.T) {
 	if err := os.MkdirAll(r.install, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	old := filepath.Join(r.install, "desk")
+	old := filepath.Join(r.install, "herdr-desk")
 	writeExec(t, old, "#!/bin/sh\necho old\n")
 	before, err := os.Stat(old)
 	if err != nil {
@@ -226,29 +226,29 @@ func TestFetchOrBuildReplacesTheDeskItInstalledBefore(t *testing.T) {
 		t.Fatal(err)
 	}
 	if os.SameFile(before, after) {
-		t.Error("the installed desk was written in place; want a new file renamed over it")
+		t.Error("the installed herdr-desk was written in place; want a new file renamed over it")
 	}
-	if !strings.Contains(out, "updated "+old) || !strings.Contains(out, "desk daemon restart") {
-		t.Errorf("output does not say the desk was updated and the daemon needs a restart:\n%s", out)
+	if !strings.Contains(out, "updated "+old) || !strings.Contains(out, "herdr-desk daemon restart") {
+		t.Errorf("output does not say the herdr-desk was updated and the daemon needs a restart:\n%s", out)
 	}
 }
 
 func TestFetchOrBuildLeavesADeskFromElsewhereAlone(t *testing.T) {
 	r := newRig(t)
 	r.release(t)
-	other := filepath.Join(r.dir, "stubs", "desk")
+	other := filepath.Join(r.dir, "stubs", "herdr-desk")
 	writeExec(t, other, "#!/bin/sh\necho other\n")
 
 	out := r.run(t)
 
 	if got := readFile(t, other); !strings.Contains(got, "echo other") {
-		t.Errorf("the desk from elsewhere was changed to %q", got)
+		t.Errorf("the herdr-desk from elsewhere was changed to %q", got)
 	}
-	if _, err := os.Stat(filepath.Join(r.install, "desk")); err == nil {
-		t.Error("a desk was installed although another install owns the one on PATH")
+	if _, err := os.Stat(filepath.Join(r.install, "herdr-desk")); err == nil {
+		t.Error("a herdr-desk was installed although another install owns the one on PATH")
 	}
 	if !strings.Contains(out, other) {
-		t.Errorf("output does not name the desk on PATH (%s):\n%s", other, out)
+		t.Errorf("output does not name the herdr-desk on PATH (%s):\n%s", other, out)
 	}
 }
 
@@ -268,7 +268,7 @@ func TestFetchOrBuildFailsWhenItCannotInstall(t *testing.T) {
 	if err == nil {
 		t.Fatalf("fetch-or-build.sh exited 0 although %s cannot be created:\n%s", install, out)
 	}
-	if !strings.Contains(string(out), install+"/desk") {
+	if !strings.Contains(string(out), install+"/herdr-desk") {
 		t.Errorf("the failure does not name the install destination:\n%s", out)
 	}
 }

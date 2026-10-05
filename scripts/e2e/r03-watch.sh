@@ -16,11 +16,11 @@ runner_up home
 
 start_task() {
   local n=$1 mode=$2
-  run 0 on home desk add -t "watched $mode" --desk --thread agent
+  run 0 on home herdr-desk add -t "watched $mode" --desk --thread agent
   [ "$OUT" = "T$n" ] || fail "expected T$n, got $OUT"
-  run 0 on home desk set "T$n" --root "$ROOT" --model sonnet
+  run 0 on home herdr-desk set "T$n" --root "$ROOT" --model sonnet
   set_mode "$n" "$mode"
-  run 0 on home desk set "T$n" ready
+  run 0 on home herdr-desk set "T$n" ready
 }
 start_task 1 idle
 start_task 2 blocked
@@ -33,7 +33,7 @@ task_has_note 1 "session ended without reporting" || fail "T1 has no 'session en
 wait_run 1 ended
 # Two polls, no more: the fake logs every call in the order it ran them, so the pane lists between T1's idle report
 # and the review the runner wrote are the polls it took.
-REVIEW_TS=$(on home desk show T1 --json | jq -r '[.history[] | select(.kind == "set" and .data.status == "review")][0].ts')
+REVIEW_TS=$(on home herdr-desk show T1 --json | jq -r '[.history[] | select(.kind == "set" and .data.status == "review")][0].ts')
 POLLS=$(python3 - "$E2E/herdr/calls.log" "$(run_field 1 pane)" "$REVIEW_TS" <<'PY'
 import datetime, re, sys
 log, pane, review = sys.argv[1:4]

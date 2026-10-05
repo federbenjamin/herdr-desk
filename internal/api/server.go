@@ -12,11 +12,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/federbenjamin/desk/internal/backup"
-	"github.com/federbenjamin/desk/internal/config"
-	"github.com/federbenjamin/desk/internal/model"
-	"github.com/federbenjamin/desk/internal/store"
-	"github.com/federbenjamin/desk/internal/version"
+	"github.com/federbenjamin/herdr-desk/internal/backup"
+	"github.com/federbenjamin/herdr-desk/internal/config"
+	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/store"
+	"github.com/federbenjamin/herdr-desk/internal/version"
 )
 
 // ServerOptions configures a Server.
@@ -212,7 +212,7 @@ func (s *Server) Handler(trusted bool) http.Handler {
 			case errors.As(err, &bad):
 				writeError(w, http.StatusBadRequest, "", bad.Error())
 			default:
-				log.Printf("desk daemon: %s: %v", name, err)
+				log.Printf("herdr-desk daemon: %s: %v", name, err)
 				msg := "an internal error; the daemon log has it"
 				if errors.As(err, &sh) {
 					msg = sh.Error()
@@ -233,7 +233,7 @@ func (s *Server) tokenOK(r *http.Request) bool {
 	}
 	want, err := config.ReadToken(s.o.Paths)
 	if err != nil {
-		log.Printf("desk daemon: the token cannot be read, so every TCP request gets 401: %v", err)
+		log.Printf("herdr-desk daemon: the token cannot be read, so every TCP request gets 401: %v", err)
 		return false
 	}
 	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1

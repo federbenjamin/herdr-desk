@@ -15,11 +15,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/federbenjamin/desk/internal/config"
-	"github.com/federbenjamin/desk/internal/model"
-	"github.com/federbenjamin/desk/internal/runner"
-	"github.com/federbenjamin/desk/internal/store"
-	"github.com/federbenjamin/desk/internal/testutil"
+	"github.com/federbenjamin/herdr-desk/internal/config"
+	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/runner"
+	"github.com/federbenjamin/herdr-desk/internal/store"
+	"github.com/federbenjamin/herdr-desk/internal/testutil"
 )
 
 func TestTickStartsInPlaceRunWithSessionWorkspaceEnvironmentNoteAndNotification(t *testing.T) {
@@ -78,13 +78,13 @@ func TestTickQuotesWorkerExecutableAndRefusesSingleQuotes(t *testing.T) {
 	}{
 		{
 			name:        "spaces are single quoted",
-			exe:         "/opt/desk/bin/desk worker",
-			wantCommand: "exec '/opt/desk/bin/desk worker' worker",
+			exe:         "/opt/desk/bin/herdr-desk worker",
+			wantCommand: "exec '/opt/desk/bin/herdr-desk worker' worker",
 			wantSpawned: true,
 		},
 		{
 			name:         "single quote refuses spawn",
-			exe:          "/opt/desk/bin/desk'worker",
+			exe:          "/opt/desk/bin/herdr-desk'worker",
 			wantSpawned:  false,
 			wantReasonIn: "'",
 		},

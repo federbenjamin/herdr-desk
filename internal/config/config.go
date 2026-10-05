@@ -15,10 +15,10 @@ import (
 
 	"github.com/pelletier/go-toml/v2"
 
-	"github.com/federbenjamin/desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/model"
 )
 
-// Config is the file $XDG_CONFIG_HOME/desk/config.toml.
+// Config is the file $XDG_CONFIG_HOME/herdr-desk/config.toml.
 type Config struct {
 	Home       Home        `toml:"home"`
 	Client     Client      `toml:"client"`
@@ -53,7 +53,7 @@ type Runner struct {
 	OnMerged      string `toml:"on_merged"` // "review" | "done"
 }
 
-// Root: written by `desk roots`; read by the router (U2).
+// Root: written by `herdr-desk roots`; read by the router (U2).
 type Root struct {
 	Path      string `toml:"path"`
 	About     string `toml:"about"`
@@ -90,7 +90,7 @@ type Backup struct {
 	GitRemote string `toml:"git_remote"`
 }
 
-// Default is the config of a fresh desk: runner off, cap 1, 20 runs a day, 180 minutes, poll 30,
+// Default is the config of a fresh herdr-desk: runner off, cap 1, 20 runs a day, 180 minutes, poll 30,
 // on_merged "review".
 func Default() Config {
 	return Config{Runner: Runner{

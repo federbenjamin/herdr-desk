@@ -11,10 +11,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/federbenjamin/desk/internal/backup"
-	"github.com/federbenjamin/desk/internal/config"
-	"github.com/federbenjamin/desk/internal/model"
-	"github.com/federbenjamin/desk/internal/store"
+	"github.com/federbenjamin/herdr-desk/internal/backup"
+	"github.com/federbenjamin/herdr-desk/internal/config"
+	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/store"
 )
 
 // ClientOptions configures a Client.
@@ -70,7 +70,7 @@ func (c *Client) where() string {
 	if c.o.Config.IsClient() {
 		return "the home at " + c.o.Config.Client.Home
 	}
-	return "the desk daemon"
+	return "the herdr-desk daemon"
 }
 
 func unreachable(where string, err error) error {
@@ -85,7 +85,7 @@ func isUnreachable(err error) bool {
 // badToken is the home's 401. The fault is the client's token, never the entry, so a journal write the home
 // answers this way is queued like one it did not answer.
 func (c *Client) badToken() error {
-	return &model.Refusal{Code: model.CodeBadToken, Msg: fmt.Sprintf("%s refused the token (HTTP 401); run `desk client add` with the home's current token", c.where())}
+	return &model.Refusal{Code: model.CodeBadToken, Msg: fmt.Sprintf("%s refused the token (HTTP 401); run `herdr-desk client add` with the home's current token", c.where())}
 }
 
 // cannotTake reports an error that says the home cannot take a write now, for a cause a later call may change

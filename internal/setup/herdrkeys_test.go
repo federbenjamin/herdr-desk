@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/federbenjamin/desk/internal/setup"
+	"github.com/federbenjamin/herdr-desk/internal/setup"
 )
 
 func TestWriteHerdrKeysAddsOnlyDeskBindingsInsideItsFence(t *testing.T) {
@@ -17,8 +17,8 @@ func TestWriteHerdrKeysAddsOnlyDeskBindingsInsideItsFence(t *testing.T) {
 		t.Errorf("skipped = %#v; want none", skipped)
 	}
 	for _, text := range []string{
-		"# >>> desk keys", "# <<< desk keys", "key = \"prefix+t\"", "command = \"desk.open-board\"",
-		"key = \"prefix+a\"", "command = \"desk.capture\"", "type = \"plugin_action\"",
+		"# >>> herdr-desk keys", "# <<< herdr-desk keys", "key = \"prefix+t\"", "command = \"herdr-desk.open-board\"",
+		"key = \"prefix+a\"", "command = \"herdr-desk.capture\"", "type = \"plugin_action\"",
 	} {
 		if !strings.Contains(out, text) {
 			t.Errorf("written config does not contain %q:\n%s", text, out)
@@ -28,12 +28,12 @@ func TestWriteHerdrKeysAddsOnlyDeskBindingsInsideItsFence(t *testing.T) {
 		t.Errorf("written config binds forbidden ctrl+d:\n%s", out)
 	}
 	empty, emptyBound, emptySkipped := setup.WriteHerdrKeys("", false)
-	if !reflect.DeepEqual(emptyBound, []string{"prefix+t", "prefix+a"}) || len(emptySkipped) != 0 || !strings.HasPrefix(empty, "# >>> desk keys\n") {
-		t.Errorf("empty config result = %q, %#v, %#v; want a fenced desk block with both bindings", empty, emptyBound, emptySkipped)
+	if !reflect.DeepEqual(emptyBound, []string{"prefix+t", "prefix+a"}) || len(emptySkipped) != 0 || !strings.HasPrefix(empty, "# >>> herdr-desk keys\n") {
+		t.Errorf("empty config result = %q, %#v, %#v; want a fenced herdr-desk block with both bindings", empty, emptyBound, emptySkipped)
 	}
 	noTrailingNewline, _, _ := setup.WriteHerdrKeys("onboarding = false", false)
-	if !strings.HasPrefix(noTrailingNewline, "onboarding = false\n\n# >>> desk keys\n") {
-		t.Errorf("config without a trailing newline = %q; want its text followed by one blank line and the desk fence", noTrailingNewline)
+	if !strings.HasPrefix(noTrailingNewline, "onboarding = false\n\n# >>> herdr-desk keys\n") {
+		t.Errorf("config without a trailing newline = %q; want its text followed by one blank line and the herdr-desk fence", noTrailingNewline)
 	}
 }
 
@@ -53,8 +53,8 @@ command = "other.open"
 	if !strings.Contains(skippedOut, "command = \"other.open\"") {
 		t.Errorf("without force removed conflicting binding:\n%s", skippedOut)
 	}
-	if strings.Contains(skippedOut, "command = \"desk.open-board\"") {
-		t.Errorf("without force installed desk binding over a conflict:\n%s", skippedOut)
+	if strings.Contains(skippedOut, "command = \"herdr-desk.open-board\"") {
+		t.Errorf("without force installed herdr-desk binding over a conflict:\n%s", skippedOut)
 	}
 	bothConflicted := conflicted + `[[keys.command]]
 key = "prefix+a"
@@ -65,17 +65,17 @@ command = "other.capture"
 	if unchanged != bothConflicted || len(noBound) != 0 || !reflect.DeepEqual(bothSkipped, []string{"prefix+t", "prefix+a"}) {
 		t.Errorf("two conflicts result = %q, %#v, %#v; want the original config and both keys skipped", unchanged, noBound, bothSkipped)
 	}
-	afterBlock := "# >>> desk keys\n# <<< desk keys\n" + conflicted
+	afterBlock := "# >>> herdr-desk keys\n# <<< herdr-desk keys\n" + conflicted
 	afterOut, afterBound, afterSkipped := setup.WriteHerdrKeys(afterBlock, false)
 	if !reflect.DeepEqual(afterBound, []string{"prefix+a"}) || !reflect.DeepEqual(afterSkipped, []string{"prefix+t"}) || !strings.Contains(afterOut, "command = \"other.open\"") {
-		t.Errorf("conflict after an existing desk block = %q, %#v, %#v; want prefix+t skipped and prefix+a rebound", afterOut, afterBound, afterSkipped)
+		t.Errorf("conflict after an existing herdr-desk block = %q, %#v, %#v; want prefix+t skipped and prefix+a rebound", afterOut, afterBound, afterSkipped)
 	}
 
 	forced, forceBound, forceSkipped := setup.WriteHerdrKeys(conflicted, true)
 	if !reflect.DeepEqual(forceBound, []string{"prefix+t", "prefix+a"}) || len(forceSkipped) != 0 {
 		t.Errorf("with force bound, skipped = %#v, %#v; want both bound and none skipped", forceBound, forceSkipped)
 	}
-	if strings.Contains(forced, "command = \"other.open\"") || !strings.Contains(forced, "command = \"desk.open-board\"") {
+	if strings.Contains(forced, "command = \"other.open\"") || !strings.Contains(forced, "command = \"herdr-desk.open-board\"") {
 		t.Errorf("with force did not replace conflicting binding:\n%s", forced)
 	}
 	again, againBound, againSkipped := setup.WriteHerdrKeys(forced, false)
@@ -83,6 +83,6 @@ command = "other.capture"
 		t.Errorf("second WriteHerdrKeys changed an already-written config:\nfirst:\n%s\nsecond:\n%s", forced, again)
 	}
 	if !reflect.DeepEqual(againBound, []string{"prefix+t", "prefix+a"}) || len(againSkipped) != 0 {
-		t.Errorf("second WriteHerdrKeys bound, skipped = %#v, %#v; want both desk keys and none skipped", againBound, againSkipped)
+		t.Errorf("second WriteHerdrKeys bound, skipped = %#v, %#v; want both herdr-desk keys and none skipped", againBound, againSkipped)
 	}
 }

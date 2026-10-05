@@ -7,7 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/federbenjamin/desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/model"
 )
 
 const captureHint = "#thread  @project  ·  enter adds  ·  esc cancels"

@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/federbenjamin/desk/internal/herdr"
-	"github.com/federbenjamin/desk/internal/herdr/herdrtest"
-	"github.com/federbenjamin/desk/internal/runner"
+	"github.com/federbenjamin/herdr-desk/internal/herdr"
+	"github.com/federbenjamin/herdr-desk/internal/herdr/herdrtest"
+	"github.com/federbenjamin/herdr-desk/internal/runner"
 )
 
 func TestHerdrImplementationsSharePaneContract(t *testing.T) {

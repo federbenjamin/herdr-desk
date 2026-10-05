@@ -13,8 +13,8 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/federbenjamin/desk/internal/config"
-	"github.com/federbenjamin/desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/config"
+	"github.com/federbenjamin/herdr-desk/internal/model"
 )
 
 // snapshot is the last whole tasks.list this machine saw.

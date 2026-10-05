@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/federbenjamin/desk/internal/cli"
-	"github.com/federbenjamin/desk/internal/model"
-	"github.com/federbenjamin/desk/internal/testutil"
+	"github.com/federbenjamin/herdr-desk/internal/cli"
+	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/testutil"
 )
 
 func runDeskOnTerminal(t *testing.T, home *testutil.Home, stdin string, args ...string) commandResult {
@@ -28,9 +28,9 @@ func runDeskOnTerminal(t *testing.T, home *testutil.Home, stdin string, args ...
 	}
 }
 
-// prompts counts the "capture: " prompts in stderr, which are not the "desk capture: " that starts an error line.
+// prompts counts the "capture: " prompts in stderr, which are not the "herdr-desk capture: " that starts an error line.
 func prompts(stderr string) int {
-	return strings.Count(stderr, "capture: ") - strings.Count(stderr, "desk capture: ")
+	return strings.Count(stderr, "capture: ") - strings.Count(stderr, "herdr-desk capture: ")
 }
 
 func TestCaptureOnATerminalShowsARefusalAndAsksAgain(t *testing.T) {
@@ -53,7 +53,7 @@ func TestCaptureOnATerminalShowsARefusalAndAsksAgain(t *testing.T) {
 				t.Errorf("stdout = %q, want %q", result.stdout, test.wantStdout)
 			}
 			for _, code := range test.wantRefuse {
-				if !strings.Contains(result.stderr, "desk capture: "+code+": ") {
+				if !strings.Contains(result.stderr, "herdr-desk capture: "+code+": ") {
 					t.Errorf("stderr = %q, want the refusal %s shown", result.stderr, code)
 				}
 			}

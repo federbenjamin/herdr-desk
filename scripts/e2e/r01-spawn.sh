@@ -11,8 +11,8 @@ RC_POLL=2
 runner_up home
 route_to "$SCRATCH" in-place sonnet "stub router: nothing to isolate"
 
-run 0 on home desk add -t "spawn me" --desk --thread agent
-run 0 on home desk set T1 ready
+run 0 on home herdr-desk add -t "spawn me" --desk --thread agent
+run 0 on home herdr-desk set T1 ready
 wait_long 5 "run 1 to be running within 2 polls" run_is 1 running
 say "spawned within 2 polls ok"
 
@@ -31,11 +31,11 @@ say "DESK_SESSION is a uuid ok"
 say "DESK_RUN=1 ok"
 
 PHYSICAL=$(cd "$BIN" && pwd -P)
-grep -Fx -e "exec $BIN/desk worker" -e "exec $PHYSICAL/desk worker" "$E2E/herdr/pane-commands.log" >/dev/null ||
-  fail "the pane was not given 'exec <desk> worker': $(cat "$E2E/herdr/pane-commands.log")"
-say "pane command is exec <desk> worker ok"
+grep -Fx -e "exec $BIN/herdr-desk worker" -e "exec $PHYSICAL/herdr-desk worker" "$E2E/herdr/pane-commands.log" >/dev/null ||
+  fail "the pane was not given 'exec <herdr-desk> worker': $(cat "$E2E/herdr/pane-commands.log")"
+say "pane command is exec <herdr-desk> worker ok"
 
-run 0 on home desk runs
+run 0 on home herdr-desk runs
 out_has "run 1  T1  running  $SCRATCH  in-place  sonnet"
 say "runs shows T1 running ok"
 
@@ -45,7 +45,7 @@ if [ -z "$PANE" ] || [ -z "$WS" ]; then fail "the run row has no workspace or pa
 task_has_note 1 "run 1: workspace $WS, pane $PANE" || fail "no note 'run 1: workspace $WS, pane $PANE'"
 say "note records workspace and pane ok"
 
-grep -F "desk: T1 started" "$E2E/herdr/notifications.log" | grep -F "spawn me" >/dev/null ||
+grep -F "herdr-desk: T1 started" "$E2E/herdr/notifications.log" | grep -F "spawn me" >/dev/null ||
   fail "the notify command did not run: $(cat "$E2E/herdr/notifications.log" 2>&1)"
 say "notify ran ok"
 pass

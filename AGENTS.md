@@ -1,4 +1,4 @@
-# desk
+# herdr-desk
 
 See `README.md` for what it is. Go, single static binary, open source. Never hard-code the author's machines, paths, agents, or harness.
 

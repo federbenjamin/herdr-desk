@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "desk hook start --format claude-code",
+            "command": "herdr-desk hook start --format claude-code",
             "timeout": 10
           }
         ]

@@ -6,14 +6,14 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/federbenjamin/desk/internal/model"
-	"github.com/federbenjamin/desk/internal/store"
+	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/store"
 )
 
 func TestOpenMakesAnExistingLooseStorePrivate(t *testing.T) {
 	t.Parallel()
 
-	dir := filepath.Join(t.TempDir(), "desk")
+	dir := filepath.Join(t.TempDir(), "herdr-desk")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}

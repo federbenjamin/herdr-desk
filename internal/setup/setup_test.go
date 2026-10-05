@@ -12,10 +12,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/federbenjamin/desk"
-	"github.com/federbenjamin/desk/internal/config"
-	"github.com/federbenjamin/desk/internal/setup"
-	"github.com/federbenjamin/desk/internal/testutil"
+	"github.com/federbenjamin/herdr-desk"
+	"github.com/federbenjamin/herdr-desk/internal/config"
+	"github.com/federbenjamin/herdr-desk/internal/setup"
+	"github.com/federbenjamin/herdr-desk/internal/testutil"
 )
 
 func TestRunKeepsExistingValuesAndCreatesTheHomePrerequisites(t *testing.T) {
@@ -129,13 +129,13 @@ func TestRunAppliesClaudeCodeProfileWritesSkillAndPreservesExistingToken(t *test
 	if token, err := config.ReadToken(p); err != nil || token != "already-issued-token" {
 		t.Errorf("Run changed existing token to %q, %v", token, err)
 	}
-	skillFile := filepath.Join(skillDir, "desk", "SKILL.md")
+	skillFile := filepath.Join(skillDir, "herdr-desk", "SKILL.md")
 	writtenSkill, err := os.ReadFile(skillFile)
 	if err != nil {
 		t.Fatalf("read written skill: %v", err)
 	}
-	if string(writtenSkill) != desk.Skill() {
-		t.Error("setup skill file differs from desk.Skill()")
+	if string(writtenSkill) != herdrdesk.Skill() {
+		t.Error("setup skill file differs from herdrdesk.Skill()")
 	}
 	var secondOut bytes.Buffer
 	if err := setup.Run(context.Background(), setup.Options{
@@ -194,8 +194,8 @@ func TestRunFindsHerdrConfigThroughHomeFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(changed), "# >>> desk keys") {
-		t.Errorf("home fallback config did not receive desk keys:\n%s", changed)
+	if !strings.Contains(string(changed), "# >>> herdr-desk keys") {
+		t.Errorf("home fallback config did not receive herdr-desk keys:\n%s", changed)
 	}
 }
 
@@ -211,7 +211,7 @@ func TestRunAddsHerdrNotificationOnlyWhenHerdrConfigExists(t *testing.T) {
 	if len(withoutHerdr.Notify.Command) != 0 {
 		t.Errorf("Run without a herdr config set notification argv to %#v", withoutHerdr.Notify.Command)
 	}
-	if backups, err := filepath.Glob(filepath.Join(filepath.Dir(p.ConfigDir), "herdr", "config.toml.desk-bak-*")); err != nil || len(backups) != 0 {
+	if backups, err := filepath.Glob(filepath.Join(filepath.Dir(p.ConfigDir), "herdr", "config.toml.herdr-desk-bak-*")); err != nil || len(backups) != 0 {
 		t.Errorf("Run without a herdr config made backups %#v, %v", backups, err)
 	}
 
@@ -234,7 +234,7 @@ func TestRunAddsHerdrNotificationOnlyWhenHerdrConfigExists(t *testing.T) {
 	if !reflect.DeepEqual(got.Notify.Command, want) {
 		t.Errorf("notification argv = %#v; want %#v", got.Notify.Command, want)
 	}
-	backups, err := filepath.Glob(herdrConfig + ".desk-bak-*")
+	backups, err := filepath.Glob(herdrConfig + ".herdr-desk-bak-*")
 	if err != nil || len(backups) != 1 {
 		t.Fatalf("herdr config backups = %#v, %v; want one", backups, err)
 	}
@@ -249,8 +249,8 @@ func TestRunAddsHerdrNotificationOnlyWhenHerdrConfigExists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(changedHerdr), "# >>> desk keys") {
-		t.Errorf("Run did not add the desk key block to herdr config:\n%s", changedHerdr)
+	if !strings.Contains(string(changedHerdr), "# >>> herdr-desk keys") {
+		t.Errorf("Run did not add the herdr-desk key block to herdr config:\n%s", changedHerdr)
 	}
 
 	got.Notify.Command = []string{"keep-notify"}
@@ -284,9 +284,9 @@ command = "other.open"
 }
 
 func TestSkillReturnsTheInstalledClaudeCodeContract(t *testing.T) {
-	skill := desk.Skill()
-	if !strings.HasPrefix(skill, "---\nname: desk\n") {
-		t.Fatalf("Skill() front matter = %q; want name: desk", skill)
+	skill := herdrdesk.Skill()
+	if !strings.HasPrefix(skill, "---\nname: herdr-desk\n") {
+		t.Fatalf("Skill() front matter = %q; want name: herdr-desk", skill)
 	}
 	for _, rule := range []string{
 		"review", "blocked", "never", "ready", "done", "--thread agent", "--json",
@@ -296,13 +296,13 @@ func TestSkillReturnsTheInstalledClaudeCodeContract(t *testing.T) {
 			t.Errorf("Skill() does not contain required rule %q", rule)
 		}
 	}
-	profileFile := filepath.Join("..", "..", "profiles", "claude-code", "skills", "desk", "SKILL.md")
+	profileFile := filepath.Join("..", "..", "profiles", "claude-code", "skills", "herdr-desk", "SKILL.md")
 	profileSkill, err := os.ReadFile(profileFile)
 	if err != nil {
 		t.Fatalf("read %s: %v", profileFile, err)
 	}
 	if skill != string(profileSkill) {
-		t.Error("Skill() differs from profiles/claude-code/skills/desk/SKILL.md")
+		t.Error("Skill() differs from profiles/claude-code/skills/herdr-desk/SKILL.md")
 	}
 }
 
@@ -368,10 +368,10 @@ func setupPaths(t *testing.T) (config.Paths, func(string) string) {
 	base := t.TempDir()
 	xdgConfig := filepath.Join(base, "config")
 	p := config.Paths{
-		ConfigDir: filepath.Join(xdgConfig, "desk"),
-		StateDir:  filepath.Join(base, "state", "desk"),
-		DataDir:   filepath.Join(base, "data", "desk"),
-		CacheDir:  filepath.Join(base, "cache", "desk"),
+		ConfigDir: filepath.Join(xdgConfig, "herdr-desk"),
+		StateDir:  filepath.Join(base, "state", "herdr-desk"),
+		DataDir:   filepath.Join(base, "data", "herdr-desk"),
+		CacheDir:  filepath.Join(base, "cache", "herdr-desk"),
 	}
 	return p, func(name string) string {
 		if name == "XDG_CONFIG_HOME" {

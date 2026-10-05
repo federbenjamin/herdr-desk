@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/federbenjamin/desk/internal/api"
-	"github.com/federbenjamin/desk/internal/model"
-	"github.com/federbenjamin/desk/internal/testutil"
+	"github.com/federbenjamin/herdr-desk/internal/api"
+	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/testutil"
 )
 
 func TestOfflineLiveListsUseTheSnapshotAndMarkJSONOffline(t *testing.T) {
@@ -70,7 +70,7 @@ func TestOfflineBareDeskUsesSnapshotBannerAndLiveBoard(t *testing.T) {
 			setSnapshotAge(t, clientMachine.Paths.Snapshot(), test.age)
 			result := runDesk(t, getenv, cwd, "")
 			requireSuccess(t, result)
-			if !strings.HasPrefix(result.stdout, "desk · offline (snapshot "+test.want+")") {
+			if !strings.HasPrefix(result.stdout, "herdr-desk · offline (snapshot "+test.want+")") {
 				t.Errorf("offline board first line = %q, want snapshot age %q", firstLine(result.stdout), test.want)
 			}
 			if !strings.Contains(result.stdout, "NEEDS YOU") || !strings.Contains(result.stdout, "needs review") {
@@ -157,7 +157,7 @@ func TestOfflineNoticeNamesTheSnapshotTimeInUTCWithAZ(t *testing.T) {
 	requireSuccess(t, runDesk(t, getenv, cwd, "", "list"))
 	home.Stop()
 
-	// The stamp is written in another zone; the line must still read as UTC, like every other time desk prints.
+	// The stamp is written in another zone; the line must still read as UTC, like every other time herdr-desk prints.
 	setSnapshotTime(t, clientMachine.Paths.Snapshot(), time.Date(2026, 10, 4, 21, 29, 54, 0, time.FixedZone("west", -7*3600)))
 	result := runDesk(t, getenv, cwd, "", "list")
 	requireSuccess(t, result)

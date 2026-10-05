@@ -9,7 +9,7 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/federbenjamin/desk/internal/setup"
+	"github.com/federbenjamin/herdr-desk/internal/setup"
 )
 
 func TestRunCreatesTheStoreFolderPrivateAndOnlyTheScratchRootLooser(t *testing.T) {

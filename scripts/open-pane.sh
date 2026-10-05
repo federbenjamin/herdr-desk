@@ -1,11 +1,11 @@
 #!/bin/sh
-# Opens a desk pane: `board` focuses this plugin's open board pane in this workspace when one is
+# Opens a herdr-desk pane: `board` focuses this plugin's open board pane in this workspace when one is
 # open and opens it otherwise; `capture` opens the capture popup.
 set -u
 
 entrypoint="${1:?usage: open-pane.sh board|capture}"
 herdr_bin="${HERDR_BIN_PATH:-herdr}"
-plugin_id="${HERDR_PLUGIN_ID:-desk}"
+plugin_id="${HERDR_PLUGIN_ID:-herdr-desk}"
 
 case "$entrypoint" in
   capture)

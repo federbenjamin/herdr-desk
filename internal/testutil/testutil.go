@@ -9,9 +9,9 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/federbenjamin/desk/internal/api"
-	"github.com/federbenjamin/desk/internal/config"
-	"github.com/federbenjamin/desk/internal/daemon"
+	"github.com/federbenjamin/herdr-desk/internal/api"
+	"github.com/federbenjamin/herdr-desk/internal/config"
+	"github.com/federbenjamin/herdr-desk/internal/daemon"
 )
 
 // A test binary that links this package never finds the real herdr: DESK_HERDR names a path that does not exist, so
@@ -62,7 +62,7 @@ func NewMachine(t testing.TB) *Machine {
 		t.Fatalf("testutil: temp dir: %v", err)
 	}
 	t.Cleanup(func() { os.RemoveAll(root) })
-	m := &Machine{Paths: config.Paths{ConfigDir: filepath.Join(root, "config", "desk")}}
+	m := &Machine{Paths: config.Paths{ConfigDir: filepath.Join(root, "config", "herdr-desk")}}
 	m.Paths = config.ResolvePaths(m.Getenv(nil))
 	return m
 }
@@ -100,7 +100,7 @@ type Home struct {
 }
 
 // StartHome writes the home's config (and its token when Listen) and starts its daemon in this process. The
-// daemon starts from the file it just read, as `desk daemon run` does, so the file and the daemon agree.
+// daemon starts from the file it just read, as `herdr-desk daemon run` does, so the file and the daemon agree.
 func StartHome(t testing.TB, o HomeOptions) *Home {
 	t.Helper()
 	cfg := o.Config

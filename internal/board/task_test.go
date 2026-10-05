@@ -9,10 +9,10 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/federbenjamin/desk/internal/api"
-	"github.com/federbenjamin/desk/internal/board"
-	"github.com/federbenjamin/desk/internal/model"
-	"github.com/federbenjamin/desk/internal/store"
+	"github.com/federbenjamin/herdr-desk/internal/api"
+	"github.com/federbenjamin/herdr-desk/internal/board"
+	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/store"
 )
 
 var w4Now = time.Date(2026, time.March, 14, 15, 9, 0, 0, time.Local)
@@ -702,7 +702,7 @@ func TestTaskPageConfirmsDoneAndKillAndLeavesThePage(t *testing.T) {
 	s = w4TaskPage(t, 90, task, nil)
 	s, effects = s.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	wantEffects(t, effects, nil)
-	if text := s.Text(); !strings.Contains(text, "desk  all") || strings.Contains(text, "e notes") {
+	if text := s.Text(); !strings.Contains(text, "herdr-desk  all") || strings.Contains(text, "e notes") {
 		t.Fatalf("esc from task page = %q, want board page", text)
 	}
 }

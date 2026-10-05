@@ -1,6 +1,6 @@
 # Third-party notices
 
-The `desk` binary links the Go modules below: every module `go list -deps ./cmd/desk` names for darwin and
+The `herdr-desk` binary links the Go modules below: every module `go list -deps ./cmd/herdr-desk` names for darwin and
 linux on arm64 and amd64. Modules used only by tests are not linked and are not listed. For each module: its
 version, its license, and the copyright notice and license text from the module's own license files, verbatim.
 The Go standard library and runtime compiled into the binary come last.

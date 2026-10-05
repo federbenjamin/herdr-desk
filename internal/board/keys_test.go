@@ -8,10 +8,10 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/federbenjamin/desk/internal/api"
-	"github.com/federbenjamin/desk/internal/board"
-	"github.com/federbenjamin/desk/internal/model"
-	"github.com/federbenjamin/desk/internal/store"
+	"github.com/federbenjamin/herdr-desk/internal/api"
+	"github.com/federbenjamin/herdr-desk/internal/board"
+	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/store"
 )
 
 func w2State(tasks ...model.Task) board.State {
@@ -253,7 +253,7 @@ func TestKeysBoardNavigationFiltersDrawerAndOverlayKeepBoardStateCoherent(t *tes
 	}
 
 	s, _ = s.Update(press('p'))
-	if !strings.Contains(s.Text(), "desk  alpha ▾") || strings.Contains(s.Text(), "T2") {
+	if !strings.Contains(s.Text(), "herdr-desk  alpha ▾") || strings.Contains(s.Text(), "T2") {
 		t.Fatalf("first project filter = %q, want only alpha tasks", s.Text())
 	}
 	s, _ = s.Update(press('t'))
@@ -526,7 +526,7 @@ func TestKeysSearchFindsTaskNumbersAndTitlesWithoutCaseSensitivity(t *testing.T)
 	for range 2 {
 		filters, _ = filters.Update(press('p'))
 	}
-	if !strings.Contains(filters.Text(), "desk  no project ▾") || !strings.Contains(filters.Text(), "T14") || strings.Contains(filters.Text(), "T16") {
+	if !strings.Contains(filters.Text(), "herdr-desk  no project ▾") || !strings.Contains(filters.Text(), "T14") || strings.Contains(filters.Text(), "T16") {
 		t.Fatalf("no project filter = %q, want local tasks only", filters.Text())
 	}
 	filters, _ = filters.Update(press('t'))

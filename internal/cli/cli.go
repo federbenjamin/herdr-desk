@@ -1,4 +1,4 @@
-// Package cli is desk's command line. Run takes its streams, environment, and working directory as values,
+// Package cli is herdr-desk's command line. Run takes its streams, environment, and working directory as values,
 // so a test drives a command without touching the process.
 package cli
 
@@ -15,11 +15,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/federbenjamin/desk/internal/api"
-	"github.com/federbenjamin/desk/internal/config"
-	"github.com/federbenjamin/desk/internal/daemon"
-	"github.com/federbenjamin/desk/internal/model"
-	"github.com/federbenjamin/desk/internal/store"
+	"github.com/federbenjamin/herdr-desk/internal/api"
+	"github.com/federbenjamin/herdr-desk/internal/config"
+	"github.com/federbenjamin/herdr-desk/internal/daemon"
+	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/store"
 )
 
 // Env is what a command reads from and writes to in place of the process.
@@ -88,7 +88,7 @@ type app struct {
 	wroteConfig bool // the command wrote the config file
 }
 
-// Run runs one desk command and returns its exit code. args excludes the program name.
+// Run runs one herdr-desk command and returns its exit code. args excludes the program name.
 func Run(ctx context.Context, args []string, env Env) int {
 	if env.Stdin == nil {
 		env.Stdin = strings.NewReader("")
@@ -118,7 +118,7 @@ func Run(ctx context.Context, args []string, env Env) int {
 		if a.started {
 			code = exitCode(err)
 		}
-		name := "desk"
+		name := "herdr-desk"
 		if cmd != nil {
 			name = cmd.CommandPath()
 		}
@@ -139,7 +139,7 @@ func (a *app) warnStaleConfig() {
 		return
 	}
 	if info, ok := daemon.Running(a.paths); ok && a.paths.ConfigChanged(info.ConfigDigest) {
-		fmt.Fprintln(a.env.Stderr, "desk: the config file changed after the daemon started; run `desk daemon restart` to apply it")
+		fmt.Fprintln(a.env.Stderr, "herdr-desk: the config file changed after the daemon started; run `herdr-desk daemon restart` to apply it")
 	}
 }
 
@@ -153,7 +153,7 @@ func (a *app) do(fn func(cmd *cobra.Command, args []string) error) func(*cobra.C
 
 func (a *app) rootCmd() *cobra.Command {
 	root := &cobra.Command{
-		Use:           "desk",
+		Use:           "herdr-desk",
 		Short:         "A task board and session journal for you and your agents",
 		Args:          cobra.NoArgs,
 		SilenceErrors: true,
@@ -203,7 +203,7 @@ func (a *app) client() (*api.Client, error) {
 		Config: c,
 		Spawn:  a.env.Spawn,
 		Refused: func(kind model.Kind, r *model.Refusal) {
-			fmt.Fprintf(a.env.Stderr, "desk: a queued %s was refused: %s\n", kind, r.Error())
+			fmt.Fprintf(a.env.Stderr, "herdr-desk: a queued %s was refused: %s\n", kind, r.Error())
 		},
 		Unreachable: func(err error) {
 			a.unanswered = err.Error()

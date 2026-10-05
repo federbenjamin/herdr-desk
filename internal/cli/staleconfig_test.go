@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/federbenjamin/desk/internal/api"
-	"github.com/federbenjamin/desk/internal/config"
-	"github.com/federbenjamin/desk/internal/testutil"
+	"github.com/federbenjamin/herdr-desk/internal/api"
+	"github.com/federbenjamin/herdr-desk/internal/config"
+	"github.com/federbenjamin/herdr-desk/internal/testutil"
 )
 
-const restartHint = "desk daemon restart"
+const restartHint = "herdr-desk daemon restart"
 
 func daemonStatus(t *testing.T, home *testutil.Home) api.Status {
 	t.Helper()

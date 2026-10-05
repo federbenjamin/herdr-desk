@@ -11,9 +11,9 @@ RC_MINUTES=1
 runner_up home
 route_to "$SCRATCH" in-place sonnet "stub"
 
-run 0 on home desk add -t "runs too long" --desk --thread agent
+run 0 on home herdr-desk add -t "runs too long" --desk --thread agent
 set_mode 1 children
-run 0 on home desk set T1 ready
+run 0 on home herdr-desk set T1 ready
 wait_run 1 running
 wait_file "$STUB/pids-run1"
 sleep 20

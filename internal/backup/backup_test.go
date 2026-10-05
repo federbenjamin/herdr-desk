@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/federbenjamin/desk/internal/backup"
-	"github.com/federbenjamin/desk/internal/model"
-	"github.com/federbenjamin/desk/internal/store"
-	"github.com/federbenjamin/desk/internal/testutil"
+	"github.com/federbenjamin/herdr-desk/internal/backup"
+	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/store"
+	"github.com/federbenjamin/herdr-desk/internal/testutil"
 )
 
 func TestRunExportsEventsCommitsOnlyChangesPushesMainAndRecordsItsRun(t *testing.T) {

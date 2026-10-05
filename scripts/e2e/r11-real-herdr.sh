@@ -18,9 +18,9 @@ route_to "$SCRATCH" in-place sonnet "stub"
 FOCUS=$(focused_workspace)
 
 # T1: a busy worker whose pane closes without a hand-back.
-run 0 on home desk add -t "desk e2e: close my pane" --desk --thread agent
+run 0 on home herdr-desk add -t "desk e2e: close my pane" --desk --thread agent
 set_mode 1 busy
-run 0 on home desk set T1 ready
+run 0 on home herdr-desk set T1 ready
 wait_run 1 running 30
 wait_file "$STUB/worker-run1.env"
 track_workspaces
@@ -42,16 +42,16 @@ task_has_note 1 "the pane closed without a hand-back" || fail "T1 has no note th
 say "pane closed → review ok"
 
 # T2: kill a worker with a child.
-run 0 on home desk add -t "desk e2e: kill me" --desk --thread agent
+run 0 on home herdr-desk add -t "desk e2e: kill me" --desk --thread agent
 set_mode 2 children
-run 0 on home desk set T2 ready
+run 0 on home herdr-desk set T2 ready
 wait_run 2 running 30
 wait_file "$STUB/pids-run2"
 wait_long 10 "the child's pid" test "$(wc -l <"$STUB/pids-run2" | tr -d ' ')" -ge 2
 track_workspaces
 PANE2=$(run_field 2 pane)
 pids_alive "$STUB/pids-run2" || fail "the worker or its child is not alive"
-run 0 on home desk runs kill T2
+run 0 on home herdr-desk runs kill T2
 out_has "T2 blocked"
 wait_long 10 "the worker and its child to be gone" pids_dead "$STUB/pids-run2"
 say "kill: no process left ok"

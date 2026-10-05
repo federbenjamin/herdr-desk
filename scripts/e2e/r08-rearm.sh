@@ -11,11 +11,11 @@ runner_up home
 REASON="ROUTERREASON-the-scratch-root-fits"
 route_to "$SCRATCH" in-place sonnet "$REASON"
 
-run 0 on home desk add -t "Write the docs" -n "Check the README first." --desk --thread agent
-run 0 on home desk steps T1 add "read it"
-run 0 on home desk steps T1 add "fix it"
+run 0 on home herdr-desk add -t "Write the docs" -n "Check the README first." --desk --thread agent
+run 0 on home herdr-desk steps T1 add "read it"
+run 0 on home herdr-desk steps T1 add "fix it"
 set_mode 1 blocked
-run 0 on home desk set T1 ready
+run 0 on home herdr-desk set T1 ready
 wait_run 1 running
 wait_file "$STUB/worker-run1.message"
 M1="$STUB/worker-run1.message"
@@ -27,9 +27,9 @@ SESSION1=$(run_field 1 session)
 
 # The worker asks and the task blocks; a person answers and arms it again.
 wait_task 1 blocked
-run 0 on home desk note "Use the v2 API" --task T1
+run 0 on home herdr-desk note "Use the v2 API" --task T1
 set_mode 1 busy
-run 0 on home desk set T1 ready
+run 0 on home herdr-desk set T1 ready
 wait_run 2 running
 wait_file "$STUB/worker-run2.message"
 M2="$STUB/worker-run2.message"
@@ -43,10 +43,10 @@ SESSION2=$(run_field 2 session)
 [ "$SESSION1" != "$SESSION2" ] || fail "both runs have the session $SESSION1"
 
 # Run 1 is old: it may not set the status. Run 2 may.
-run 1 as_agent home "$SESSION1" env DESK_RUN=1 desk set T1 review
+run 1 as_agent home "$SESSION1" env DESK_RUN=1 herdr-desk set T1 review
 err_has "stale-run"
 task_is 1 started || fail "a stale run changed T1 to $(task_field 1 status)"
-run 0 as_agent home "$SESSION2" env DESK_RUN=2 desk set T1 review --ref e2e
+run 0 as_agent home "$SESSION2" env DESK_RUN=2 herdr-desk set T1 review --ref e2e
 task_is 1 review || fail "run 2's hand-back left T1 $(task_field 1 status)"
 say "new run sets review ok"
 pass

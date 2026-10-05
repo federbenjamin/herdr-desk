@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/federbenjamin/desk/internal/herdr"
+	"github.com/federbenjamin/herdr-desk/internal/herdr"
 )
 
 func writeExecutable(t *testing.T, path, body string) {
