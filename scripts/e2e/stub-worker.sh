@@ -3,8 +3,8 @@
 # `herdr-desk worker` execs it. It records what it was started with, tells herdr it is an agent working, then acts by the
 # word in <stubdir>/mode-<DESK_TASK>: busy (default) stays working; idle and blocked report that state; exit ends at
 # once; handback sets the task to review and reports idle; children also starts a background sleep. Its own pid, and
-# the sleep's, are recorded in <stubdir>/pids-run<DESK_RUN>. The stub directory is an argument because a pane does not inherit the
-# daemon's environment under the real herdr.
+# the sleep's, are recorded in <stubdir>/pids-run<DESK_RUN>. The stub directory is an argument because a pane does not
+# inherit the environment of the `run start` that opened it under the real herdr.
 set -eu
 dir=$1
 model=$2
