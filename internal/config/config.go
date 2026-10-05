@@ -2,25 +2,23 @@ package config
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io/fs"
-	"net"
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/pelletier/go-toml/v2"
+	"golang.org/x/sys/unix"
 
 	"github.com/federbenjamin/herdr-desk/internal/model"
 )
 
 // Config is the file $XDG_CONFIG_HOME/herdr-desk/config.toml.
 type Config struct {
-	Home       Home        `toml:"home"`
 	Client     Client      `toml:"client"`
 	Runner     Runner      `toml:"runner"`
 	Roots      []Root      `toml:"roots"`
@@ -31,14 +29,17 @@ type Config struct {
 	Backup     Backup      `toml:"backup"`
 }
 
-// Home is set on the home machine only.
-type Home struct {
-	Listen string `toml:"listen"`
+// Client is set on client machines only. Home is an ssh target; Command is the argv template that carries one
+// request to the home, with {home} and {control} expanded.
+type Client struct {
+	Home    string   `toml:"home"`
+	Command []string `toml:"command"` // empty → DefaultClientCommand()
 }
 
-// Client is set on client machines only.
-type Client struct {
-	Home string `toml:"home"`
+// DefaultClientCommand is the [client] command a config that sets none uses: ssh in batch mode with a 5-second
+// connect timeout, reusing one connection through a control socket for a minute.
+func DefaultClientCommand() []string {
+	return []string{"ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-o", "ControlMaster=auto", "-o", "ControlPath={control}", "-o", "ControlPersist=60", "{home}", "herdr-desk", "rpc"}
 }
 
 // Runner: Enabled is shown by the board; AgentsMayArm and OnMerged are read by the store. The four
@@ -114,35 +115,20 @@ func Load(path string) (Config, error) {
 		return Config{}, err
 	}
 	if err := toml.NewDecoder(bytes.NewReader(b)).DisallowUnknownFields().Decode(&c); err != nil {
+		var missing *toml.StrictMissingError
+		if errors.As(err, &missing) {
+			var keys []string
+			for _, e := range missing.Errors {
+				keys = append(keys, strings.Join(e.Key(), "."))
+			}
+			return Config{}, fmt.Errorf("%s: unknown key %s", path, strings.Join(keys, ", "))
+		}
 		return Config{}, fmt.Errorf("%s: %w", path, err)
 	}
 	if err := c.Validate(); err != nil {
 		return Config{}, fmt.Errorf("%s: %w", path, err)
 	}
 	return c, nil
-}
-
-// Digest names the content of c: the SHA-256, in hex, of the bytes Save writes for it. Two configs with the same
-// digest behave the same, whatever the file they were read from looked like (comments, order, spacing, keys left at
-// their default).
-func (c Config) Digest() string {
-	b, err := toml.Marshal(c)
-	if err != nil {
-		return ""
-	}
-	return fmt.Sprintf("%x", sha256.Sum256(b))
-}
-
-// ConfigChanged reports whether the config file now holds a different config from the one whose Digest the daemon
-// recorded when it started: the daemon reads the file only then. A missing file reads as Default(), and a file that
-// cannot be read or fails Load is a change. An empty started digest (a daemon that recorded none) is no change.
-// The file's times play no part: a touch, or a rewrite with the same content, is no change.
-func (p Paths) ConfigChanged(started string) bool {
-	if started == "" {
-		return false
-	}
-	c, err := Load(p.ConfigFile())
-	return err != nil || c.Digest() != started
 }
 
 // Save writes the config to path, 0600, through a temp file and a rename. The comment above
@@ -192,9 +178,61 @@ func WriteFileAtomic(path string, b []byte) error {
 	return os.Rename(tmp, path)
 }
 
+// ErrLocked is TryLock finding the lock held by another open file description.
+var ErrLocked = errors.New("locked")
+
+// TryLock takes an exclusive flock on path without waiting, creating the file 0600 and its folder 0700. It returns
+// ErrLocked when another holder has it. The lock lasts until unlock or the process ends.
+func TryLock(path string) (unlock func() error, err error) {
+	return lock(path, unix.LOCK_EX|unix.LOCK_NB)
+}
+
+// Lock is TryLock that waits for the lock.
+func Lock(path string) (unlock func() error, err error) {
+	return lock(path, unix.LOCK_EX)
+}
+
+func lock(path string, how int) (func() error, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := unix.Flock(int(f.Fd()), how); err != nil {
+		f.Close()
+		if errors.Is(err, unix.EWOULDBLOCK) {
+			return nil, ErrLocked
+		}
+		return nil, err
+	}
+	return func() error { return errors.Join(unix.Flock(int(f.Fd()), unix.LOCK_UN), f.Close()) }, nil
+}
+
+// LockHeld reports whether another holder has the lock on path; a file that does not exist is not held. It
+// creates nothing.
+func LockHeld(path string) (bool, error) {
+	f, err := os.OpenFile(path, os.O_RDWR, 0)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		if errors.Is(err, unix.EWOULDBLOCK) {
+			return true, nil
+		}
+		return false, err
+	}
+	return false, unix.Flock(int(f.Fd()), unix.LOCK_UN)
+}
+
 // Validate checks on_merged, that the runner's four limits are at least 1, each root's isolation, and that
-// listen and client.home are host:port, with listen never on a wildcard host. An empty on_merged reads as
-// "review".
+// client.home can be an ssh target: it is one argv element of the [client] command, so it may not start with "-",
+// hold whitespace or a control character, or be over 255 bytes. An empty on_merged reads as "review".
 func (c Config) Validate() error {
 	if _, ok := model.OnMergedStatus(c.Runner.OnMerged); !ok {
 		return fmt.Errorf("runner.on_merged must be \"review\" or \"done\", not %q", c.Runner.OnMerged)
@@ -220,37 +258,21 @@ func (c Config) Validate() error {
 			return fmt.Errorf("roots %s: isolation must be self, worktree, or in-place, not %q", r.Path, r.Isolation)
 		}
 	}
-	if c.Home.Listen != "" {
-		if err := checkHostPort(c.Home.Listen, true); err != nil {
-			return fmt.Errorf("home.listen: %w", err)
-		}
-	}
-	if c.Client.Home != "" {
-		if err := checkHostPort(c.Client.Home, false); err != nil {
-			return fmt.Errorf("client.home: %w", err)
-		}
+	if err := checkSSHTarget(c.Client.Home); err != nil {
+		return fmt.Errorf("client.home: %w", err)
 	}
 	return nil
 }
 
-// checkHostPort accepts host:port with a named host. A listen address may use port 0 (any free port) and
-// never a wildcard host, which would serve the API on every network.
-func checkHostPort(addr string, listen bool) error {
-	host, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		return fmt.Errorf("%q is not host:port", addr)
-	}
-	if host == "" {
-		return fmt.Errorf("%q names no host", addr)
-	}
-	n, err := strconv.Atoi(port)
-	if err != nil || n < 0 || n > 65535 || (n == 0 && !listen) {
-		return fmt.Errorf("%q has a bad port", addr)
-	}
-	if listen {
-		if ip := net.ParseIP(host); ip != nil && ip.IsUnspecified() {
-			return fmt.Errorf("%q is a wildcard address; name one interface", addr)
-		}
+// checkSSHTarget accepts "" (a home) and any target ssh can take as one argument that is not an option.
+func checkSSHTarget(home string) error {
+	switch {
+	case strings.HasPrefix(home, "-"):
+		return fmt.Errorf("%q starts with \"-\", which ssh reads as an option", home)
+	case len(home) > 255:
+		return fmt.Errorf("%q is over 255 bytes", home)
+	case strings.IndexFunc(home, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0:
+		return fmt.Errorf("%q holds whitespace or a control character", home)
 	}
 	return nil
 }

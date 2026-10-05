@@ -1,8 +1,10 @@
-// Package api is herdr-desk's JSON API over HTTP: POST /v1/<method> with a JSON body. The daemon serves it on a
-// unix socket and, when configured, on a TCP address that requires the bearer token.
+// Package api is herdr-desk's JSON API: one RPCRequest, one RPCResponse. On a home a command answers it in its own
+// process against the store; a client sends it through the [client] command, which runs `herdr-desk rpc` on the
+// home.
 package api
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/federbenjamin/herdr-desk/internal/model"
@@ -22,7 +24,7 @@ const (
 	MethodRunsKill     = "runs.kill"
 	MethodRunnerPause  = "runner.pause"
 	MethodStatus       = "status"
-	MethodBackupRun    = "backup.run" // unix socket only
+	MethodBackupRun    = "backup.run"
 )
 
 // The values of Status.RunnerState.
@@ -34,8 +36,31 @@ const (
 	RunnerStateNoHerdr  = "no-herdr"
 )
 
-// maxBody is the largest request body the server reads.
+// maxBody is the largest request rpc reads.
 const maxBody = 1 << 20
+
+// RPCRequest is one call: a method and its params.
+type RPCRequest struct {
+	Method string          `json:"method"`
+	Params json.RawMessage `json:"params"`
+}
+
+// RPCResponse is one answer. Exactly one field is set: the result, a refusal with its stable code, or an error.
+type RPCResponse struct {
+	Result  json.RawMessage `json:"result,omitempty"`
+	Refusal *model.Refusal  `json:"refusal,omitempty"`
+	Error   *RPCError       `json:"error,omitempty"`
+}
+
+// RPCError is an answer that is neither a result nor a refusal. BadRequest means the request itself is at fault (it
+// does not parse, names no method, or is over 1 MiB), so a retry never helps; else the home failed and a retry may.
+type RPCError struct {
+	BadRequest bool   `json:"bad_request"`
+	Message    string `json:"message"`
+}
+
+// Error returns the message.
+func (e *RPCError) Error() string { return e.Message }
 
 // AppendRequest carries one journal event. Exactly the field its Kind names is set; any other pairing is a 400.
 type AppendRequest struct {
@@ -67,11 +92,10 @@ func (r AppendRequest) valid() bool {
 
 // Status is what the status method returns.
 type Status struct {
-	Version   string               `json:"version"`
-	Listen    string               `json:"listen"`
-	StartedTS time.Time            `json:"started_ts"`
-	RunnerOn  bool                 `json:"runner_on"`
-	Tasks     map[model.Status]int `json:"tasks"`
+	Version  string               `json:"version"`
+	Ticker   TickerStatus         `json:"ticker"`
+	RunnerOn bool                 `json:"runner_on"`
+	Tasks    map[model.Status]int `json:"tasks"`
 	// RunnerState is off, paused, no-herdr, no-router, or on.
 	RunnerState  string `json:"runner_state"`
 	RunnerPaused bool   `json:"runner_paused"`
@@ -80,10 +104,13 @@ type Status struct {
 	// last attempt when it failed after that run, "" otherwise. Both come from the backup state file.
 	BackupTS    *time.Time `json:"backup_ts"`
 	BackupError string     `json:"backup_error"`
-	// ConfigChanged is true when the config file now holds a different config from the one the daemon started
-	// with (a touch or a same-content rewrite is not a change). The daemon reads the file once, at start, so it
-	// is still running on the old values until `herdr-desk daemon restart`.
-	ConfigChanged bool `json:"config_changed"`
+}
+
+// TickerStatus is the home's ticker: whether one holds the lock, and its pid and start time when it does.
+type TickerStatus struct {
+	Running   bool       `json:"running"`
+	PID       int        `json:"pid"`
+	StartedTS *time.Time `json:"started_ts"`
 }
 
 // TaskList is what tasks.list returns, and what Client.ListTasks returns when it answers from the snapshot.
@@ -125,9 +152,3 @@ type (
 	}
 	empty struct{}
 )
-
-// errorBody is the body of every answer that is not 200. Code is set only on a 409.
-type errorBody struct {
-	Code    string `json:"code,omitempty"`
-	Message string `json:"message"`
-}

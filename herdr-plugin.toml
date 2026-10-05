@@ -13,11 +13,11 @@ platforms = ["linux", "macos"]
 platforms = ["linux", "macos"]
 command = ["/bin/sh", "scripts/fetch-or-build.sh"]
 
-# Starts the daemon with herdr. A second start is a clean no-op, and on a client machine it
-# prints a note and exits 0.
+# Starts the ticker with herdr: the timed jobs of a home, once a minute. A second start is a clean
+# no-op, and on a client machine it prints a note and exits 0.
 [[startup]]
 platforms = ["linux", "macos"]
-command = ["herdr-desk", "daemon"]
+command = ["herdr-desk", "ticker"]
 
 [[panes]]
 id = "board"
@@ -46,10 +46,3 @@ title = "herdr-desk: capture"
 description = "Add a task from one line in a popup"
 contexts = ["global", "workspace"]
 command = ["sh", "scripts/open-pane.sh", "capture"]
-
-[[actions]]
-id = "restart"
-title = "herdr-desk: restart daemon"
-description = "Stop the herdr-desk daemon and start a fresh one"
-contexts = ["global"]
-command = ["herdr-desk", "daemon", "restart"]

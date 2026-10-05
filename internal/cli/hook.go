@@ -52,7 +52,7 @@ func (a *app) hookCmd() *cobra.Command {
 			}
 		}
 		data, err := c.SessionView(a.ctx, in.SessionID)
-		if r, ok := model.AsRefusal(err); ok && (r.Code == model.CodeHomeUnreachable || r.Code == model.CodeBadToken) {
+		if r, ok := model.AsRefusal(err); ok && r.Code == model.CodeHomeUnreachable {
 			a.say("herdr-desk: this session's journal is not loaded: %s", r.Msg)
 			return nil
 		}

@@ -13,7 +13,7 @@ import (
 func startSessionView(t *testing.T, m *testutil.Machine, session string) string {
 	t.Helper()
 	input := fmt.Sprintf(`{"source":"startup","session_id":%q}`, session)
-	result := runDeskWithEnv(t, m, t.TempDir(), []string{"hook", "start", "--format", "claude-code"}, input, nil, nil)
+	result := runDeskWithEnv(t, m, t.TempDir(), []string{"hook", "start", "--format", "claude-code"}, input, nil)
 	requireSuccess(t, result)
 	return filepath.Join(m.Paths.SessionsDir(), session+".md")
 }
@@ -28,7 +28,7 @@ func readView(t *testing.T, path string) string {
 }
 
 func TestEveryWriteBySessionRefreshesTheViewFileTheHookNamed(t *testing.T) {
-	home := testutil.StartHome(t, testutil.HomeOptions{Listen: true})
+	home := testutil.StartHome(t, testutil.HomeOptions{})
 	client := testutil.NewClientMachine(t, home)
 	for _, machine := range []struct {
 		name string
@@ -40,7 +40,7 @@ func TestEveryWriteBySessionRefreshesTheViewFileTheHookNamed(t *testing.T) {
 			env := map[string]string{"DESK_SESSION": session}
 			run := func(args ...string) string {
 				t.Helper()
-				result := runDeskWithEnv(t, machine.m, t.TempDir(), args, "", env, nil)
+				result := runDeskWithEnv(t, machine.m, t.TempDir(), args, "", env)
 				requireSuccess(t, result)
 				return strings.TrimSpace(result.stdout)
 			}
@@ -70,13 +70,13 @@ func TestEveryWriteBySessionRefreshesTheViewFileTheHookNamed(t *testing.T) {
 			if got := readView(t, path); got == before || !strings.Contains(got, "follow up on the lexer") {
 				t.Errorf("view after edit = %q, want the new title", got)
 			}
-			captured := runDeskWithEnv(t, machine.m, t.TempDir(), []string{"capture"}, "captured by the session #agent\n", env, nil)
+			captured := runDeskWithEnv(t, machine.m, t.TempDir(), []string{"capture"}, "captured by the session #agent\n", env)
 			requireSuccess(t, captured)
 			if got := readView(t, path); !strings.Contains(got, "captured by the session") {
 				t.Errorf("view after capture = %q, want the task", got)
 			}
 			older := map[string]string{"DESK_SESSION": "older-" + machine.name}
-			requireSuccess(t, runDeskWithEnv(t, machine.m, t.TempDir(), []string{"note", "found in the older session"}, "", older, nil))
+			requireSuccess(t, runDeskWithEnv(t, machine.m, t.TempDir(), []string{"note", "found in the older session"}, "", older))
 			run("session", "--continues", "older-"+machine.name)
 			if got := readView(t, path); !strings.Contains(got, "found in the older session") {
 				t.Errorf("view after session --continues = %q, want the older session's note", got)
@@ -86,11 +86,11 @@ func TestEveryWriteBySessionRefreshesTheViewFileTheHookNamed(t *testing.T) {
 }
 
 func TestAWriteBySessionWithNoViewFileMakesNoneAndAQueuedWriteLeavesItStale(t *testing.T) {
-	home := testutil.StartHome(t, testutil.HomeOptions{Listen: true})
+	home := testutil.StartHome(t, testutil.HomeOptions{})
 	client := testutil.NewClientMachine(t, home)
 
 	env := map[string]string{"DESK_SESSION": "no-hook"}
-	requireSuccess(t, runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"note", "no hook ran"}, "", env, nil))
+	requireSuccess(t, runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"note", "no hook ran"}, "", env))
 	if _, err := os.Stat(filepath.Join(home.Paths.SessionsDir(), "no-hook.md")); err == nil {
 		t.Error("a note by a session whose hook never ran created a view file")
 	}
@@ -98,7 +98,7 @@ func TestAWriteBySessionWithNoViewFileMakesNoneAndAQueuedWriteLeavesItStale(t *t
 	path := startSessionView(t, client, "queued")
 	stale := readView(t, path)
 	home.Stop()
-	result := runDeskWithEnv(t, client, t.TempDir(), []string{"note", "written offline"}, "", map[string]string{"DESK_SESSION": "queued"}, nil)
+	result := runDeskWithEnv(t, client, t.TempDir(), []string{"note", "written offline"}, "", map[string]string{"DESK_SESSION": "queued"})
 	requireSuccess(t, result)
 	if strings.TrimSpace(result.stdout) != "queued" {
 		t.Fatalf("offline note stdout = %q, want queued", result.stdout)

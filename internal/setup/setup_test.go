@@ -3,7 +3,6 @@ package setup_test
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"errors"
 	"io/fs"
 	"os"
@@ -17,6 +16,12 @@ import (
 	"github.com/federbenjamin/herdr-desk/internal/setup"
 	"github.com/federbenjamin/herdr-desk/internal/testutil"
 )
+
+// TestMain lets this test binary answer as a home's rpc helper, for client machines.
+func TestMain(m *testing.M) {
+	testutil.ServeRPCIfAsked()
+	os.Exit(m.Run())
+}
 
 func TestRunKeepsExistingValuesAndCreatesTheHomePrerequisites(t *testing.T) {
 	p, getenv := setupPaths(t)
@@ -32,7 +37,6 @@ func TestRunKeepsExistingValuesAndCreatesTheHomePrerequisites(t *testing.T) {
 	if err := setup.Run(context.Background(), setup.Options{
 		Paths:  p,
 		Getenv: getenv,
-		Listen: "127.0.0.1:7411",
 		Out:    &out,
 	}); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -42,29 +46,15 @@ func TestRunKeepsExistingValuesAndCreatesTheHomePrerequisites(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load configured home: %v", err)
 	}
-	if got.Home.Listen != "127.0.0.1:7411" {
-		t.Errorf("home listen = %q; want setup listen", got.Home.Listen)
-	}
 	if !got.Runner.Enabled || got.Runner.Cap != 7 || !reflect.DeepEqual(got.SecretScan.Command, []string{"scan-existing"}) {
 		t.Errorf("Run lost existing config values: %#v", got)
 	}
-
-	token, err := config.ReadToken(p)
+	info, err := os.Stat(p.ConfigFile())
 	if err != nil {
-		t.Fatalf("read setup token: %v", err)
-	}
-	if len(token) != 64 {
-		t.Errorf("token length = %d; want 64 hexadecimal characters", len(token))
-	}
-	if _, err := hex.DecodeString(token); err != nil {
-		t.Errorf("token is not hexadecimal: %v", err)
-	}
-	info, err := os.Stat(p.TokenFile())
-	if err != nil {
-		t.Fatalf("stat setup token: %v", err)
+		t.Fatalf("stat setup config: %v", err)
 	}
 	if got := info.Mode().Perm(); got != 0o600 {
-		t.Errorf("token mode = %04o; want 0600", got)
+		t.Errorf("config mode = %04o; want 0600", got)
 	}
 	if _, err := os.Stat(filepath.Join(p.ScratchRoot(), ".git")); err != nil {
 		t.Errorf("scratch root is not a git repository: %v", err)
@@ -73,37 +63,31 @@ func TestRunKeepsExistingValuesAndCreatesTheHomePrerequisites(t *testing.T) {
 		t.Errorf("Run report has %d lines; want a line for each written or skipped item:\n%s", lines, out.String())
 	}
 	out.Reset()
-	if err := setup.Run(context.Background(), setup.Options{Paths: p, Getenv: getenv, Listen: "127.0.0.1:7411", Out: &out}); err != nil {
+	if err := setup.Run(context.Background(), setup.Options{Paths: p, Getenv: getenv, Out: &out}); err != nil {
 		t.Fatalf("second Run() error = %v", err)
 	}
-	for _, line := range []string{"token: " + p.TokenFile() + " kept", "scratch root: " + p.ScratchRoot() + " kept"} {
+	for _, line := range []string{"config: " + p.ConfigFile() + " unchanged", "scratch root: " + p.ScratchRoot() + " kept"} {
 		if !strings.Contains(out.String(), line) {
 			t.Errorf("second Run report = %q; want %q", out.String(), line)
 		}
 	}
 
 	invalidPaths, invalidGetenv := setupPaths(t)
-	if err := setup.Run(context.Background(), setup.Options{Paths: invalidPaths, Getenv: invalidGetenv, Listen: "0.0.0.0:7411"}); err == nil {
-		t.Fatal("Run(wildcard listen) error = nil; want validation failure")
+	if err := setup.Run(context.Background(), setup.Options{Paths: invalidPaths, Getenv: invalidGetenv, Profile: "no-such-profile"}); err == nil {
+		t.Fatal("Run(unknown profile) error = nil; want validation failure")
 	}
-	for _, file := range []string{invalidPaths.ConfigFile(), invalidPaths.TokenFile()} {
-		if _, err := os.Stat(file); !errors.Is(err, fs.ErrNotExist) {
-			t.Errorf("Run(wildcard listen) wrote %q: stat error = %v; want not exist", file, err)
-		}
+	if _, err := os.Stat(invalidPaths.ConfigFile()); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("Run(unknown profile) wrote %q: stat error = %v; want not exist", invalidPaths.ConfigFile(), err)
 	}
 }
 
-func TestRunAppliesClaudeCodeProfileWritesSkillAndPreservesExistingToken(t *testing.T) {
+func TestRunAppliesClaudeCodeProfileAndWritesSkill(t *testing.T) {
 	p, getenv := setupPaths(t)
-	if err := config.WriteToken(p, "already-issued-token"); err != nil {
-		t.Fatalf("write existing token: %v", err)
-	}
 	skillDir := filepath.Join(t.TempDir(), "skills")
 	if err := setup.Run(context.Background(), setup.Options{
 		Paths:    p,
 		Getenv:   getenv,
 		Profile:  "claude-code",
-		Listen:   "127.0.0.1:7411",
 		SkillDir: skillDir,
 		NoHerdr:  true,
 		Out:      new(bytes.Buffer),
@@ -126,9 +110,6 @@ func TestRunAppliesClaudeCodeProfileWritesSkillAndPreservesExistingToken(t *test
 	if got.Agent.SessionEnv != "CLAUDE_CODE_SESSION_ID" {
 		t.Errorf("session env = %q; want CLAUDE_CODE_SESSION_ID", got.Agent.SessionEnv)
 	}
-	if token, err := config.ReadToken(p); err != nil || token != "already-issued-token" {
-		t.Errorf("Run changed existing token to %q, %v", token, err)
-	}
 	skillFile := filepath.Join(skillDir, "herdr-desk", "SKILL.md")
 	writtenSkill, err := os.ReadFile(skillFile)
 	if err != nil {
@@ -142,7 +123,6 @@ func TestRunAppliesClaudeCodeProfileWritesSkillAndPreservesExistingToken(t *test
 		Paths:    p,
 		Getenv:   getenv,
 		Profile:  "claude-code",
-		Listen:   "127.0.0.1:7411",
 		SkillDir: skillDir,
 		NoHerdr:  true,
 		Out:      &secondOut,
@@ -303,63 +283,6 @@ func TestSkillReturnsTheInstalledClaudeCodeContract(t *testing.T) {
 	}
 	if skill != string(profileSkill) {
 		t.Error("Skill() differs from profiles/claude-code/skills/herdr-desk/SKILL.md")
-	}
-}
-
-func TestClientAddWritesOnlyAfterTheHomeAcceptsItsToken(t *testing.T) {
-	home := testutil.StartHome(t, testutil.HomeOptions{Listen: true})
-	client := testutil.NewMachine(t)
-
-	if err := setup.ClientAdd(context.Background(), client.Paths, home.Addr, home.Token); err != nil {
-		t.Fatalf("ClientAdd(valid home) error = %v", err)
-	}
-	got, err := config.Load(client.Paths.ConfigFile())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Client.Home != home.Addr {
-		t.Errorf("client home = %q; want %q", got.Client.Home, home.Addr)
-	}
-	if token, err := config.ReadToken(client.Paths); err != nil || token != home.Token {
-		t.Errorf("stored token = %q, %v; want home token", token, err)
-	}
-
-	badClient := testutil.NewMachine(t)
-	if err := setup.ClientAdd(context.Background(), badClient.Paths, home.Addr, "wrong-token"); err == nil {
-		t.Fatal("ClientAdd(wrong token) error = nil; want refusal")
-	}
-	for _, file := range []string{badClient.Paths.ConfigFile(), badClient.Paths.TokenFile()} {
-		if _, err := os.Stat(file); !errors.Is(err, fs.ErrNotExist) {
-			t.Errorf("ClientAdd(wrong token) wrote %q: stat error = %v; want not exist", file, err)
-		}
-	}
-}
-
-func TestClientAddChecksTheHomeWithoutWritingATemporaryToken(t *testing.T) {
-	home := testutil.StartHome(t, testutil.HomeOptions{Listen: true})
-	client := testutil.NewMachine(t)
-	tmp := t.TempDir()
-	if err := os.Chmod(tmp, 0o500); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(tmp, 0o700) })
-	t.Setenv("TMPDIR", tmp)
-
-	if err := setup.ClientAdd(context.Background(), client.Paths, home.Addr, home.Token); err != nil {
-		t.Fatalf("ClientAdd with a temp folder it cannot write = %v, want the check made with the token in memory", err)
-	}
-	root := filepath.Dir(filepath.Dir(client.Paths.ConfigDir))
-	var files []string
-	if err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err == nil && !d.IsDir() {
-			files = append(files, path)
-		}
-		return err
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if want := []string{client.Paths.ConfigFile(), client.Paths.TokenFile()}; !reflect.DeepEqual(files, want) {
-		t.Errorf("ClientAdd wrote %q, want only %q", files, want)
 	}
 }
 

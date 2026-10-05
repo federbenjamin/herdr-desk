@@ -1,4 +1,4 @@
-// Package config owns herdr-desk's files on disk: where they live, the config file, and the token.
+// Package config owns herdr-desk's files on disk: where they live, the config file, and the locks.
 package config
 
 import "path/filepath"
@@ -28,20 +28,21 @@ func ResolvePaths(getenv func(string) string) Paths {
 // ConfigFile is ConfigDir/config.toml.
 func (p Paths) ConfigFile() string { return filepath.Join(p.ConfigDir, "config.toml") }
 
-// TokenFile is ConfigDir/token.
-func (p Paths) TokenFile() string { return filepath.Join(p.ConfigDir, "token") }
+// TickerLock is StateDir/ticker.lock: the ticker holds it while it runs.
+func (p Paths) TickerLock() string { return filepath.Join(p.StateDir, "ticker.lock") }
 
-// Socket is StateDir/desk.sock.
-func (p Paths) Socket() string { return filepath.Join(p.StateDir, "desk.sock") }
+// TickerInfo is StateDir/ticker.json: the running ticker's pid and start time.
+func (p Paths) TickerInfo() string { return filepath.Join(p.StateDir, "ticker.json") }
 
-// LockFile is StateDir/daemon.lock.
-func (p Paths) LockFile() string { return filepath.Join(p.StateDir, "daemon.lock") }
+// Log is StateDir/herdr-desk.log.
+func (p Paths) Log() string { return filepath.Join(p.StateDir, "herdr-desk.log") }
 
-// DaemonInfo is StateDir/daemon.json.
-func (p Paths) DaemonInfo() string { return filepath.Join(p.StateDir, "daemon.json") }
+// ControlPath is StateDir/ssh-%C: the ssh control socket of the default [client] command. ssh expands %C to a hash
+// of the connection, so the path stays short.
+func (p Paths) ControlPath() string { return filepath.Join(p.StateDir, "ssh-%C") }
 
-// DaemonLog is StateDir/daemon.log.
-func (p Paths) DaemonLog() string { return filepath.Join(p.StateDir, "daemon.log") }
+// BackupLock is StateDir/backup.lock: a backup run holds it.
+func (p Paths) BackupLock() string { return filepath.Join(p.StateDir, "backup.lock") }
 
 // Outbox is StateDir/outbox.jsonl.
 func (p Paths) Outbox() string { return filepath.Join(p.StateDir, "outbox.jsonl") }

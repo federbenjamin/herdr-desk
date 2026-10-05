@@ -14,7 +14,7 @@ import (
 	"github.com/federbenjamin/herdr-desk/internal/testutil"
 )
 
-func runDeskWithEnv(t *testing.T, machine *testutil.Machine, cwd string, args []string, stdin string, extra map[string]string, spawn func(config.Paths) error) commandResult {
+func runDeskWithEnv(t *testing.T, machine *testutil.Machine, cwd string, args []string, stdin string, extra map[string]string) commandResult {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
 	return commandResult{
@@ -24,7 +24,6 @@ func runDeskWithEnv(t *testing.T, machine *testutil.Machine, cwd string, args []
 			Stderr: &stderr,
 			Getenv: machine.Getenv(extra),
 			Cwd:    cwd,
-			Spawn:  spawn,
 		}),
 		stdout: stdout.String(),
 		stderr: stderr.String(),
@@ -40,7 +39,7 @@ func TestNoteRecordsSessionTaskReferenceAndTags(t *testing.T) {
 
 	result := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{
 		"note", "finished the first pass", "--task", "T1", "--ref", "internal/cli/journal.go", "--branch", "feature/journal", "--tag", "question",
-	}, "", map[string]string{"DESK_SESSION": "session-note"}, nil)
+	}, "", map[string]string{"DESK_SESSION": "session-note"})
 	if result.exit != 0 {
 		t.Fatalf("note exit = %d, stderr = %q", result.exit, result.stderr)
 	}
@@ -72,26 +71,26 @@ func TestNoteRecordsSessionTaskReferenceAndTags(t *testing.T) {
 }
 
 func TestOfflineNoteQueuesAndForwardsOnTheNextJournalWrite(t *testing.T) {
-	home := testutil.StartHome(t, testutil.HomeOptions{Listen: true})
+	home := testutil.StartHome(t, testutil.HomeOptions{})
 	client := testutil.NewClientMachine(t, home)
 	home.Stop()
 
-	queued := runDeskWithEnv(t, client, t.TempDir(), []string{"note", "queued fact"}, "", map[string]string{"DESK_SESSION": "offline-journal"}, nil)
+	queued := runDeskWithEnv(t, client, t.TempDir(), []string{"note", "queued fact"}, "", map[string]string{"DESK_SESSION": "offline-journal"})
 	if queued.exit != 0 || strings.TrimSpace(queued.stdout) != "queued" {
 		t.Fatalf("offline note = (%d, %q, %q), want queued success", queued.exit, queued.stdout, queued.stderr)
 	}
 	if !strings.Contains(queued.stderr, "forward") {
 		t.Fatalf("offline note stderr = %q, want forwarding notice", queued.stderr)
 	}
-	if why := "the home at " + home.Addr + " did not answer: "; !strings.Contains(queued.stderr, why) || !strings.Contains(queued.stderr, "dial tcp") {
-		t.Fatalf("offline note stderr = %q, want %q and the dial error", queued.stderr, why)
+	if why := "the home at home did not answer: "; !strings.Contains(queued.stderr, why) || !strings.Contains(queued.stderr, "exited 255") {
+		t.Fatalf("offline note stderr = %q, want %q and the command's exit", queued.stderr, why)
 	}
-	if strings.Contains(queued.stderr, home.Token) || strings.Contains(queued.stderr, model.CodeHomeUnreachable) {
-		t.Fatalf("offline note stderr = %q, want neither the token nor a refusal code", queued.stderr)
+	if strings.Contains(queued.stderr, model.CodeHomeUnreachable) {
+		t.Fatalf("offline note stderr = %q, want no refusal code", queued.stderr)
 	}
 
 	home.Restart(t)
-	sent := runDeskWithEnv(t, client, t.TempDir(), []string{"note", "sent after reconnect"}, "", map[string]string{"DESK_SESSION": "offline-journal"}, nil)
+	sent := runDeskWithEnv(t, client, t.TempDir(), []string{"note", "sent after reconnect"}, "", map[string]string{"DESK_SESSION": "offline-journal"})
 	if sent.exit != 0 || strings.TrimSpace(sent.stdout) != "e2" {
 		t.Fatalf("reconnected note = (%d, %q, %q), want e2", sent.exit, sent.stdout, sent.stderr)
 	}
@@ -114,19 +113,19 @@ func TestOfflineNoteQueuesAndForwardsOnTheNextJournalWrite(t *testing.T) {
 }
 
 func TestForwardingAQueuedSecretReportsItsRefusalOnceWithoutChangingTheCommand(t *testing.T) {
-	home := testutil.StartHome(t, testutil.HomeOptions{Listen: true})
+	home := testutil.StartHome(t, testutil.HomeOptions{})
 	client := testutil.NewClientMachine(t, home)
 	env := map[string]string{"DESK_SESSION": "refused-queued-note"}
 	secret := "AKIA1234567890ABCDEF"
 	home.Stop()
 
-	queued := runDeskWithEnv(t, client, t.TempDir(), []string{"note", secret}, "", env, nil)
+	queued := runDeskWithEnv(t, client, t.TempDir(), []string{"note", secret}, "", env)
 	if queued.exit != 0 || strings.TrimSpace(queued.stdout) != "queued" {
 		t.Fatalf("offline secret note = (%d, %q, %q), want queued success", queued.exit, queued.stdout, queued.stderr)
 	}
 
 	home.Restart(t)
-	forwarded := runDeskWithEnv(t, client, t.TempDir(), []string{"note", "accepted after refusal"}, "", env, nil)
+	forwarded := runDeskWithEnv(t, client, t.TempDir(), []string{"note", "accepted after refusal"}, "", env)
 	if forwarded.exit != 0 || strings.TrimSpace(forwarded.stdout) != "e1" {
 		t.Fatalf("forwarding command = (%d, %q, %q), want e1 success", forwarded.exit, forwarded.stdout, forwarded.stderr)
 	}
@@ -138,7 +137,7 @@ func TestForwardingAQueuedSecretReportsItsRefusalOnceWithoutChangingTheCommand(t
 		t.Fatalf("forwarding stderr exposes the queued secret: %q", forwarded.stderr)
 	}
 
-	again := runDeskWithEnv(t, client, t.TempDir(), []string{"note", "accepted again"}, "", env, nil)
+	again := runDeskWithEnv(t, client, t.TempDir(), []string{"note", "accepted again"}, "", env)
 	if again.exit != 0 || strings.TrimSpace(again.stdout) != "e2" || again.stderr != "" {
 		t.Fatalf("second command = (%d, %q, %q), want e2 success with no refusal", again.exit, again.stdout, again.stderr)
 	}
@@ -147,15 +146,15 @@ func TestForwardingAQueuedSecretReportsItsRefusalOnceWithoutChangingTheCommand(t
 func TestMergedAndDecisionJournalCommandsPreserveTheirPayloads(t *testing.T) {
 	home := testutil.StartHome(t, testutil.HomeOptions{})
 	env := map[string]string{"DESK_SESSION": "journal-payloads"}
-	first := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"decide", "first decision"}, "", env, nil)
+	first := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"decide", "first decision"}, "", env)
 	if first.exit != 0 || strings.TrimSpace(first.stdout) != "e1" {
 		t.Fatalf("first decision = (%d, %q, %q)", first.exit, first.stdout, first.stderr)
 	}
-	merged := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"note", "--merged", "--branch", "feature/payload", "--pr", "42", "--sha", "deadbeef", "merged safely"}, "", env, nil)
+	merged := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"note", "--merged", "--branch", "feature/payload", "--pr", "42", "--sha", "deadbeef", "merged safely"}, "", env)
 	if merged.exit != 0 || strings.TrimSpace(merged.stdout) != "e2" {
 		t.Fatalf("merged note = (%d, %q, %q)", merged.exit, merged.stdout, merged.stderr)
 	}
-	decision := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"decide", "keep the durable outbox", "--tag", "tunable:outbox", "--replaces", "e1"}, "", env, nil)
+	decision := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"decide", "keep the durable outbox", "--tag", "tunable:outbox", "--replaces", "e1"}, "", env)
 	if decision.exit != 0 || strings.TrimSpace(decision.stdout) != "e3" {
 		t.Fatalf("decide = (%d, %q, %q)", decision.exit, decision.stdout, decision.stderr)
 	}
@@ -197,7 +196,7 @@ func TestSessionPrefersFlagThenDeskSessionThenConfiguredSessionVariable(t *testi
 		{args: []string{"note", "desk session"}, extra: map[string]string{"DESK_SESSION": "desk-id", "AGENT_SESSION": "configured-id"}, wantID: "desk-id", content: "desk session"},
 		{args: []string{"note", "flag session", "--session", "flag-id"}, extra: map[string]string{"DESK_SESSION": "desk-id", "AGENT_SESSION": "configured-id"}, wantID: "flag-id", content: "flag session"},
 	} {
-		result := runDeskWithEnv(t, home.Machine, t.TempDir(), item.args, "", item.extra, nil)
+		result := runDeskWithEnv(t, home.Machine, t.TempDir(), item.args, "", item.extra)
 		if result.exit != 0 {
 			t.Fatalf("note %q exit = %d, stderr = %q", item.content, result.exit, result.stderr)
 		}
@@ -207,11 +206,11 @@ func TestSessionPrefersFlagThenDeskSessionThenConfiguredSessionVariable(t *testi
 		}
 	}
 
-	selected := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"session", "--md"}, "", map[string]string{"DESK_SESSION": "desk-id", "AGENT_SESSION": "configured-id"}, nil)
+	selected := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"session", "--md"}, "", map[string]string{"DESK_SESSION": "desk-id", "AGENT_SESSION": "configured-id"})
 	if selected.exit != 0 || !strings.Contains(selected.stdout, "desk session") || strings.Contains(selected.stdout, "configured") {
 		t.Fatalf("implicit session view = (%d, %q, %q), want DESK_SESSION view", selected.exit, selected.stdout, selected.stderr)
 	}
-	explicit := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"session", "flag-id", "--md"}, "", map[string]string{"DESK_SESSION": "desk-id"}, nil)
+	explicit := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"session", "flag-id", "--md"}, "", map[string]string{"DESK_SESSION": "desk-id"})
 	if explicit.exit != 0 || !strings.Contains(explicit.stdout, "flag session") {
 		t.Fatalf("explicit session view = (%d, %q, %q)", explicit.exit, explicit.stdout, explicit.stderr)
 	}

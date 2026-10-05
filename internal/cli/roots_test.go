@@ -28,7 +28,7 @@ func TestRootsAddOnAListedPathChangesOnlyTheFieldsWhoseFlagsWerePassed(t *testin
 		{[]string{"roots", "add", root, "--about", "renamed"}, "renamed", "self"},
 		{[]string{"roots", "add", root, "--about", ""}, "", "self"},
 	} {
-		result := runDeskWithEnv(t, home.Machine, cwd, step.args, "", nil, nil)
+		result := runDeskWithEnv(t, home.Machine, cwd, step.args, "", nil)
 		if result.exit != 0 {
 			t.Fatalf("%v exit = %d, stderr = %q", step.args, result.exit, result.stderr)
 		}
@@ -47,7 +47,7 @@ func TestRootsAddRefusesAPathThatIsNotAnExistingDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, path := range []string{filepath.Join(cwd, "no", "such", "dir"), file} {
-		result := runDeskWithEnv(t, home.Machine, cwd, []string{"roots", "add", path}, "", nil, nil)
+		result := runDeskWithEnv(t, home.Machine, cwd, []string{"roots", "add", path}, "", nil)
 		if result.exit != 2 || !strings.Contains(result.stderr, path) || result.stdout != "" {
 			t.Errorf("roots add %s = (%d, %q, %q), want exit 2 naming the path", path, result.exit, result.stdout, result.stderr)
 		}

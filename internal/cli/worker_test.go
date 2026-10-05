@@ -57,21 +57,21 @@ func TestWorkerRejectsMissingAndMalformedRunEnvironment(t *testing.T) {
 
 func TestWorkerRefusesARunThatIsNotCurrentRunningTaskAndSession(t *testing.T) {
 	t.Run("run is not running", func(t *testing.T) {
-		home, root := runnerHome(t, false, []string{"worker"})
+		home, root := runnerHome(t, []string{"worker"})
 		task, run := startLiveRun(t, home, root, "ended worker")
 		requireSuccess(t, runHomeDesk(t, home, "runs", "kill", fmt.Sprintf("T%d", task)))
 		result := runDeskWithExec(t, home.Machine, []string{"worker"}, map[string]string{"DESK_RUN": fmt.Sprint(run.ID), "DESK_TASK": fmt.Sprintf("T%d", task), "DESK_SESSION": run.Session}, nil)
 		requireRefusal(t, result, "worker", model.CodeNoRun, 1)
 	})
 	t.Run("run belongs to another task", func(t *testing.T) {
-		home, root := runnerHome(t, false, []string{"worker"})
+		home, root := runnerHome(t, []string{"worker"})
 		_, run := startLiveRun(t, home, root, "current worker")
 		other := addTask(t, home, "other task")
 		result := runDeskWithExec(t, home.Machine, []string{"worker"}, map[string]string{"DESK_RUN": fmt.Sprint(run.ID), "DESK_TASK": fmt.Sprintf("T%d", other), "DESK_SESSION": run.Session}, nil)
 		requireRefusal(t, result, "worker", model.CodeNoRun, 1)
 	})
 	t.Run("session does not own run", func(t *testing.T) {
-		home, root := runnerHome(t, false, []string{"worker"})
+		home, root := runnerHome(t, []string{"worker"})
 		task, run := startLiveRun(t, home, root, "session worker")
 		result := runDeskWithExec(t, home.Machine, []string{"worker"}, map[string]string{"DESK_RUN": fmt.Sprint(run.ID), "DESK_TASK": fmt.Sprintf("T%d", task), "DESK_SESSION": run.Session + "-other"}, nil)
 		requireRefusal(t, result, "worker", model.CodeNoRun, 1)
@@ -86,7 +86,7 @@ func TestWorkerExpandsOneMessageArgumentAndExecutesTheResolvedProgram(t *testing
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	workerTemplate := []string{"worker-stub", "--model={model}", "--session={session}", "--message={message}"}
-	home, root := runnerHome(t, false, workerTemplate)
+	home, root := runnerHome(t, workerTemplate)
 	task, run := startLiveRun(t, home, root, "title {session} --flag")
 	detail, err := home.Client().GetTask(context.Background(), task)
 	if err != nil {
@@ -127,7 +127,7 @@ func TestWorkerBlocksTheTaskWhenItsTemplateCannotStart(t *testing.T) {
 		{name: "missing executable", worker: []string{"not-on-path"}, want: "worker: cannot start not-on-path"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			home, root := runnerHome(t, false, test.worker)
+			home, root := runnerHome(t, test.worker)
 			task, run := startLiveRun(t, home, root, "cannot start worker")
 			called := false
 			result := runDeskWithExec(t, home.Machine, []string{"worker"}, map[string]string{

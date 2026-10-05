@@ -1,9 +1,11 @@
-// Package testutil gives tests real desk machines: a home running in the test's process and clients of it,
-// each on its own short temp directories. It is imported only by tests.
+// Package testutil gives tests real desk machines: a home whose own client answers in the test's process, and
+// clients of it whose [client] command runs the test binary as `herdr-desk rpc`, each on its own short temp
+// directories. It is imported only by tests.
 package testutil
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -11,13 +13,47 @@ import (
 
 	"github.com/federbenjamin/herdr-desk/internal/api"
 	"github.com/federbenjamin/herdr-desk/internal/config"
-	"github.com/federbenjamin/herdr-desk/internal/daemon"
 )
 
+// rpcEnv names the home root a test binary run as an rpc helper answers for.
+const rpcEnv = "DESK_TESTUTIL_RPC"
+
 // A test binary that links this package never finds the real herdr: DESK_HERDR names a path that does not exist, so
-// herdr.Find fails instead of searching PATH. A test that needs the fake herdr calls FakeHerdr.
+// herdr.Find fails instead of searching PATH. A test that needs the fake herdr calls FakeHerdr. An rpc helper keeps
+// the DESK_HERDR of the test that started it.
 func init() {
-	os.Setenv("DESK_HERDR", "/nonexistent/desk-tests-never-run-the-real-herdr")
+	if os.Getenv(rpcEnv) == "" {
+		os.Setenv("DESK_HERDR", "/nonexistent/desk-tests-never-run-the-real-herdr")
+	}
+}
+
+// servesRPC is set by ServeRPCIfAsked: the package's TestMain lets the test binary act as a home's rpc helper.
+var servesRPC bool
+
+// ServeRPCIfAsked, called first in TestMain, makes this test binary a home's rpc helper when a client machine's
+// [client] command started it: it answers one request on stdin through api.ServeRPC and exits, 255 while the home is
+// stopped, as ssh does when it cannot connect. Otherwise it returns at once.
+func ServeRPCIfAsked() {
+	servesRPC = true
+	root := os.Getenv(rpcEnv)
+	if root == "" {
+		return
+	}
+	if _, err := os.Stat(filepath.Join(root, "down")); err == nil {
+		fmt.Fprintln(os.Stderr, "testutil: the home is stopped")
+		os.Exit(255)
+	}
+	m := &Machine{Paths: config.Paths{ConfigDir: filepath.Join(root, "config", "herdr-desk")}}
+	m.Paths = config.ResolvePaths(m.Getenv(nil))
+	cfg, err := config.Load(m.Paths.ConfigFile())
+	if err == nil {
+		err = api.ServeRPC(context.Background(), m.Paths, cfg, os.Stdin, os.Stdout)
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "testutil: rpc:", err)
+		os.Exit(3)
+	}
+	os.Exit(0)
 }
 
 // FakeHerdr points DESK_HERDR at scripts/e2e/fake-herdr.py and FAKE_HERDR_DIR at a fresh temp dir, both restored at
@@ -48,7 +84,8 @@ func FakeHerdr(t testing.TB) string {
 type Machine struct{ Paths config.Paths }
 
 // NewMachine returns a machine on a fresh temp dir, removed at test cleanup. The dir sits under /tmp when it
-// can, because a unix socket path is limited to 104 bytes and a test's own temp dir can be longer.
+// can, because a unix socket path (an ssh control socket) is limited to 104 bytes and a test's own temp dir can be
+// longer.
 func NewMachine(t testing.TB) *Machine {
 	t.Helper()
 	root, err := os.MkdirTemp("/tmp", "dk")
@@ -67,9 +104,12 @@ func NewMachine(t testing.TB) *Machine {
 	return m
 }
 
+// root is the temp dir the machine's four directories sit in.
+func (m *Machine) root() string { return filepath.Dir(filepath.Dir(m.Paths.ConfigDir)) }
+
 // Getenv returns a lookup that answers the XDG variables for this machine, then extra, else "".
 func (m *Machine) Getenv(extra map[string]string) func(string) string {
-	root := filepath.Dir(filepath.Dir(m.Paths.ConfigDir))
+	root := m.root()
 	xdg := map[string]string{
 		"XDG_CONFIG_HOME": filepath.Join(root, "config"),
 		"XDG_STATE_HOME":  filepath.Join(root, "state"),
@@ -87,104 +127,72 @@ func (m *Machine) Getenv(extra map[string]string) func(string) string {
 // HomeOptions configures StartHome.
 type HomeOptions struct {
 	Config config.Config // the zero value means config.Default()
-	Listen bool          // also serve TCP on 127.0.0.1, any free port, with a fresh token
 }
 
-// Home is a desk home running in this process on a Machine. It stops at test cleanup.
+// Home is a desk home on a Machine: its config file, and clients that answer in this process.
 type Home struct {
 	*Machine
-	Addr  string // host:port when Listen
-	Token string
-	cfg   config.Config
-	inst  *daemon.Instance
+	t testing.TB
 }
 
-// StartHome writes the home's config (and its token when Listen) and starts its daemon in this process. The
-// daemon starts from the file it just read, as `herdr-desk daemon run` does, so the file and the daemon agree.
+// StartHome writes the home's config and starts nothing: every command on a home opens the store itself.
 func StartHome(t testing.TB, o HomeOptions) *Home {
 	t.Helper()
 	cfg := o.Config
 	if reflect.DeepEqual(cfg, config.Config{}) {
 		cfg = config.Default()
 	}
-	h := &Home{Machine: NewMachine(t)}
-	if o.Listen {
-		cfg.Home.Listen = "127.0.0.1:0"
-		token, err := config.RotateToken(h.Paths)
-		if err != nil {
-			t.Fatalf("testutil: token: %v", err)
-		}
-		h.Token = token
-	}
+	h := &Home{Machine: NewMachine(t), t: t}
 	if err := cfg.Save(h.Paths.ConfigFile()); err != nil {
 		t.Fatalf("testutil: save config: %v", err)
-	}
-	h.start(t)
-	t.Cleanup(h.Stop)
-	h.cfg = cfg
-	if o.Listen {
-		h.Addr = h.inst.Listen()
-		h.cfg.Home.Listen = h.Addr
 	}
 	return h
 }
 
-// start reads the config file and starts the daemon on it. Once the home has an address, the file is pinned to it
-// first (as a user pins a port), so a restart keeps the address and the file still equals what the daemon starts with.
-func (h *Home) start(t testing.TB) {
-	t.Helper()
-	cfg, err := config.Load(h.Paths.ConfigFile())
-	if err != nil {
-		t.Fatalf("testutil: load config: %v", err)
-	}
-	if h.Addr != "" && cfg.Home.Listen != h.Addr {
-		cfg.Home.Listen = h.Addr
-		if err := cfg.Save(h.Paths.ConfigFile()); err != nil {
-			t.Fatalf("testutil: pin the address: %v", err)
-		}
-	}
-	inst, err := daemon.Start(context.Background(), h.Paths, cfg)
-	if err != nil {
-		t.Fatalf("testutil: start the home: %v", err)
-	}
-	h.inst = inst
-}
+// down is the file whose presence makes the home's rpc helper exit 255.
+func (h *Home) down() string { return filepath.Join(h.root(), "down") }
 
-// Stop takes the home down; its files stay.
+// Stop makes the home unreachable from its client machines; its files stay, and its own client still answers.
 func (h *Home) Stop() {
-	if h.inst == nil {
-		return
+	if err := os.WriteFile(h.down(), nil, 0o600); err != nil {
+		h.t.Fatalf("testutil: stop the home: %v", err)
 	}
-	h.inst.Close()
-	h.inst = nil
 }
 
-// Restart brings the home up again on the same socket and address.
+// Restart makes the home reachable again.
 func (h *Home) Restart(t testing.TB) {
 	t.Helper()
-	h.Stop()
-	h.start(t)
+	if err := os.Remove(h.down()); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("testutil: restart the home: %v", err)
+	}
 }
 
-// Client returns a client on the home machine itself (unix socket).
+// Client returns a client on the home machine itself, on the config file as it is now, through the local
+// transport. It is closed at test cleanup.
 func (h *Home) Client() *api.Client {
-	return api.NewClient(api.ClientOptions{Paths: h.Paths, Config: h.cfg})
+	h.t.Helper()
+	cfg, err := config.Load(h.Paths.ConfigFile())
+	if err != nil {
+		h.t.Fatalf("testutil: load the home's config: %v", err)
+	}
+	c := api.NewClient(api.ClientOptions{Paths: h.Paths, Config: cfg})
+	h.t.Cleanup(func() { c.Close() })
+	return c
 }
 
-// NewClientMachine returns a second machine set up as a client of h, through config.Save and config.WriteToken.
+// NewClientMachine returns a second machine set up as a client of h. Its [client] command runs this test binary as
+// h's rpc helper, so the package's TestMain must call ServeRPCIfAsked first.
 func NewClientMachine(t testing.TB, h *Home) *Machine {
 	t.Helper()
-	if h.Addr == "" {
-		t.Fatalf("testutil: NewClientMachine needs a home started with Listen")
+	if !servesRPC {
+		t.Fatal("testutil: NewClientMachine needs the package's TestMain to call testutil.ServeRPCIfAsked() first")
 	}
 	m := NewMachine(t)
 	cfg := config.Default()
-	cfg.Client.Home = h.Addr
+	cfg.Client.Home = "home"
+	cfg.Client.Command = []string{"env", rpcEnv + "=" + h.root(), os.Args[0], "-test.run=^$"}
 	if err := cfg.Save(m.Paths.ConfigFile()); err != nil {
 		t.Fatalf("testutil: save client config: %v", err)
-	}
-	if err := config.WriteToken(m.Paths, h.Token); err != nil {
-		t.Fatalf("testutil: write client token: %v", err)
 	}
 	return m
 }

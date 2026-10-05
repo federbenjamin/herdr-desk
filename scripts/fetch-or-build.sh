@@ -27,7 +27,7 @@ have() { command -v "$1" >/dev/null 2>&1; }
 trap 'if [ -n "$tmpdir" ]; then rm -rf "$tmpdir"; fi' EXIT
 
 # place copies $out to $install_dir/herdr-desk through a temp file and a rename. A copy over the file in
-# place would change a binary a running daemon has open, and macOS kills a process whose signed
+# place would change a binary a running ticker has open, and macOS kills a process whose signed
 # file changed under it.
 place() {
   mkdir -p "$install_dir" || return 1
@@ -52,7 +52,7 @@ install_from_path() {
     exit 1
   fi
   if [ -n "$on_path" ]; then
-    echo "herdr-desk: updated $install_dir/herdr-desk. Run \`herdr-desk daemon restart\` to use it."
+    echo "herdr-desk: updated $install_dir/herdr-desk. Run \`herdr-desk ticker stop\`; herdr's next start runs the new ticker."
     return 0
   fi
   echo "herdr-desk: no herdr-desk on your PATH, so I installed it to $install_dir/herdr-desk."

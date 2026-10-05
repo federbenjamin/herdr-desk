@@ -3,7 +3,6 @@ package api_test
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"os"
 	"testing"
 
@@ -14,40 +13,56 @@ import (
 	"github.com/federbenjamin/herdr-desk/internal/testutil"
 )
 
-func TestClientUsesHomeSocketAndClientTCP(t *testing.T) {
+// TestMain lets this test binary answer as a home's rpc helper, for client machines.
+func TestMain(m *testing.M) {
+	testutil.ServeRPCIfAsked()
+	os.Exit(m.Run())
+}
+
+// machineClient is a client of m's saved config with the callbacks o sets.
+func machineClient(t *testing.T, m *testutil.Machine, o api.ClientOptions) *api.Client {
+	t.Helper()
+	cfg, err := config.Load(m.Paths.ConfigFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	o.Paths, o.Config = m.Paths, cfg
+	return api.NewClient(o)
+}
+
+func TestHomeAndClientMachineWriteOneStore(t *testing.T) {
 	ctx := context.Background()
-	home := testutil.StartHome(t, testutil.HomeOptions{Listen: true})
+	home := testutil.StartHome(t, testutil.HomeOptions{})
 
 	local, err := home.Client().AddTask(ctx, store.Actor{}, store.AddTaskInput{
-		TaskData: model.TaskData{Title: "over the socket"},
+		TaskData: model.TaskData{Title: "on the home"},
 	})
 	if err != nil {
-		t.Fatalf("add task over home socket: %v", err)
+		t.Fatalf("add task on the home: %v", err)
 	}
 
-	clientMachine := testutil.NewClientMachine(t, home)
-	remote := testutil.ClientFor(clientMachine)
-	overTCP, err := remote.AddTask(ctx, store.Actor{}, store.AddTaskInput{
-		TaskData: model.TaskData{Title: "over TCP"},
+	remote := testutil.ClientFor(testutil.NewClientMachine(t, home))
+	overRPC, err := remote.AddTask(ctx, store.Actor{}, store.AddTaskInput{
+		TaskData: model.TaskData{Title: "through the client command"},
 	})
 	if err != nil {
-		t.Fatalf("add task over client TCP connection: %v", err)
+		t.Fatalf("add task from the client machine: %v", err)
 	}
-	if overTCP.Number != local.Number+1 {
-		t.Fatalf("TCP task number = %d, want %d after socket task", overTCP.Number, local.Number+1)
+	if overRPC.Number != local.Number+1 {
+		t.Fatalf("client task number = %d, want %d after the home's task", overRPC.Number, local.Number+1)
 	}
 
 	list, err := home.Client().ListTasks(ctx, store.Filter{All: true})
 	if err != nil {
-		t.Fatalf("list tasks over home socket: %v", err)
+		t.Fatalf("list tasks on the home: %v", err)
 	}
 	if len(list.Tasks) != 2 {
-		t.Fatalf("socket list returned %d tasks, want 2", len(list.Tasks))
+		t.Fatalf("home list returned %d tasks, want 2", len(list.Tasks))
 	}
 }
 
 func TestClientReturnsServerRefusalsAsModelRefusals(t *testing.T) {
-	home := testutil.StartHome(t, testutil.HomeOptions{Listen: true})
+	home := testutil.StartHome(t, testutil.HomeOptions{})
 	client := testutil.ClientFor(testutil.NewClientMachine(t, home))
 
 	_, err := client.GetTask(context.Background(), 999)
@@ -63,53 +78,12 @@ func TestClientReturnsServerRefusalsAsModelRefusals(t *testing.T) {
 	}
 }
 
-func TestClientSpawnsThenReturnsHomeUnreachable(t *testing.T) {
-	machine := testutil.NewMachine(t)
-	spawnCalls := 0
-	client := api.NewClient(api.ClientOptions{
-		Paths:  machine.Paths,
-		Config: config.Default(),
-		Spawn: func(config.Paths) error {
-			spawnCalls++
-			return nil
-		},
-	})
-
-	_, err := client.ListTasks(context.Background(), store.Filter{})
-	if err == nil {
-		t.Fatal("ListTasks without a home returned nil error")
-	}
-	if spawnCalls != 1 {
-		t.Fatalf("spawn calls = %d, want 1", spawnCalls)
-	}
-	refusal, ok := model.AsRefusal(err)
-	if !ok {
-		t.Fatalf("ListTasks error = %T %v, want a model.Refusal", err, err)
-	}
-	if refusal.Code != model.CodeHomeUnreachable {
-		t.Fatalf("refusal code = %q, want %q", refusal.Code, model.CodeHomeUnreachable)
-	}
-}
-
-func TestClientStatusNeverStartsDaemon(t *testing.T) {
-	machine := testutil.NewMachine(t)
-	spawnCalls := 0
-	client := api.NewClient(api.ClientOptions{
-		Paths:  machine.Paths,
-		Config: config.Default(),
-		Spawn: func(config.Paths) error {
-			spawnCalls++
-			return errors.New("Spawn must not be called by Status")
-		},
-	})
+func TestClientStatusOfAStoppedHomeIsHomeUnreachable(t *testing.T) {
+	home := testutil.StartHome(t, testutil.HomeOptions{})
+	client := testutil.ClientFor(testutil.NewClientMachine(t, home))
+	home.Stop()
 
 	_, err := client.Status(context.Background())
-	if err == nil {
-		t.Fatal("Status without a home returned nil error")
-	}
-	if spawnCalls != 0 {
-		t.Fatalf("Status started the daemon %d times", spawnCalls)
-	}
 	refusal, ok := model.AsRefusal(err)
 	if !ok || refusal.Code != model.CodeHomeUnreachable {
 		t.Fatalf("Status error = %v, want %q refusal", err, model.CodeHomeUnreachable)
@@ -119,7 +93,8 @@ func TestClientStatusNeverStartsDaemon(t *testing.T) {
 func TestClientLiveListSnapshotsWholeBoardForOfflineFilters(t *testing.T) {
 	ctx := context.Background()
 	home := testutil.StartHome(t, testutil.HomeOptions{})
-	client := home.Client()
+	machine := testutil.NewClientMachine(t, home)
+	client := testutil.ClientFor(machine)
 
 	for _, in := range []store.AddTaskInput{
 		{TaskData: model.TaskData{Title: "open task", Status: model.StatusOpen}},
@@ -137,8 +112,8 @@ func TestClientLiveListSnapshotsWholeBoardForOfflineFilters(t *testing.T) {
 	if ready.Offline || len(ready.Tasks) != 1 || ready.Tasks[0].Title != "ready task" {
 		t.Fatalf("online ready list = %#v, want only the ready task", ready)
 	}
-	if _, err := os.Stat(home.Paths.Snapshot()); err != nil {
-		t.Fatalf("live list did not write snapshot %q: %v", home.Paths.Snapshot(), err)
+	if _, err := os.Stat(machine.Paths.Snapshot()); err != nil {
+		t.Fatalf("live list did not write snapshot %q: %v", machine.Paths.Snapshot(), err)
 	}
 
 	home.Stop()
@@ -157,7 +132,7 @@ func TestClientLiveListSnapshotsWholeBoardForOfflineFilters(t *testing.T) {
 func TestClientNeverAnswersNonLiveFiltersFromSnapshot(t *testing.T) {
 	ctx := context.Background()
 	home := testutil.StartHome(t, testutil.HomeOptions{})
-	client := home.Client()
+	client := testutil.ClientFor(testutil.NewClientMachine(t, home))
 	if _, err := client.ListTasks(ctx, store.Filter{}); err != nil {
 		t.Fatalf("write live snapshot: %v", err)
 	}
@@ -173,14 +148,27 @@ func TestClientNeverAnswersNonLiveFiltersFromSnapshot(t *testing.T) {
 	}
 }
 
+func noteTexts(t *testing.T, events []model.Event) []string {
+	t.Helper()
+	var texts []string
+	for _, ev := range events {
+		var data model.NoteData
+		if err := json.Unmarshal(ev.Data, &data); err != nil {
+			t.Fatalf("decode event %d: %v", ev.ID, err)
+		}
+		texts = append(texts, data.Text)
+	}
+	return texts
+}
+
 func TestClientFlushesQueuedEventsBeforeTheNextAppendInOrder(t *testing.T) {
 	ctx := context.Background()
 	home := testutil.StartHome(t, testutil.HomeOptions{})
-	client := home.Client()
+	machine := testutil.NewClientMachine(t, home)
 	actor := store.Actor{Session: "outbox-order"}
 	home.Stop()
 
-	_, wasQueued, err := client.Append(ctx, api.AppendRequest{
+	_, wasQueued, err := testutil.ClientFor(machine).Append(ctx, api.AppendRequest{
 		Actor: actor,
 		Kind:  model.KindNote,
 		Note:  &store.NoteInput{NoteData: model.NoteData{Text: "queued first"}},
@@ -193,6 +181,7 @@ func TestClientFlushesQueuedEventsBeforeTheNextAppendInOrder(t *testing.T) {
 	}
 
 	home.Restart(t)
+	client := testutil.ClientFor(machine)
 	_, wasQueued, err = client.Append(ctx, api.AppendRequest{
 		Actor: actor,
 		Kind:  model.KindNote,
@@ -209,47 +198,37 @@ func TestClientFlushesQueuedEventsBeforeTheNextAppendInOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read flushed session: %v", err)
 	}
-	if len(view.Events) != 2 {
-		t.Fatalf("session events = %d, want 2", len(view.Events))
-	}
-	for i, want := range []string{"queued first", "sent second"} {
-		var data model.NoteData
-		if err := json.Unmarshal(view.Events[i].Data, &data); err != nil {
-			t.Fatalf("decode event %d: %v", i, err)
-		}
-		if data.Text != want {
-			t.Fatalf("event %d text = %q, want %q", i, data.Text, want)
-		}
+	if got := noteTexts(t, view.Events); len(got) != 2 || got[0] != "queued first" || got[1] != "sent second" {
+		t.Fatalf("session notes = %q, want [queued first sent second]", got)
 	}
 }
 
 func TestClientFlushDropsRefusedEntryReportsItAndSendsEntriesBehindIt(t *testing.T) {
 	ctx := context.Background()
 	home := testutil.StartHome(t, testutil.HomeOptions{})
+	machine := testutil.NewClientMachine(t, home)
 	var refusals []struct {
 		kind model.Kind
 		err  *model.Refusal
 	}
-	client := api.NewClient(api.ClientOptions{
-		Paths:  home.Paths,
-		Config: config.Default(),
+	options := api.ClientOptions{
 		Refused: func(kind model.Kind, r *model.Refusal) {
 			refusals = append(refusals, struct {
 				kind model.Kind
 				err  *model.Refusal
 			}{kind: kind, err: r})
 		},
-	})
+	}
 	actor := store.Actor{Session: "outbox-retain"}
 	home.Stop()
 
-	requests := []api.AppendRequest{
+	down := machineClient(t, machine, options)
+	for i, request := range []api.AppendRequest{
 		{Actor: actor, Kind: model.KindNote, Note: &store.NoteInput{NoteData: model.NoteData{Text: "sent before refusal"}}},
 		{Actor: actor, Kind: model.KindNote, Note: &store.NoteInput{NoteData: model.NoteData{Text: ""}}},
 		{Actor: actor, Kind: model.KindNote, Note: &store.NoteInput{NoteData: model.NoteData{Text: "must stay queued"}}},
-	}
-	for i, request := range requests {
-		_, queued, err := client.Append(ctx, request)
+	} {
+		_, queued, err := down.Append(ctx, request)
 		if err != nil {
 			t.Fatalf("queue event %d: %v", i, err)
 		}
@@ -259,6 +238,7 @@ func TestClientFlushDropsRefusedEntryReportsItAndSendsEntriesBehindIt(t *testing
 	}
 
 	home.Restart(t)
+	client := machineClient(t, machine, options)
 	sent, err := client.Flush(ctx)
 	if err != nil {
 		t.Fatalf("Flush: %v", err)
@@ -277,17 +257,8 @@ func TestClientFlushDropsRefusedEntryReportsItAndSendsEntriesBehindIt(t *testing
 	if err != nil {
 		t.Fatalf("read flushed session: %v", err)
 	}
-	if len(view.Events) != 2 {
-		t.Fatalf("session events = %d, want 2 entries around the refusal", len(view.Events))
-	}
-	for i, want := range []string{"sent before refusal", "must stay queued"} {
-		var data model.NoteData
-		if err := json.Unmarshal(view.Events[i].Data, &data); err != nil {
-			t.Fatalf("decode event %d: %v", i, err)
-		}
-		if data.Text != want {
-			t.Fatalf("event %d text = %q, want %q", i, data.Text, want)
-		}
+	if got := noteTexts(t, view.Events); len(got) != 2 || got[0] != "sent before refusal" || got[1] != "must stay queued" {
+		t.Fatalf("session notes = %q, want the entries around the refusal", got)
 	}
 	if sent, err := client.Flush(ctx); err != nil || sent != 0 {
 		t.Fatalf("second Flush = (%d, %v), want (0, nil)", sent, err)
@@ -300,18 +271,13 @@ func TestClientFlushDropsRefusedEntryReportsItAndSendsEntriesBehindIt(t *testing
 func TestClientFlushDropsUnparseableOutboxLineAndReportsBadInput(t *testing.T) {
 	ctx := context.Background()
 	home := testutil.StartHome(t, testutil.HomeOptions{})
+	machine := testutil.NewClientMachine(t, home)
 	var refusals []*model.Refusal
-	client := api.NewClient(api.ClientOptions{
-		Paths:  home.Paths,
-		Config: config.Default(),
-		Refused: func(_ model.Kind, r *model.Refusal) {
-			refusals = append(refusals, r)
-		},
-	})
+	options := api.ClientOptions{Refused: func(_ model.Kind, r *model.Refusal) { refusals = append(refusals, r) }}
 	actor := store.Actor{Session: "outbox-bad-input"}
 	home.Stop()
 
-	_, queued, err := client.Append(ctx, api.AppendRequest{
+	_, queued, err := machineClient(t, machine, options).Append(ctx, api.AppendRequest{
 		Actor: actor,
 		Kind:  model.KindNote,
 		Note:  &store.NoteInput{NoteData: model.NoteData{Text: "sent after bad input"}},
@@ -319,15 +285,16 @@ func TestClientFlushDropsUnparseableOutboxLineAndReportsBadInput(t *testing.T) {
 	if err != nil || !queued {
 		t.Fatalf("queue valid event = (queued %t, err %v), want (true, nil)", queued, err)
 	}
-	queuedLine, err := os.ReadFile(home.Paths.Outbox())
+	queuedLine, err := os.ReadFile(machine.Paths.Outbox())
 	if err != nil {
 		t.Fatalf("read queued event: %v", err)
 	}
-	if err := os.WriteFile(home.Paths.Outbox(), append([]byte("{not json}\n"), queuedLine...), 0o600); err != nil {
+	if err := os.WriteFile(machine.Paths.Outbox(), append([]byte("{not json}\n"), queuedLine...), 0o600); err != nil {
 		t.Fatalf("place malformed outbox line: %v", err)
 	}
 
 	home.Restart(t)
+	client := machineClient(t, machine, options)
 	sent, err := client.Flush(ctx)
 	if err != nil {
 		t.Fatalf("Flush: %v", err)
@@ -356,10 +323,10 @@ func TestClientFlushDropsUnparseableOutboxLineAndReportsBadInput(t *testing.T) {
 func TestClientFlushDropsRefusedEntryWhenRefusedCallbackIsNil(t *testing.T) {
 	ctx := context.Background()
 	home := testutil.StartHome(t, testutil.HomeOptions{})
-	client := home.Client()
+	machine := testutil.NewClientMachine(t, home)
 	home.Stop()
 
-	_, queued, err := client.Append(ctx, api.AppendRequest{
+	_, queued, err := testutil.ClientFor(machine).Append(ctx, api.AppendRequest{
 		Actor: store.Actor{Session: "outbox-nil-refused"},
 		Kind:  model.KindNote,
 		Note:  &store.NoteInput{NoteData: model.NoteData{}},
@@ -369,14 +336,14 @@ func TestClientFlushDropsRefusedEntryWhenRefusedCallbackIsNil(t *testing.T) {
 	}
 
 	home.Restart(t)
-	sent, err := client.Flush(ctx)
+	sent, err := testutil.ClientFor(machine).Flush(ctx)
 	if err != nil {
 		t.Fatalf("Flush with nil Refused: %v", err)
 	}
 	if sent != 0 {
 		t.Fatalf("Flush with nil Refused sent %d events, want 0", sent)
 	}
-	remaining, err := os.ReadFile(home.Paths.Outbox())
+	remaining, err := os.ReadFile(machine.Paths.Outbox())
 	if err != nil {
 		t.Fatalf("read outbox after refusal: %v", err)
 	}
@@ -388,10 +355,10 @@ func TestClientFlushDropsRefusedEntryWhenRefusedCallbackIsNil(t *testing.T) {
 func TestClientFlushKeepsEveryEntryWhenHomeIsUnreachable(t *testing.T) {
 	ctx := context.Background()
 	home := testutil.StartHome(t, testutil.HomeOptions{})
-	client := home.Client()
+	machine := testutil.NewClientMachine(t, home)
 	home.Stop()
 
-	_, queued, err := client.Append(ctx, api.AppendRequest{
+	_, queued, err := testutil.ClientFor(machine).Append(ctx, api.AppendRequest{
 		Actor: store.Actor{Session: "outbox-unreachable"},
 		Kind:  model.KindNote,
 		Note:  &store.NoteInput{NoteData: model.NoteData{Text: "keep me queued"}},
@@ -399,12 +366,12 @@ func TestClientFlushKeepsEveryEntryWhenHomeIsUnreachable(t *testing.T) {
 	if err != nil || !queued {
 		t.Fatalf("queue event = (queued %t, err %v), want (true, nil)", queued, err)
 	}
-	before, err := os.ReadFile(home.Paths.Outbox())
+	before, err := os.ReadFile(machine.Paths.Outbox())
 	if err != nil {
 		t.Fatalf("read queued outbox: %v", err)
 	}
 
-	sent, err := client.Flush(ctx)
+	sent, err := testutil.ClientFor(machine).Flush(ctx)
 	if sent != 0 {
 		t.Fatalf("Flush sent %d events while home was down, want 0", sent)
 	}
@@ -412,7 +379,7 @@ func TestClientFlushKeepsEveryEntryWhenHomeIsUnreachable(t *testing.T) {
 	if !ok || refusal.Code != model.CodeHomeUnreachable {
 		t.Fatalf("Flush error = %v, want %q refusal", err, model.CodeHomeUnreachable)
 	}
-	after, err := os.ReadFile(home.Paths.Outbox())
+	after, err := os.ReadFile(machine.Paths.Outbox())
 	if err != nil {
 		t.Fatalf("read retained outbox: %v", err)
 	}

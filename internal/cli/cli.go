@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"strconv"
 	"strings"
@@ -17,7 +18,6 @@ import (
 
 	"github.com/federbenjamin/herdr-desk/internal/api"
 	"github.com/federbenjamin/herdr-desk/internal/config"
-	"github.com/federbenjamin/herdr-desk/internal/daemon"
 	"github.com/federbenjamin/herdr-desk/internal/model"
 	"github.com/federbenjamin/herdr-desk/internal/store"
 )
@@ -31,7 +31,6 @@ type Env struct {
 	Cwd       string
 	StdinTTY  bool
 	StdoutTTY bool
-	Spawn     func(config.Paths) error               // starts the daemon; nil → never (tests)
 	Exec      func(path string, argv []string) error // replaces the process; nil → syscall.Exec with the process's environment
 }
 
@@ -66,7 +65,7 @@ func exitCode(err error) int {
 		switch r.Code {
 		case model.CodeBadInput:
 			return exitUsage
-		case model.CodeHomeUnreachable, model.CodeScanFailed, model.CodeBadToken:
+		case model.CodeHomeUnreachable, model.CodeScanFailed:
 			return exitIO
 		}
 		return exitRefused
@@ -83,9 +82,7 @@ type app struct {
 	session    string // --session
 	started    bool   // a command's own code began; an error before it is a usage error
 	unanswered string // why the last write was queued, from api.ClientOptions.Unreachable
-
-	usedHome    bool // the command made a client, so it talked to the daemon
-	wroteConfig bool // the command wrote the config file
+	home       *api.Client
 }
 
 // Run runs one herdr-desk command and returns its exit code. args excludes the program name.
@@ -124,23 +121,12 @@ func Run(ctx context.Context, args []string, env Env) int {
 		}
 		fmt.Fprintf(env.Stderr, "%s: %s\n", name, err)
 	}
-	if a.usedHome || a.wroteConfig {
-		a.warnStaleConfig()
+	if a.home != nil {
+		if err := a.home.Close(); err != nil {
+			fmt.Fprintf(env.Stderr, "herdr-desk: close the store: %v\n", err)
+		}
 	}
 	return code
-}
-
-// warnStaleConfig says so, once, when the config file now holds a different config from the one the daemon
-// running on this machine started with: the daemon reads the file only at start. A client runs no daemon, so it
-// has nothing to say.
-func (a *app) warnStaleConfig() {
-	c, err := config.Load(a.paths.ConfigFile())
-	if err != nil || c.IsClient() {
-		return
-	}
-	if info, ok := daemon.Running(a.paths); ok && a.paths.ConfigChanged(info.ConfigDigest) {
-		fmt.Fprintln(a.env.Stderr, "herdr-desk: the config file changed after the daemon started; run `herdr-desk daemon restart` to apply it")
-	}
 }
 
 // do wraps a command's body so Run can tell its errors from cobra's argument errors.
@@ -166,7 +152,7 @@ func (a *app) rootCmd() *cobra.Command {
 	root.AddCommand(
 		a.addCmd(), a.listCmd(), a.showCmd(), a.setCmd(), a.editCmd(), a.stepsCmd(), a.captureCmd(),
 		a.noteCmd(), a.decideCmd(), a.sessionCmd(),
-		a.daemonCmd(), a.tokenCmd(), a.clientCmd(), a.rootsCmd(), a.setupCmd(), a.backupCmd(), a.versionCmd(),
+		a.tickerCmd(), a.rpcCmd(), a.clientCmd(), a.rootsCmd(), a.setupCmd(), a.backupCmd(), a.versionCmd(),
 		a.hookCmd(), a.runsCmd(), a.runnerCmd(), a.workerCmd(),
 	)
 	return root
@@ -177,12 +163,16 @@ func execProcess(path string, argv []string) error {
 	return syscall.Exec(path, argv, os.Environ())
 }
 
-// config loads the config file once.
+// config loads the config file once. A file that holds an unknown key or a bad value is a usage error; one that
+// cannot be read is I/O.
 func (a *app) config() (config.Config, error) {
 	if a.cfg != nil {
 		return *a.cfg, nil
 	}
 	c, err := config.Load(a.paths.ConfigFile())
+	if pe := (*fs.PathError)(nil); err != nil && !errors.As(err, &pe) {
+		return config.Config{}, usage("%v", err)
+	}
 	if err != nil {
 		return config.Config{}, err
 	}
@@ -190,18 +180,19 @@ func (a *app) config() (config.Config, error) {
 	return c, nil
 }
 
-// client returns a client of this machine's home. A queued entry the home refuses is reported on stderr and
-// changes nothing else about the command.
+// client returns this command's client of the home, made on the first call; Run closes it. A queued entry the home
+// refuses is reported on stderr and changes nothing else about the command.
 func (a *app) client() (*api.Client, error) {
+	if a.home != nil {
+		return a.home, nil
+	}
 	c, err := a.config()
 	if err != nil {
 		return nil, err
 	}
-	a.usedHome = true
-	return api.NewClient(api.ClientOptions{
+	a.home = api.NewClient(api.ClientOptions{
 		Paths:  a.paths,
 		Config: c,
-		Spawn:  a.env.Spawn,
 		Refused: func(kind model.Kind, r *model.Refusal) {
 			fmt.Fprintf(a.env.Stderr, "herdr-desk: a queued %s was refused: %s\n", kind, r.Error())
 		},
@@ -211,7 +202,8 @@ func (a *app) client() (*api.Client, error) {
 				a.unanswered = r.Msg
 			}
 		},
-	}), nil
+	})
+	return a.home, nil
 }
 
 // callerSession is the first of --session, DESK_SESSION, and the variable [agent] session_env names.

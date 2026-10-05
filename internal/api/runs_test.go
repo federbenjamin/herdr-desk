@@ -3,8 +3,6 @@ package api_test
 import (
 	"context"
 	"encoding/json"
-	"net/http"
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -48,21 +46,15 @@ func (r *runnerControl) Kill(_ context.Context, actor store.Actor, task int) (mo
 	return r.killTask, r.killErr
 }
 
-func newRunsAPIHarness(t *testing.T, runner api.RunnerControl) apiHarness {
+func newRunsServer(t *testing.T, runner api.RunnerControl) *api.Server {
 	t.Helper()
 
 	root := t.TempDir()
 	paths := config.Paths{
 		ConfigDir: filepath.Join(root, "config", "herdr-desk"),
+		StateDir:  filepath.Join(root, "state", "herdr-desk"),
 		DataDir:   filepath.Join(root, "data", "herdr-desk"),
 	}
-	if err := os.MkdirAll(paths.ConfigDir, 0o700); err != nil {
-		t.Fatalf("create config directory: %v", err)
-	}
-	if err := config.WriteToken(paths, firstToken); err != nil {
-		t.Fatalf("write token: %v", err)
-	}
-
 	st, err := store.Open(paths.DB(), store.Options{})
 	if err != nil {
 		t.Fatalf("open store: %v", err)
@@ -70,87 +62,44 @@ func newRunsAPIHarness(t *testing.T, runner api.RunnerControl) apiHarness {
 	t.Cleanup(func() { _ = st.Close() })
 
 	cfg := config.Default()
-	cfg.Home.Listen = "127.0.0.1:48123"
 	cfg.Runner.Cap = 3
-	server := api.NewServer(api.ServerOptions{
-		Store:  st,
-		Config: cfg,
-		Paths:  paths,
-		Runner: runner,
-	})
-	return apiHarness{
-		paths:     paths,
-		trusted:   server.Handler(true),
-		untrusted: server.Handler(false),
-	}
+	return api.NewServer(api.ServerOptions{Store: st, Config: cfg, Paths: paths, Runner: runner})
 }
 
-func decodeRunStatus(t *testing.T, body []byte) api.Status {
+func decodeRunStatus(t *testing.T, resp api.RPCResponse) api.Status {
 	t.Helper()
 
+	requireResult(t, resp)
 	var status api.Status
-	if err := json.Unmarshal(body, &status); err != nil {
+	if err := json.Unmarshal(resp.Result, &status); err != nil {
 		t.Fatalf("decode status: %v", err)
 	}
 	return status
 }
 
-func requireRunRefusal(t *testing.T, body []byte, want string) {
-	t.Helper()
-
-	var refusal model.Refusal
-	if err := json.Unmarshal(body, &refusal); err != nil {
-		t.Fatalf("decode refusal: %v", err)
-	}
-	if refusal.Code != want {
-		t.Fatalf("refusal code = %q, want %q", refusal.Code, want)
-	}
-}
-
-func TestRunsKillServesBothHandlersAndPassesTheActorAndTask(t *testing.T) {
+func TestRunsKillPassesTheActorAndTask(t *testing.T) {
 	runner := &runnerControl{
 		state:    "on",
 		killTask: model.Task{Number: 71, Title: "stop this run"},
 	}
-	h := newRunsAPIHarness(t, runner)
+	srv := newRunsServer(t, runner)
 	actor := store.Actor{Session: "operator-session"}
 
-	for _, tc := range []struct {
-		name    string
-		handler http.Handler
-		token   string
-	}{
-		{name: "trusted", handler: h.trusted},
-		{name: "untrusted", handler: h.untrusted, token: firstToken},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			rec := postAPI(t, tc.handler, tc.token, api.MethodRunsKill, mustJSON(t, map[string]any{
-				"actor": actor,
-				"task":  71,
-			}))
-			requireStatus(t, rec, http.StatusOK)
-
-			var got model.Task
-			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-				t.Fatalf("decode killed task: %v", err)
-			}
-			if got.Number != runner.killTask.Number || got.Title != runner.killTask.Title {
-				t.Fatalf("killed task = %#v, want %#v", got, runner.killTask)
-			}
-		})
+	resp := answer(t, srv, api.MethodRunsKill, mustJSON(t, map[string]any{"actor": actor, "task": 71}))
+	requireResult(t, resp)
+	var got model.Task
+	if err := json.Unmarshal(resp.Result, &got); err != nil {
+		t.Fatalf("decode killed task: %v", err)
 	}
-
-	if len(runner.killCalls) != 2 {
-		t.Fatalf("Kill calls = %d, want 2", len(runner.killCalls))
+	if got.Number != runner.killTask.Number || got.Title != runner.killTask.Title {
+		t.Fatalf("killed task = %#v, want %#v", got, runner.killTask)
 	}
-	for i, call := range runner.killCalls {
-		if call.actor != actor || call.task != 71 {
-			t.Fatalf("Kill call %d = %#v, want actor %#v and task 71", i, call, actor)
-		}
+	if len(runner.killCalls) != 1 || runner.killCalls[0].actor != actor || runner.killCalls[0].task != 71 {
+		t.Fatalf("Kill calls = %#v, want one with actor %#v and task 71", runner.killCalls, actor)
 	}
 }
 
-func TestRunsKillMapsRunnerRefusalsToConflictWithTheirCode(t *testing.T) {
+func TestRunsKillAnswersRunnerRefusalsWithTheirCode(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		code string
@@ -159,100 +108,54 @@ func TestRunsKillMapsRunnerRefusalsToConflictWithTheirCode(t *testing.T) {
 		{name: "agent actor", code: model.CodeNotAllowed},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			h := newRunsAPIHarness(t, &runnerControl{killErr: &model.Refusal{Code: tc.code, Msg: "runner refused"}})
-			rec := postAPI(t, h.trusted, "", api.MethodRunsKill, []byte(`{"actor":{},"task":71}`))
-			requireStatus(t, rec, http.StatusConflict)
-			requireRunRefusal(t, rec.Body.Bytes(), tc.code)
+			srv := newRunsServer(t, &runnerControl{killErr: &model.Refusal{Code: tc.code, Msg: "runner refused"}})
+			requireRefusal(t, answer(t, srv, api.MethodRunsKill, []byte(`{"actor":{},"task":71}`)), tc.code)
 		})
 	}
 }
 
-func TestRunnerPauseServesBothHandlersAndReturnsRunnerStatus(t *testing.T) {
+func TestRunnerPauseReturnsRunnerStatus(t *testing.T) {
 	runner := &runnerControl{state: "on"}
-	h := newRunsAPIHarness(t, runner)
+	srv := newRunsServer(t, runner)
 	actor := store.Actor{Session: "operator-session"}
 
-	for _, tc := range []struct {
-		name    string
-		handler http.Handler
-		token   string
-	}{
-		{name: "trusted", handler: h.trusted},
-		{name: "untrusted", handler: h.untrusted, token: firstToken},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			rec := postAPI(t, tc.handler, tc.token, api.MethodRunnerPause, mustJSON(t, map[string]any{
-				"actor":  actor,
-				"paused": true,
-			}))
-			requireStatus(t, rec, http.StatusOK)
-			status := decodeRunStatus(t, rec.Body.Bytes())
-			if status.RunnerState != runner.state || !status.RunnerPaused || status.RunnerCap != 3 {
-				t.Fatalf("pause status = %#v, want runner state %q, paused true, cap 3", status, runner.state)
-			}
-		})
+	status := decodeRunStatus(t, answer(t, srv, api.MethodRunnerPause, mustJSON(t, map[string]any{"actor": actor, "paused": true})))
+	if status.RunnerState != runner.state || !status.RunnerPaused || status.RunnerCap != 3 {
+		t.Fatalf("pause status = %#v, want runner state %q, paused true, cap 3", status, runner.state)
 	}
-
-	if len(runner.pauseCalls) != 2 {
-		t.Fatalf("Pause calls = %d, want 2", len(runner.pauseCalls))
-	}
-	for i, call := range runner.pauseCalls {
-		if call.actor != actor || !call.paused {
-			t.Fatalf("Pause call %d = %#v, want actor %#v and paused true", i, call, actor)
-		}
-	}
-}
-
-func TestRunnerMethodsRequireATokenOnTheUntrustedHandler(t *testing.T) {
-	h := newRunsAPIHarness(t, &runnerControl{state: "on"})
-
-	for _, tc := range []struct {
-		name   string
-		method string
-		body   []byte
-	}{
-		{name: "kill", method: api.MethodRunsKill, body: []byte(`{"actor":{},"task":71}`)},
-		{name: "pause", method: api.MethodRunnerPause, body: []byte(`{"actor":{},"paused":true}`)},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			rec := postAPI(t, h.untrusted, "", tc.method, tc.body)
-			requireStatus(t, rec, http.StatusUnauthorized)
-		})
+	if len(runner.pauseCalls) != 1 || runner.pauseCalls[0].actor != actor || !runner.pauseCalls[0].paused {
+		t.Fatalf("Pause calls = %#v, want one with actor %#v and paused true", runner.pauseCalls, actor)
 	}
 }
 
 func TestRunnerMethodsAreUnknownWithoutARunnerAndStatusIsOff(t *testing.T) {
-	h := newRunsAPIHarness(t, nil)
+	srv := newRunsServer(t, nil)
 
 	for _, tc := range []struct {
 		name   string
 		method string
-		body   []byte
+		params []byte
 	}{
-		{name: "kill", method: api.MethodRunsKill, body: []byte(`{"actor":{},"task":71}`)},
-		{name: "pause", method: api.MethodRunnerPause, body: []byte(`{"actor":{},"paused":true}`)},
+		{name: "kill", method: api.MethodRunsKill, params: []byte(`{"actor":{},"task":71}`)},
+		{name: "pause", method: api.MethodRunnerPause, params: []byte(`{"actor":{},"paused":true}`)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			rec := postAPI(t, h.trusted, "", tc.method, tc.body)
-			requireStatus(t, rec, http.StatusBadRequest)
+			requireBadRequest(t, answer(t, srv, tc.method, tc.params))
 		})
 	}
 
-	rec := postAPI(t, h.trusted, "", api.MethodStatus, []byte(`{}`))
-	requireStatus(t, rec, http.StatusOK)
-	status := decodeRunStatus(t, rec.Body.Bytes())
+	status := decodeRunStatus(t, answer(t, srv, api.MethodStatus, []byte(`{}`)))
 	if status.RunnerState != "off" || status.RunnerPaused || status.RunnerCap != 3 {
 		t.Fatalf("status without runner = %#v, want state off, paused false, cap 3", status)
 	}
 }
 
-func TestRunnerMethodsRejectMalformedBodies(t *testing.T) {
-	h := newRunsAPIHarness(t, &runnerControl{state: "on"})
+func TestRunnerMethodsRejectMalformedParams(t *testing.T) {
+	srv := newRunsServer(t, &runnerControl{state: "on"})
 
 	for _, method := range []string{api.MethodRunsKill, api.MethodRunnerPause} {
 		t.Run(method, func(t *testing.T) {
-			rec := postAPI(t, h.trusted, "", method, []byte(`{"unterminated"`))
-			requireStatus(t, rec, http.StatusBadRequest)
+			requireBadRequest(t, answer(t, srv, method, []byte(`{"unterminated"`)))
 		})
 	}
 }
@@ -291,7 +194,7 @@ func TestClientPauseRunnerReturnsStatusAndStatusShowsThePause(t *testing.T) {
 func TestClientKillRunReturnsTheTaskTheRunnerKilled(t *testing.T) {
 	home := startRunnerHome(t)
 	ctx := context.Background()
-	// Paused, the daemon's own tick cannot start the task while this test starts its run from a second store.
+	// Paused, no tick can start the task while this test starts its run from a second store.
 	if _, err := home.Client().PauseRunner(ctx, store.Actor{}, true); err != nil {
 		t.Fatalf("pause the runner: %v", err)
 	}
@@ -351,9 +254,10 @@ func TestClientKillRunReturnsRunnerRefusals(t *testing.T) {
 
 func TestClientPauseRunnerReturnsHomeUnreachableWhenHomeIsDown(t *testing.T) {
 	home := startRunnerHome(t)
+	client := testutil.ClientFor(testutil.NewClientMachine(t, home))
 	home.Stop()
 
-	_, err := home.Client().PauseRunner(context.Background(), store.Actor{}, true)
+	_, err := client.PauseRunner(context.Background(), store.Actor{}, true)
 	refusal, ok := err.(*model.Refusal)
 	if !ok {
 		t.Fatalf("PauseRunner error = %T %v, want *model.Refusal", err, err)
@@ -365,9 +269,10 @@ func TestClientPauseRunnerReturnsHomeUnreachableWhenHomeIsDown(t *testing.T) {
 
 func TestClientKillRunReturnsHomeUnreachableWhenHomeIsDown(t *testing.T) {
 	home := startRunnerHome(t)
+	client := testutil.ClientFor(testutil.NewClientMachine(t, home))
 	home.Stop()
 
-	_, err := home.Client().KillRun(context.Background(), store.Actor{}, 71)
+	_, err := client.KillRun(context.Background(), store.Actor{}, 71)
 	refusal, ok := err.(*model.Refusal)
 	if !ok {
 		t.Fatalf("KillRun error = %T %v, want *model.Refusal", err, err)

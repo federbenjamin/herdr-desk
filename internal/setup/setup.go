@@ -25,7 +25,6 @@ type Options struct {
 	Paths    config.Paths
 	Getenv   func(string) string
 	Profile  string // "" | "claude-code"
-	Listen   string // "" → local only
 	Runner   *bool  // nil → leave as is (false on a new config)
 	SkillDir string // "" → write no skill file; else <SkillDir>/herdr-desk/SKILL.md
 	Force    bool   // replace another program's prefix+t / prefix+a bindings
@@ -35,9 +34,8 @@ type Options struct {
 
 const gitTimeout = 30 * time.Second
 
-// Run writes the config (keeping an existing one's values), mints the token when Listen is set and none exists,
-// creates the scratch root, applies the profile, writes the skill, and writes the herdr keys. It prints one line
-// per thing it wrote or skipped. It never prompts.
+// Run writes the config (keeping an existing one's values), creates the scratch root, applies the profile, writes
+// the skill, and writes the herdr keys. It prints one line per thing it wrote or skipped. It never prompts.
 func Run(ctx context.Context, o Options) error {
 	out := o.Out
 	if out == nil {
@@ -52,9 +50,6 @@ func Run(ctx context.Context, o Options) error {
 	cfg, err := config.Load(p.ConfigFile())
 	if err != nil {
 		return err
-	}
-	if o.Listen != "" {
-		cfg.Home.Listen = o.Listen
 	}
 	if o.Runner != nil {
 		cfg.Runner.Enabled = *o.Runner
@@ -94,11 +89,6 @@ func Run(ctx context.Context, o Options) error {
 		fmt.Fprintln(out, notifyLine)
 	}
 
-	if o.Listen != "" {
-		if err := mintToken(p, out); err != nil {
-			return err
-		}
-	}
 	if err := ensureScratch(ctx, p, out); err != nil {
 		return err
 	}
@@ -170,22 +160,6 @@ func applyProfile(cfg *config.Config, profile string) ([]string, error) {
 	return lines, nil
 }
 
-func mintToken(p config.Paths, out io.Writer) error {
-	_, err := config.ReadToken(p)
-	if err == nil {
-		fmt.Fprintf(out, "token: %s kept\n", p.TokenFile())
-		return nil
-	}
-	if !errors.Is(err, fs.ErrNotExist) {
-		return err
-	}
-	if _, err := config.RotateToken(p); err != nil {
-		return err
-	}
-	fmt.Fprintf(out, "token: %s written\n", p.TokenFile())
-	return nil
-}
-
 // ensureScratch makes the scratch root a git repo so a task with no project has somewhere to run.
 func ensureScratch(ctx context.Context, p config.Paths, out io.Writer) error {
 	dir := p.ScratchRoot()
@@ -255,8 +229,9 @@ func writeHerdr(path string, force bool, out io.Writer) error {
 	return nil
 }
 
-// ClientAdd checks home with the token (a status call), then writes [client] home and the token file.
-func ClientAdd(ctx context.Context, p config.Paths, home, token string) error {
+// ClientAdd makes this machine a client of home, an ssh target: it sends a status request through the [client]
+// command the new config would use and saves the config only when the home answers.
+func ClientAdd(ctx context.Context, p config.Paths, home string) error {
 	cfg, err := config.Load(p.ConfigFile())
 	if err != nil {
 		return err
@@ -265,10 +240,9 @@ func ClientAdd(ctx context.Context, p config.Paths, home, token string) error {
 	if err := cfg.Validate(); err != nil {
 		return badInput(err)
 	}
-	if _, err := api.NewClient(api.ClientOptions{Paths: p, Config: cfg, Token: token}).Status(ctx); err != nil {
-		return err
-	}
-	if err := config.WriteToken(p, token); err != nil {
+	c := api.NewClient(api.ClientOptions{Paths: p, Config: cfg})
+	defer c.Close()
+	if _, err := c.Status(ctx); err != nil {
 		return err
 	}
 	return cfg.Save(p.ConfigFile())

@@ -3,10 +3,7 @@ package api_test
 import (
 	"context"
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/federbenjamin/herdr-desk/internal/api"
@@ -16,49 +13,25 @@ import (
 	"github.com/federbenjamin/herdr-desk/internal/testutil"
 )
 
-const w1RunnerToken = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-
-func w1RunnerClient(t *testing.T, handler http.Handler) *api.Client {
-	t.Helper()
-
-	server := httptest.NewServer(handler)
-	t.Cleanup(server.Close)
-	machine := testutil.NewMachine(t)
-	cfg := config.Default()
-	cfg.Client.Home = strings.TrimPrefix(server.URL, "http://")
-	if err := config.WriteToken(machine.Paths, w1RunnerToken); err != nil {
-		t.Fatalf("write client token: %v", err)
-	}
-	return api.NewClient(api.ClientOptions{Paths: machine.Paths, Config: cfg})
-}
-
-func TestW1KillRunPostsActorAndTaskAndReturnsTheHomeTask(t *testing.T) {
+func TestW1KillRunSendsActorAndTaskAndReturnsTheHomeTask(t *testing.T) {
 	actor := store.Actor{Session: "runner-session", Run: 17}
 	want := model.Task{Number: 42, Title: "stopped by user", Status: model.StatusBlocked}
-	client := w1RunnerClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			t.Fatalf("request method = %s, want POST", r.Method)
-		}
-		if r.URL.Path != "/v1/"+api.MethodRunsKill {
-			t.Fatalf("request path = %q, want %q", r.URL.Path, "/v1/"+api.MethodRunsKill)
-		}
-		if got := r.Header.Get("Authorization"); got != "Bearer "+w1RunnerToken {
-			t.Fatalf("authorization = %q, want bearer token", got)
+	_, client := fakeClient(t, func(method string, params []byte) api.RPCResponse {
+		if method != api.MethodRunsKill {
+			t.Fatalf("method = %q, want %q", method, api.MethodRunsKill)
 		}
 		var body struct {
 			Actor store.Actor `json:"actor"`
 			Task  int         `json:"task"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if err := json.Unmarshal(params, &body); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
 		if !reflect.DeepEqual(body.Actor, actor) || body.Task != want.Number {
 			t.Fatalf("request = %#v, want actor %#v and task %d", body, actor, want.Number)
 		}
-		if err := json.NewEncoder(w).Encode(want); err != nil {
-			t.Fatalf("encode task: %v", err)
-		}
-	}))
+		return result(t, want)
+	}, api.ClientOptions{})
 
 	got, err := client.KillRun(context.Background(), actor, want.Number)
 	if err != nil {
@@ -69,68 +42,34 @@ func TestW1KillRunPostsActorAndTaskAndReturnsTheHomeTask(t *testing.T) {
 	}
 }
 
-func TestW1PauseRunnerPostsActorAndPausedAndReturnsTheHomeStatus(t *testing.T) {
-	actor := store.Actor{Session: "runner-session", Run: 23}
-	want := api.Status{RunnerOn: true, RunnerPaused: true, RunnerCap: 3, RunnerState: api.RunnerStatePaused}
-	client := w1RunnerClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			t.Fatalf("request method = %s, want POST", r.Method)
-		}
-		if r.URL.Path != "/v1/"+api.MethodRunnerPause {
-			t.Fatalf("request path = %q, want %q", r.URL.Path, "/v1/"+api.MethodRunnerPause)
-		}
-		var body struct {
-			Actor  store.Actor `json:"actor"`
-			Paused bool        `json:"paused"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Fatalf("decode request: %v", err)
-		}
-		if !reflect.DeepEqual(body.Actor, actor) || !body.Paused {
-			t.Fatalf("request = %#v, want actor %#v and paused true", body, actor)
-		}
-		if err := json.NewEncoder(w).Encode(want); err != nil {
-			t.Fatalf("encode status: %v", err)
-		}
-	}))
+func TestW1PauseRunnerSendsActorAndPausedAndReturnsTheHomeStatus(t *testing.T) {
+	for _, paused := range []bool{true, false} {
+		actor := store.Actor{Session: "runner-session", Run: 23}
+		want := api.Status{RunnerOn: true, RunnerPaused: paused, RunnerCap: 3, RunnerState: api.RunnerStatePaused}
+		_, client := fakeClient(t, func(method string, params []byte) api.RPCResponse {
+			if method != api.MethodRunnerPause {
+				t.Fatalf("method = %q, want %q", method, api.MethodRunnerPause)
+			}
+			var body struct {
+				Actor  store.Actor `json:"actor"`
+				Paused bool        `json:"paused"`
+			}
+			if err := json.Unmarshal(params, &body); err != nil {
+				t.Fatalf("decode request: %v", err)
+			}
+			if !reflect.DeepEqual(body.Actor, actor) || body.Paused != paused {
+				t.Fatalf("request = %#v, want actor %#v and paused %t", body, actor, paused)
+			}
+			return result(t, want)
+		}, api.ClientOptions{})
 
-	got, err := client.PauseRunner(context.Background(), actor, true)
-	if err != nil {
-		t.Fatalf("PauseRunner: %v", err)
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("PauseRunner result = %#v, want %#v", got, want)
-	}
-}
-
-func TestW1PauseRunnerPostsFalseToResume(t *testing.T) {
-	actor := store.Actor{Session: "runner-session", Run: 23}
-	want := api.Status{RunnerOn: true, RunnerPaused: false, RunnerCap: 3, RunnerState: api.RunnerStateOn}
-	client := w1RunnerClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/"+api.MethodRunnerPause {
-			t.Fatalf("request path = %q, want %q", r.URL.Path, "/v1/"+api.MethodRunnerPause)
+		got, err := client.PauseRunner(context.Background(), actor, paused)
+		if err != nil {
+			t.Fatalf("PauseRunner(%t): %v", paused, err)
 		}
-		var body struct {
-			Actor  store.Actor `json:"actor"`
-			Paused bool        `json:"paused"`
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("PauseRunner(%t) result = %#v, want %#v", paused, got, want)
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Fatalf("decode request: %v", err)
-		}
-		if !reflect.DeepEqual(body.Actor, actor) || body.Paused {
-			t.Fatalf("request = %#v, want actor %#v and paused false", body, actor)
-		}
-		if err := json.NewEncoder(w).Encode(want); err != nil {
-			t.Fatalf("encode status: %v", err)
-		}
-	}))
-
-	got, err := client.PauseRunner(context.Background(), actor, false)
-	if err != nil {
-		t.Fatalf("PauseRunner: %v", err)
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("PauseRunner result = %#v, want %#v", got, want)
 	}
 }
 
@@ -158,15 +97,12 @@ func TestW1RunnerWritesReturnHomeRefusals(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			client := w1RunnerClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path != "/v1/"+tc.method {
-					t.Fatalf("request path = %q, want %q", r.URL.Path, "/v1/"+tc.method)
+			_, client := fakeClient(t, func(method string, _ []byte) api.RPCResponse {
+				if method != tc.method {
+					t.Fatalf("method = %q, want %q", method, tc.method)
 				}
-				w.WriteHeader(http.StatusConflict)
-				if err := json.NewEncoder(w).Encode(map[string]string{"code": "no-run", "message": "task has no live run"}); err != nil {
-					t.Fatalf("encode refusal: %v", err)
-				}
-			}))
+				return api.RPCResponse{Refusal: &model.Refusal{Code: "no-run", Msg: "task has no live run"}}
+			}, api.ClientOptions{})
 
 			refusal, ok := model.AsRefusal(tc.call(client))
 			if !ok {

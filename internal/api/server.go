@@ -2,32 +2,26 @@ package api
 
 import (
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"log"
-	"net/http"
-	"strings"
-	"time"
 
 	"github.com/federbenjamin/herdr-desk/internal/backup"
 	"github.com/federbenjamin/herdr-desk/internal/config"
 	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/runner"
 	"github.com/federbenjamin/herdr-desk/internal/store"
+	"github.com/federbenjamin/herdr-desk/internal/ticker"
 	"github.com/federbenjamin/herdr-desk/internal/version"
 )
 
 // ServerOptions configures a Server.
 type ServerOptions struct {
-	Store        *store.Store
-	Config       config.Config
-	Paths        config.Paths // the token is read with config.ReadToken on each TCP request, so a rotation needs no restart
-	StartedTS    time.Time
-	ConfigDigest string                                           // config.Config.Digest of the config the daemon started with, before it bound the listener; "" when unknown
-	Backup       func(ctx context.Context) (backup.Result, error) // nil → backup.run refuses backup-off
-	Runner       RunnerControl                                    // nil → runs.kill and runner.pause are unknown methods; runner_state is "off"
+	Store  *store.Store
+	Config config.Config
+	Paths  config.Paths
+	Backup func(ctx context.Context) (backup.Result, error) // nil → backup.run refuses backup-off
+	Runner RunnerControl                                    // nil → runs.kill and runner.pause are unknown methods; runner_state is "off"
 }
 
 // RunnerControl is what the server needs from the runner. *runner.Runner satisfies it.
@@ -38,36 +32,41 @@ type RunnerControl interface {
 	Kill(ctx context.Context, a store.Actor, task int) (model.Task, error)
 }
 
-// Server answers the API methods from one store.
+var _ RunnerControl = (*runner.Runner)(nil)
+
+// Server answers the API methods from one store. It is a Transport whose Close closes nothing: its store is the
+// caller's.
 type Server struct {
 	o       ServerOptions
 	methods map[string]method
 }
 
-// method decodes a request body and calls the store.
-type method func(ctx context.Context, body []byte) (any, error)
+// method decodes a request's params and calls the store.
+type method func(ctx context.Context, params []byte) (any, error)
 
-// badRequest is an error the server answers with 400.
+// badRequest is a request whose params do not decode.
 type badRequest struct{ err error }
 
 func (b badRequest) Error() string { return b.err.Error() }
 
-// shown is a failure whose text the caller reads in the 500's body: a backup's, which names the git step,
-// served on the unix socket only, and stripped of the remote by backup.Run.
-type shown struct{ err error }
-
-func (s shown) Error() string { return s.err.Error() }
-func (s shown) Unwrap() error { return s.err }
-
 // bind is the one decode-and-call adapter every method goes through.
 func bind[Req any](fn func(ctx context.Context, r Req) (any, error)) method {
-	return func(ctx context.Context, body []byte) (any, error) {
+	return func(ctx context.Context, params []byte) (any, error) {
 		var r Req
-		if err := json.Unmarshal(body, &r); err != nil {
+		if err := json.Unmarshal(params, &r); err != nil {
 			return nil, badRequest{err}
 		}
 		return fn(ctx, r)
 	}
+}
+
+// homeServer is the server over r's store, as every command on the home and `herdr-desk rpc` serve it.
+func homeServer(r *runner.Runner, p config.Paths, c config.Config) *Server {
+	o := ServerOptions{Store: r.Store(), Config: c, Paths: p, Runner: r}
+	if remote := c.Backup.GitRemote; remote != "" {
+		o.Backup = func(ctx context.Context) (backup.Result, error) { return backup.Run(ctx, r.Store(), p, remote) }
+	}
+	return NewServer(o)
 }
 
 // NewServer returns a server over o.Store.
@@ -111,11 +110,7 @@ func NewServer(o ServerOptions) *Server {
 				return nil, &model.Refusal{Code: model.CodeBackupOff, Msg: "no [backup] git_remote is configured"}
 			}
 			// A push the caller stops waiting for still finishes, so the remote never holds half a run.
-			res, err := o.Backup(context.WithoutCancel(ctx))
-			if err != nil {
-				return nil, shown{err}
-			}
-			return res, nil
+			return o.Backup(context.WithoutCancel(ctx))
 		}),
 	}
 	if rn := o.Runner; rn != nil {
@@ -140,10 +135,13 @@ func (s *Server) status(ctx context.Context) (Status, error) {
 	if o.Runner != nil {
 		runnerState, paused = o.Runner.State(), o.Runner.Paused()
 	}
+	var tk TickerStatus
+	if info, ok := ticker.Running(o.Paths); ok {
+		tk = TickerStatus{Running: true, PID: info.PID, StartedTS: &info.StartedTS}
+	}
 	return Status{
 		Version:      version.Version,
-		Listen:       o.Config.Home.Listen,
-		StartedTS:    o.StartedTS,
+		Ticker:       tk,
 		RunnerOn:     o.Config.Runner.Enabled,
 		RunnerState:  runnerState,
 		RunnerPaused: paused,
@@ -151,8 +149,6 @@ func (s *Server) status(ctx context.Context) (Status, error) {
 		Tasks:        counts,
 		BackupTS:     backupTS,
 		BackupError:  backupErr,
-
-		ConfigChanged: o.Paths.ConfigChanged(o.ConfigDigest),
 	}, err
 }
 
@@ -175,76 +171,33 @@ func (s *Server) appendEvent(ctx context.Context, r AppendRequest) (any, error) 
 	}
 }
 
-// Handler serves the API. trusted=true is the unix socket: no token. trusted=false requires the bearer token
-// and does not serve backup.run.
-func (s *Server) Handler(trusted bool) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			writeError(w, http.StatusMethodNotAllowed, "", "use POST")
-			return
-		}
-		if !trusted && !s.tokenOK(r) {
-			writeError(w, http.StatusUnauthorized, "", "a missing or wrong token")
-			return
-		}
-		name, _ := strings.CutPrefix(r.URL.Path, "/v1/")
-		m, ok := s.methods[name]
-		if !ok || (!trusted && name == MethodBackupRun) {
-			writeError(w, http.StatusBadRequest, "", "unknown method "+r.URL.Path)
-			return
-		}
-		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBody))
-		if err != nil {
-			if mbe := (*http.MaxBytesError)(nil); errors.As(err, &mbe) {
-				writeError(w, http.StatusRequestEntityTooLarge, "", fmt.Sprintf("the body is over %d bytes", maxBody))
-				return
-			}
-			writeError(w, http.StatusBadRequest, "", err.Error())
-			return
-		}
-		res, err := m(r.Context(), body)
-		if err != nil {
-			var bad badRequest
-			var sh shown
-			switch ref, isRef := model.AsRefusal(err); {
-			case isRef:
-				writeError(w, http.StatusConflict, ref.Code, ref.Msg)
-			case errors.As(err, &bad):
-				writeError(w, http.StatusBadRequest, "", bad.Error())
-			default:
-				log.Printf("herdr-desk daemon: %s: %v", name, err)
-				msg := "an internal error; the daemon log has it"
-				if errors.As(err, &sh) {
-					msg = sh.Error()
-				}
-				writeError(w, http.StatusInternalServerError, "", msg)
-			}
-			return
-		}
-		writeJSON(w, http.StatusOK, res)
-	})
+// RoundTrip answers one request and returns its RPCResponse, encoded. It fails only when the answer cannot be
+// encoded.
+func (s *Server) RoundTrip(ctx context.Context, method string, params []byte) ([]byte, error) {
+	return json.Marshal(s.answer(ctx, method, params))
 }
 
-// tokenOK reads the token file on every request, so a rotation takes effect without a restart.
-func (s *Server) tokenOK(r *http.Request) bool {
-	got, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-	if !ok || got == "" {
-		return false
+// Close closes nothing: the server's store belongs to its caller.
+func (s *Server) Close() error { return nil }
+
+func (s *Server) answer(ctx context.Context, method string, params []byte) RPCResponse {
+	m, ok := s.methods[method]
+	if !ok {
+		return RPCResponse{Error: &RPCError{BadRequest: true, Message: fmt.Sprintf("unknown method %q", method)}}
 	}
-	want, err := config.ReadToken(s.o.Paths)
+	res, err := m(ctx, params)
 	if err != nil {
-		log.Printf("herdr-desk daemon: the token cannot be read, so every TCP request gets 401: %v", err)
-		return false
+		var bad badRequest
+		if ref, ok := model.AsRefusal(err); ok {
+			return RPCResponse{Refusal: ref}
+		} else if errors.As(err, &bad) {
+			return RPCResponse{Error: &RPCError{BadRequest: true, Message: bad.Error()}}
+		}
+		return RPCResponse{Error: &RPCError{Message: fmt.Sprintf("%s: %v", method, err)}}
 	}
-	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
-}
-
-func writeError(w http.ResponseWriter, code int, refusal, msg string) {
-	writeJSON(w, code, errorBody{Code: refusal, Message: msg})
-}
-
-func writeJSON(w http.ResponseWriter, code int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(v)
+	b, err := json.Marshal(res)
+	if err != nil {
+		return RPCResponse{Error: &RPCError{Message: fmt.Sprintf("%s: encode the result: %v", method, err)}}
+	}
+	return RPCResponse{Result: b}
 }
