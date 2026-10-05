@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/federbenjamin/herdr-desk/internal/model"
 )
@@ -16,13 +17,10 @@ type AddTaskInput struct {
 	Tags []string `json:"tags,omitempty"`
 }
 
-// checkArm refuses an agent that asks for ready or done. AgentsMayArm lifts ready only.
+// checkArm refuses an agent that asks for ready, unless AutoStart: ready is a person's go-ahead to start a run.
 func (s *Store) checkArm(a Actor, st model.Status) error {
-	if a.Who() != model.WhoAgent {
-		return nil
-	}
-	if st == model.StatusDone || (st == model.StatusReady && !s.agentsMayArm) {
-		return refuse(model.CodeNotAllowed, "an agent may not set a task %s; a person does", st)
+	if a.Who() == model.WhoAgent && st == model.StatusReady && !s.autoStart {
+		return refuse(model.CodeNotAllowed, "an agent may not set a task ready unless [coordinator] start_runs is auto; a person does")
 	}
 	return nil
 }
@@ -52,7 +50,7 @@ func (s *Store) AddTask(ctx context.Context, a Actor, in AddTaskInput) (model.Ta
 		return model.Task{}, err
 	}
 	var out model.Task
-	_, _, err = s.append(ctx, a, write{
+	_, err = s.append(ctx, a, write{
 		kind: model.KindTask,
 		tags: in.Tags,
 		scan: append([]string{in.Title, in.Notes, in.Project, in.Thread}, in.Tags...),
@@ -109,20 +107,30 @@ func resolveProject(ctx context.Context, q querier, project string) (string, err
 
 // SetTask patches a task. A patch that changes no field and carries no ref writes no event and returns the
 // task. A patch that sets Notes with NotesWere is refused stale, writing nothing, when the task's notes are no
-// longer NotesWere. An agent may not ask for ready or done; review with Merged writes the OnMerged status. The
-// notes check and checkRunRules run in the write's transaction, and a status change away from started ends the
-// task's live run there too.
+// longer NotesWere. An agent may ask for ready only with AutoStart; review with Merged writes the OnMerged status.
+// The notes check, checkRunRules, and the run-ending rule (endRuns) run in the write's transaction.
 func (s *Store) SetTask(ctx context.Context, a Actor, number int, p model.Patch) (model.Task, error) {
+	p, err := s.checkPatch(a, p)
+	if err != nil {
+		return model.Task{}, err
+	}
+	var out model.Task
+	_, err = s.append(ctx, a, s.setWrite(ctx, a, number, p, "", true, &out))
+	return out, err
+}
+
+// checkPatch checks a patch's values before any transaction and maps review with Merged to the OnMerged status.
+func (s *Store) checkPatch(a Actor, p model.Patch) (model.Patch, error) {
 	if p.Title != nil && strings.TrimSpace(*p.Title) == "" {
-		return model.Task{}, refuse(model.CodeEmptyTitle, "a task needs a title")
+		return p, refuse(model.CodeEmptyTitle, "a task needs a title")
 	}
 	if p.Status != nil {
 		st, err := parseStatus(*p.Status)
 		if err != nil {
-			return model.Task{}, err
+			return p, err
 		}
 		if err := s.checkArm(a, st); err != nil {
-			return model.Task{}, err
+			return p, err
 		}
 		if st == model.StatusReview && p.Merged {
 			st = s.onMerged
@@ -130,11 +138,16 @@ func (s *Store) SetTask(ctx context.Context, a Actor, number int, p model.Patch)
 		p.Status = &st
 	}
 	if p.Isolation != nil && !model.ValidIsolation(*p.Isolation) {
-		return model.Task{}, refuse(model.CodeBadInput, "isolation must be self, worktree, or in-place, not %q", *p.Isolation)
+		return p, refuse(model.CodeBadInput, "isolation must be self, worktree, or in-place, not %q", *p.Isolation)
 	}
-	var out model.Task
-	endRun := false
-	_, _, err := s.append(ctx, a, write{
+	return p, nil
+}
+
+// setWrite is the write of a checked patch; out receives the task as it is after. ifStatus, when set, writes the
+// patch's status only while the task's status is ifStatus. endsRuns applies endRuns; a hand-back never does.
+func (s *Store) setWrite(ctx context.Context, a Actor, number int, p model.Patch, ifStatus model.Status, endsRuns bool,
+	out *model.Task) write {
+	return write{
 		kind: model.KindSet,
 		scan: []string{deref(p.Title), deref(p.Notes), deref(p.Thread), deref(p.Root), deref(p.Isolation), deref(p.Model), p.Ref},
 		prepare: func(tx *sql.Tx) (int, any, error) {
@@ -145,10 +158,18 @@ func (s *Store) SetTask(ctx context.Context, a Actor, number int, p model.Patch)
 			if p.Notes != nil && p.NotesWere != nil && *p.NotesWere != cur.Notes {
 				return 0, nil, refuse(model.CodeStale, "T%d's notes changed since they were read; read them again", number)
 			}
-			if err := s.checkRunRules(ctx, tx, a, cur, p); err != nil {
+			if err := checkRunRules(ctx, tx, a, cur, p); err != nil {
 				return 0, nil, err
 			}
-			out = cur
+			if ifStatus != "" && cur.Status != ifStatus {
+				p.Status = nil
+			}
+			if endsRuns {
+				if err := endRuns(ctx, tx, a, number, p.Status, s.stamp(a)); err != nil {
+					return 0, nil, err
+				}
+			}
+			*out = cur
 			diff := model.Patch{Ref: p.Ref}
 			changed := false
 			if p.Status != nil && *p.Status != cur.Status {
@@ -177,41 +198,50 @@ func (s *Store) SetTask(ctx context.Context, a Actor, number int, p model.Patch)
 				return 0, nil, nil
 			}
 			diff.Merged = p.Merged
-			endRun = cur.Status == model.StatusStarted && out.Status != model.StatusStarted
 			return number, diff, nil
 		},
 		apply: func(tx *sql.Tx, ev model.Event) error {
 			out.UpdatedTS = ev.TS
-			if endRun {
-				if err := endLiveRun(ctx, tx, number, ev.TS); err != nil {
-					return err
-				}
-			}
 			_, err := tx.ExecContext(ctx,
 				`UPDATE tasks SET title=?, notes=?, status=?, thread=?, root=?, isolation=?, model=?, archived=?, updated_ts=? WHERE number=?`,
 				out.Title, out.Notes, string(out.Status), out.Thread, out.Root, out.Isolation, out.Model, out.Archived,
 				formatTS(ev.TS), number)
 			return err
 		},
-	})
-	return out, err
+	}
 }
 
-// checkRunRules refuses a status write from a run that is not the task's newest (stale-run), and an agent
-// setting the thread agent on a ready task, which would arm it on a person's ready, unless AgentsMayArm.
-func (s *Store) checkRunRules(ctx context.Context, tx *sql.Tx, a Actor, cur model.Task, p model.Patch) error {
-	if a.Run != 0 && p.Status != nil {
-		newest, err := newestRun(ctx, tx, cur.Number)
-		if err != nil {
-			return err
-		}
-		if newest != a.Run {
-			return refuse(model.CodeStaleRun, "run %d is not T%d's newest run; a newer run owns the task", a.Run, cur.Number)
-		}
+// endRuns is the run-ending rule. A status write of done, by anyone, ends the task's live run in any state. A
+// review or blocked written by the run's own worker (a.Run) ends that run, even when the task already holds the
+// status. No other status write touches a run.
+func endRuns(ctx context.Context, tx *sql.Tx, a Actor, task int, st *model.Status, ts time.Time) error {
+	switch {
+	case st == nil:
+		return nil
+	case *st == model.StatusDone:
+		return endLiveRuns(ctx, tx, ts, `task = ?`, task)
+	case a.Run != 0 && (*st == model.StatusReview || *st == model.StatusBlocked):
+		return endLiveRuns(ctx, tx, ts, `id = ? AND task = ?`, a.Run, task)
 	}
-	if a.Who() == model.WhoAgent && !s.agentsMayArm && p.Thread != nil && *p.Thread == "agent" &&
-		cur.Status == model.StatusReady {
-		return refuse(model.CodeNotAllowed, "an agent may not put a ready task on the agent thread; a person arms it")
+	return nil
+}
+
+// checkRunRules refuses a status write from a run that is not the task's newest (stale-run).
+func checkRunRules(ctx context.Context, tx *sql.Tx, a Actor, cur model.Task, p model.Patch) error {
+	if a.Run != 0 && p.Status != nil {
+		return checkNewestRun(ctx, tx, a.Run, cur.Number)
+	}
+	return nil
+}
+
+// checkNewestRun refuses stale-run when run is not the task's newest run.
+func checkNewestRun(ctx context.Context, q querier, run int64, task int) error {
+	newest, err := newestRun(ctx, q, task)
+	if err != nil {
+		return err
+	}
+	if newest != run {
+		return refuse(model.CodeStaleRun, "run %d is not T%d's newest run; a newer run owns the task", run, task)
 	}
 	return nil
 }
@@ -238,7 +268,7 @@ func (s *Store) Step(ctx context.Context, a Actor, number int, op model.StepOp) 
 		return model.Task{}, refuse(model.CodeEmptyText, "a step needs text")
 	}
 	var out model.Task
-	_, _, err := s.append(ctx, a, write{
+	_, err := s.append(ctx, a, write{
 		kind: model.KindStep,
 		scan: []string{op.Text},
 		prepare: func(tx *sql.Tx) (int, any, error) {

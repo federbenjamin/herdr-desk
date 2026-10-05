@@ -32,6 +32,7 @@ type Home interface {
 	Status(ctx context.Context) (api.Status, error)
 	KillRun(ctx context.Context, a store.Actor, task int) (model.Task, error)
 	PauseRunner(ctx context.Context, a store.Actor, paused bool) (api.Status, error)
+	StartRun(ctx context.Context, a store.Actor, task int, route store.RunRoute) (model.Run, error)
 }
 
 var _ Home = (*api.Client)(nil)
@@ -249,6 +250,9 @@ func (x *executor) run(ctx context.Context, e Effect) tea.Msg {
 		return afterWrite(err)
 	case KillRun:
 		_, err := x.home.KillRun(ctx, user, e.Task)
+		return afterWrite(err)
+	case StartRun:
+		_, err := x.home.StartRun(ctx, user, e.Task, store.RunRoute{})
 		return afterWrite(err)
 	case PauseRunner:
 		_, err := x.home.PauseRunner(ctx, user, e.Paused)

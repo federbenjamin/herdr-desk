@@ -153,7 +153,7 @@ func (a *app) rootCmd() *cobra.Command {
 		a.addCmd(), a.listCmd(), a.showCmd(), a.setCmd(), a.editCmd(), a.stepsCmd(), a.captureCmd(),
 		a.noteCmd(), a.decideCmd(), a.sessionCmd(),
 		a.tickerCmd(), a.rpcCmd(), a.clientCmd(), a.rootsCmd(), a.setupCmd(), a.backupCmd(), a.versionCmd(),
-		a.hookCmd(), a.runsCmd(), a.runnerCmd(), a.workerCmd(),
+		a.hookCmd(), a.runCmd(), a.runsCmd(), a.runnerCmd(), a.workerCmd(),
 	)
 	return root
 }

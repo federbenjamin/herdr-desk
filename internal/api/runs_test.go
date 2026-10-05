@@ -46,6 +46,12 @@ func (r *runnerControl) Kill(_ context.Context, actor store.Actor, task int) (mo
 	return r.killTask, r.killErr
 }
 
+func (r *runnerControl) Start(context.Context, store.Actor, int, store.RunRoute) (model.Run, error) {
+	return model.Run{}, nil
+}
+
+func (r *runnerControl) AfterSet(context.Context, int) {}
+
 func newRunsServer(t *testing.T, runner api.RunnerControl) *api.Server {
 	t.Helper()
 
@@ -167,7 +173,6 @@ func startRunnerHome(t *testing.T) *testutil.Home {
 
 	cfg := config.Default()
 	cfg.Runner.Enabled = true
-	cfg.Agent.Router = []string{"true"}
 	return testutil.StartHome(t, testutil.HomeOptions{Config: cfg})
 }
 
@@ -194,10 +199,6 @@ func TestClientPauseRunnerReturnsStatusAndStatusShowsThePause(t *testing.T) {
 func TestClientKillRunReturnsTheTaskTheRunnerKilled(t *testing.T) {
 	home := startRunnerHome(t)
 	ctx := context.Background()
-	// Paused, no tick can start the task while this test starts its run from a second store.
-	if _, err := home.Client().PauseRunner(ctx, store.Actor{}, true); err != nil {
-		t.Fatalf("pause the runner: %v", err)
-	}
 	task, err := home.Client().AddTask(ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{
 		Title: "live run to kill", Status: model.StatusReady, Thread: "agent",
 	}})
@@ -210,7 +211,7 @@ func TestClientKillRunReturnsTheTaskTheRunnerKilled(t *testing.T) {
 		t.Fatalf("open store to make a live run: %v", err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if _, err := st.StartRun(ctx, task.Number); err != nil {
+	if _, err := st.StartRun(ctx, task.Number, store.RunRoute{Root: t.TempDir(), Isolation: "in-place"}, 1); err != nil {
 		t.Fatalf("start run: %v", err)
 	}
 

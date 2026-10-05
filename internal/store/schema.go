@@ -65,6 +65,16 @@ var migrations = []string{
 		id TEXT PRIMARY KEY,
 		continues TEXT NULL
 	);`,
+	`UPDATE runs SET state = 'starting' WHERE state = 'routing';
+	ALTER TABLE runs ADD COLUMN left_open INTEGER NOT NULL DEFAULT 0;
+	CREATE INDEX runs_pane ON runs(pane);
+	CREATE TABLE coordinator(
+		id INTEGER PRIMARY KEY CHECK (id = 1),
+		session TEXT NOT NULL,
+		workspace TEXT NOT NULL,
+		pane TEXT NOT NULL,
+		cursor INTEGER NOT NULL DEFAULT 0
+	);`,
 }
 
 func schemaVersion(ctx context.Context, q querier) (int, error) {

@@ -65,9 +65,6 @@ func (p Paths) BackupDir() string { return filepath.Join(p.DataDir, "backup") }
 // Snapshot is CacheDir/snapshot.json.
 func (p Paths) Snapshot() string { return filepath.Join(p.CacheDir, "snapshot.json") }
 
-// RouterSystemFile is StateDir/router-system.md: where the built-in system prompt is written for the router to read.
-func (p Paths) RouterSystemFile() string { return filepath.Join(p.StateDir, "router-system.md") }
-
 // RunnerPause is StateDir/runner-paused: the runner is paused while this file exists.
 func (p Paths) RunnerPause() string { return filepath.Join(p.StateDir, "runner-paused") }
 

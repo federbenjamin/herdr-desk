@@ -11,7 +11,7 @@ import (
 	"github.com/federbenjamin/herdr-desk/internal/worker"
 )
 
-const handBack = "When the work is finished, hand the task back: run `herdr-desk set T<n> review --ref <a file or PR that shows the work>`. Add `--merged` when that PR is merged. If you cannot finish, record what you need with `herdr-desk note --task T<n> \"<what you need>\"`, then run `herdr-desk set T<n> blocked`. Never set ready or done."
+const handBack = "When the work is finished, hand the task back: run `herdr-desk set T<n> review --ref <a file or PR that shows the work>`. Add `--merged` when that PR is merged. If you cannot finish, record what you need with `herdr-desk note --task T<n> \"<what you need>\"`, then run `herdr-desk set T<n> blocked`. Finish with review or blocked."
 
 func TestFirstMessageRendersTheCompleteTaskInThePublishedShape(t *testing.T) {
 	t.Parallel()
@@ -52,7 +52,7 @@ func TestFirstMessageRendersTheCompleteTaskInThePublishedShape(t *testing.T) {
 		"- 2026-10-04 14:20Z agent: note: implementation is ready (https://example.test/pr/7)\n" +
 		"- 2026-10-04 14:21Z agent: status blocked (docs/blocker.md)\n" +
 		"- 2026-10-04 14:30Z user: decided: ship after review\n\n" +
-		"When the work is finished, hand the task back: run `herdr-desk set T7 review --ref <a file or PR that shows the work>`. Add `--merged` when that PR is merged. If you cannot finish, record what you need with `herdr-desk note --task T7 \"<what you need>\"`, then run `herdr-desk set T7 blocked`. Never set ready or done.\n"
+		"When the work is finished, hand the task back: run `herdr-desk set T7 review --ref <a file or PR that shows the work>`. Add `--merged` when that PR is merged. If you cannot finish, record what you need with `herdr-desk note --task T7 \"<what you need>\"`, then run `herdr-desk set T7 blocked`. Finish with review or blocked.\n"
 	if got := worker.FirstMessage(detail); got != want {
 		t.Errorf("FirstMessage() =\n%s\nwant\n%s", got, want)
 	}

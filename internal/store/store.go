@@ -1,7 +1,8 @@
 // Package store is herdr-desk's SQLite store. Every command on the home opens it, so several processes may write
 // at once: every write transaction begins IMMEDIATE, and a second writer waits on the busy timeout. Every event
 // goes through one private append that scans for secrets, inserts the event, and updates the state tables in one
-// transaction. Run rows are runner state, outside the event log: UpdateRun writes them directly.
+// transaction. Run rows and the coordinator row are runner state, outside the event log: UpdateRun and
+// SetCoordinator write them directly.
 package store
 
 import (
@@ -25,19 +26,19 @@ import (
 
 // Options configures a Store.
 type Options struct {
-	Scanner      secretscan.Scanner // nil → secretscan.Builtin()
-	Now          func() time.Time   // nil → time.Now
-	AgentsMayArm bool
-	OnMerged     model.Status // "" → model.StatusReview
+	Scanner   secretscan.Scanner // nil → secretscan.Builtin()
+	Now       func() time.Time   // nil → time.Now
+	AutoStart bool               // [coordinator] start_runs = "auto": an agent may set a task ready
+	OnMerged  model.Status       // "" → model.StatusReview
 }
 
 // Store is an open desk database.
 type Store struct {
-	db           *sql.DB
-	scan         secretscan.Scanner
-	now          func() time.Time
-	agentsMayArm bool
-	onMerged     model.Status
+	db        *sql.DB
+	scan      secretscan.Scanner
+	now       func() time.Time
+	autoStart bool
+	onMerged  model.Status
 }
 
 var (
@@ -64,7 +65,7 @@ func (o Options) withDefaults() (Options, error) {
 }
 
 func newStore(db *sql.DB, o Options) *Store {
-	return &Store{db: db, scan: o.Scanner, now: o.Now, agentsMayArm: o.AgentsMayArm, onMerged: o.OnMerged}
+	return &Store{db: db, scan: o.Scanner, now: o.Now, autoStart: o.AutoStart, onMerged: o.OnMerged}
 }
 
 // Open opens the store at path. It creates the parent dir 0700 and the file 0600, uses WAL, and applies
@@ -192,63 +193,76 @@ type write struct {
 	tags []string
 	scan []string // the write's text fields, scanned once as one text
 	// prepare runs in the transaction before the insert and returns the event's task and payload. A nil
-	// payload writes nothing.
+	// payload writes no event, and the write's apply is skipped.
 	prepare func(tx *sql.Tx) (task int, data any, err error)
 	// apply updates the state tables once the event has its id; nil for a journal event.
 	apply func(tx *sql.Tx, ev model.Event) error
 }
 
-// append is the one write path. It reports whether an event was written.
-func (s *Store) append(ctx context.Context, a Actor, w write) (model.Event, bool, error) {
-	if err := s.scanText(ctx, w.scan); err != nil {
-		return model.Event{}, false, err
+// append is the one write path: it scans every write's text, then runs each write's prepare, insert, and apply in
+// order in one transaction, and returns the events written. Any error rolls back every write.
+func (s *Store) append(ctx context.Context, a Actor, ws ...write) ([]model.Event, error) {
+	var text []string
+	for _, w := range ws {
+		text = append(text, w.scan...)
+	}
+	if err := s.scanText(ctx, text); err != nil {
+		return nil, err
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return model.Event{}, false, err
+		return nil, err
 	}
 	defer tx.Rollback()
-	task, data, err := w.prepare(tx)
-	if err != nil {
-		return model.Event{}, false, err
-	}
-	if data == nil {
-		return model.Event{}, false, tx.Commit()
-	}
-	ts := s.now()
-	if a.TS != nil {
-		ts = *a.TS
-	}
-	ev := model.Event{
-		TS:      ts.UTC(),
-		Session: a.Session,
-		Who:     a.Who(),
-		Kind:    w.kind,
-		Task:    task,
-		Data:    model.MustData(data),
-		Tags:    w.tags,
-		Run:     a.Run,
-		V:       1,
-	}
-	res, err := tx.ExecContext(ctx,
-		`INSERT INTO events(ts, session, who, kind, task, data, tags, run, v) VALUES(?,?,?,?,?,?,?,?,?)`,
-		formatTS(ev.TS), ev.Session, string(ev.Who), string(ev.Kind), nullInt(int64(ev.Task)), string(ev.Data),
-		encodeTags(ev.Tags), nullInt(ev.Run), ev.V)
-	if err != nil {
-		return model.Event{}, false, err
-	}
-	if ev.ID, err = res.LastInsertId(); err != nil {
-		return model.Event{}, false, err
-	}
-	if w.apply != nil {
-		if err := w.apply(tx, ev); err != nil {
-			return model.Event{}, false, err
+	var out []model.Event
+	for _, w := range ws {
+		task, data, err := w.prepare(tx)
+		if err != nil {
+			return nil, err
 		}
+		if data == nil {
+			continue
+		}
+		ev := model.Event{
+			TS:      s.stamp(a),
+			Session: a.Session,
+			Who:     a.Who(),
+			Kind:    w.kind,
+			Task:    task,
+			Data:    model.MustData(data),
+			Tags:    w.tags,
+			Run:     a.Run,
+			V:       1,
+		}
+		res, err := tx.ExecContext(ctx,
+			`INSERT INTO events(ts, session, who, kind, task, data, tags, run, v) VALUES(?,?,?,?,?,?,?,?,?)`,
+			formatTS(ev.TS), ev.Session, string(ev.Who), string(ev.Kind), nullInt(int64(ev.Task)), string(ev.Data),
+			encodeTags(ev.Tags), nullInt(ev.Run), ev.V)
+		if err != nil {
+			return nil, err
+		}
+		if ev.ID, err = res.LastInsertId(); err != nil {
+			return nil, err
+		}
+		if w.apply != nil {
+			if err := w.apply(tx, ev); err != nil {
+				return nil, err
+			}
+		}
+		out = append(out, ev)
 	}
 	if err := tx.Commit(); err != nil {
-		return model.Event{}, false, err
+		return nil, err
 	}
-	return ev, true, nil
+	return out, nil
+}
+
+// stamp is the time of a's writes: its own TS (an outbox replay), else now, in UTC.
+func (s *Store) stamp(a Actor) time.Time {
+	if a.TS != nil {
+		return a.TS.UTC()
+	}
+	return s.now().UTC()
 }
 
 // scanText joins the fields with newlines and runs the scanner once. A refusal names the pattern, never
