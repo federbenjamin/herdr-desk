@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# H12: setup writes the config with its warning, the scratch root, the profile, the skill, and
-# the herdr keys only where they are free.
+# H42: setup writes the config with its warning, the scratch root, the claude-code profile (the worker and coordinator
+# templates, no router), the skill, and the herdr keys only where they are free.
 # shellcheck source=scripts/e2e/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 build
@@ -25,8 +25,11 @@ TOML
 run 0 on s herdr-desk setup --profile claude-code --skill-dir "$E2E/s/skills"
 [ "$(mode "$CFG")" = 600 ] || fail "the config's mode is $(mode "$CFG")"
 say "config 0600 ok"
-grep -B 3 '^agents_may_arm' "$CFG" | grep -q 'WARNING' || fail "no WARNING comment above agents_may_arm"
+grep -B 3 '^start_runs' "$CFG" | grep -q 'WARNING' || fail "no WARNING comment above start_runs"
 say "warning comment ok"
+python3 -c 'import sys, tomllib; c = tomllib.load(open(sys.argv[1], "rb")); sys.exit(0 if c["coordinator"]["start_runs"] == "propose" else 1)' "$CFG" ||
+  fail "start_runs is not propose"
+say "start_runs propose ok"
 [ -d "$E2E/s/data/herdr-desk/scratch/.git" ] || fail "the scratch root is not a git repo"
 say "scratch root ok"
 
@@ -42,9 +45,22 @@ ls "$E2E"/s/config/herdr/config.toml.herdr-desk-bak-* >/dev/null 2>&1 || fail "n
 say "backup file ok"
 
 grep -Eq "session_env = [\"']CLAUDE_CODE_SESSION_ID[\"']" "$CFG" || fail "no session_env from the profile"
-grep -q -- '--safe-mode' "$CFG" || fail "the router template lacks --safe-mode"
-grep -q -- '--permission-mode' "$CFG" || fail "the worker template lacks --permission-mode"
-say "profile templates ok"
+python3 - "$CFG" <<'PY' || fail "the profile's worker or coordinator template is wrong, or a router is left"
+import sys, tomllib
+
+c = tomllib.load(open(sys.argv[1], "rb"))
+a = c["agent"]
+if "router" in a or "router" in c:
+    sys.exit("a router is written")
+w, k = a["worker"], a["coordinator"]
+if w[0] != "claude" or "--permission-mode" not in w or "{model}" not in w or "{session}" not in w or "{message}" not in w:
+    sys.exit("worker: %r" % w)
+if k[0] != "claude" or "--permission-mode" not in k:
+    sys.exit("coordinator: %r" % k)
+if k[k.index("--session-id") + 1] != "{session}" or k[k.index("--append-system-prompt") + 1] != "{prompt}":
+    sys.exit("coordinator: %r" % k)
+PY
+say "profile templates ok: a worker and a coordinator, no router"
 python3 -c 'import sys, tomllib; c = tomllib.load(open(sys.argv[1], "rb")); sys.exit(0 if c["agent"]["models"] == ["sonnet", "opus"] else 1)' "$CFG" ||
   fail "the profile did not write models = [\"sonnet\", \"opus\"]"
 say "profile models ok"

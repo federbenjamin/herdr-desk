@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# H24: a live run shows in IN MOTION and the header, and k, P, f, and o make their calls.
-# The home's runner has the fake herdr and the stub router, so it is on, and its runs.kill and runner.pause are the
-# real ones: the kill leaves the task blocked, and the pause shows in the header. The board has its own stub herdr,
-# which logs each call f and o make.
+# H27: S starts a run, and a live run shows in IN MOTION and the header; k, P, f, and o make their calls.
+# The board runs the home's runner itself (every command opens the store), with a herdr that logs each call and answers
+# the ones a run needs through the fake herdr, so S, runs.kill, and runner.pause are the real ones: the kill leaves the
+# task blocked, and the pause shows in the header. The wrapper also logs the calls f and o make.
 # shellcheck source=scripts/e2e/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 # shellcheck source=scripts/e2e/runner-lib.sh
@@ -10,24 +10,10 @@ source "$(dirname "${BASH_SOURCE[0]}")/runner-lib.sh"
 build
 use_fake_herdr
 runner_up home
-run 0 on home herdr-desk add -t "run under test" --desk --status started
+run 0 on home herdr-desk add -t "run under test" --desk
 mkdir -p "$E2E/docs"
 echo "the written file" >"$E2E/docs/result.md"
 run 0 as_agent home sess-a herdr-desk note "wrote the result" --task 1 --ref "$E2E/docs/result.md"
-
-# The seeded run's pane is one the fake herdr lists. The watch finds it by its id and workspace and, while no agent
-# session shows on it, leaves the run running.
-created=$(herdr_do workspace create --cwd "$E2E" --label "run under test")
-WS=$(jq -r .result.workspace.workspace_id <<<"$created")
-PANE=$(jq -r .result.root_pane.pane_id <<<"$created")
-
-# The runs table is seeded while the daemon is stopped, so the daemon's own reads see the row.
-stop_daemon home
-DB="$E2E/home/data/herdr-desk/desk.db"
-[ -f "$DB" ] || fail "the store file is not at $DB"
-sqlite3 "$DB" "INSERT INTO runs(task, state, root, isolation, model, workspace, pane, started_ts)
-  VALUES (1, 'running', '/work/example', 'worktree', 'opus', '$WS', '$PANE', '$(date -u +%Y-%m-%dT%H:%M:%SZ)')"
-start_daemon home
 
 HERDR_LOG="$E2E/board-herdr.log"
 : >"$HERDR_LOG"
@@ -36,15 +22,23 @@ cat >"$E2E/board-herdr" <<EOF
 printf '%s\n' "\$*" >>"$HERDR_LOG"
 case "\$*" in
   "plugin list"*) printf '{"result":{"plugins":[{"id":"herdr-file-viewer"}]}}\n' ;;
+  "plugin pane open"*) ;;
+  *) exec "$RUNNER_DIR/fake-herdr.py" "\$@" ;;
 esac
 EOF
 chmod +x "$E2E/board-herdr"
 
-term_start board 100 30 home DESK_HERDR="$E2E/board-herdr" "$BIN/herdr-desk"
-term_wait board "worktree · opus"
+term_start board 100 30 home DESK_HERDR="$E2E/board-herdr" FAKE_HERDR_DIR="$FAKE_HERDR_DIR" "$BIN/herdr-desk"
+term_wait board "run under test"
+term_keys board S
+wait_run 1 running
+ok "S started run 1"
+term_wait board "in-place · sonnet"
 ok "the row shows the run's isolation and model"
 term_wait board "runner ● on · 1/1 · home"
 ok "the header counts 1 live run"
+PANE=$(run_field 1 pane)
+WS=$(run_field 1 workspace)
 
 # f needs a live run, so it goes before the kill.
 term_keys board f
@@ -75,7 +69,7 @@ term_keys board P
 term_wait board "runner ◐ paused"
 run 0 on home herdr-desk runner status
 out_has "runner paused"
-ok "P calls runner.pause or says the runner is off"
+ok "P calls runner.pause"
 term_keys board P
 term_wait board "runner ● on"
 run 0 on home herdr-desk runner status

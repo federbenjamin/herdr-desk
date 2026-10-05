@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Shared setup for the runner's e2e scripts (r01 to r12). Source it after lib.sh. Every script uses one machine,
-# `home`, with the stub router and the stub worker. Its stub files live in $STUB.
+# Shared setup for the runner's e2e scripts (r01 to r12, the h scripts that start runs, b01 to b18). Source it after
+# lib.sh. Every script uses one machine, `home`, with the stub worker and the stub coordinator. Their files live in
+# $STUB.
 # shellcheck source=scripts/e2e/lib.sh
 
 RUNNER_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -9,15 +10,19 @@ mkdir -p "$STUB"
 HERDR_REAL=0
 # shellcheck disable=SC2034 # read by the scripts that source this file
 SCRATCH="$E2E/home/data/herdr-desk/scratch"
+# The home's store, read with sqlite3 so a poll never reconciles runs against herdr.
+DB="$E2E/home/data/herdr-desk/desk.db"
 # WORK holds the folders a script makes for its roots. It is the physical path: herdr-desk resolves a task's project to one.
 mkdir -p "$E2E/work"
 # shellcheck disable=SC2034 # read by the scripts that source this file
 WORK=$(cd "$E2E/work" && pwd -P)
+# The plugin a real-herdr script links (link_event_plugin), and whether it did.
+EVENT_PLUGIN=desk-e2e
+EVENT_PLUGIN_LINKED=0
 
-# use_fake_herdr: point DESK_HERDR at scripts/e2e/fake-herdr.py, with its state in $E2E/herdr. Call it before any
-# daemon starts: the daemon and every pane inherit DESK_HERDR, PATH and FAKE_HERDR_DIR. Every call names herdr through
-# DESK_HERDR; a bare `herdr` finds the guard in $E2E/fakebin, which fails, never a real herdr. A shim named sh in front
-# of the real one records the command each fake pane is given, in $E2E/herdr/pane-commands.log.
+# use_fake_herdr: point DESK_HERDR at scripts/e2e/fake-herdr.py, with its state in $E2E/herdr. Every call names herdr
+# through DESK_HERDR; a bare `herdr` finds the guard in $E2E/fakebin, which fails, never a real herdr. A shim named sh
+# in front of the real one records the command each fake pane is given, in $E2E/herdr/pane-commands.log.
 use_fake_herdr() {
   mkdir -p "$E2E/fakebin" "$E2E/herdr"
   cat >"$E2E/fakebin/herdr" <<'GUARD'
@@ -39,14 +44,155 @@ SH
   export PATH="$E2E/fakebin:$PATH"
 }
 
-# herdr_do <args...>: run herdr as DESK_HERDR names it: the fake under use_fake_herdr, `herdr` on PATH in r11 and r12.
-herdr_do() { "${DESK_HERDR:-herdr}" "$@"; }
+# with_events: from now on the fake herdr runs `herdr-desk hook herdr-event` after a status change and after a pane
+# closes, as herdr runs a plugin's [[events]] hook. The hook runs with the caller's environment, so every call of the
+# fake goes through `on home` (herdr_do): a call made bare would fire the hook against the real XDG folders.
+with_events() { export FAKE_HERDR_EVENTS=1; }
+
+# herdr_do <args...>: run herdr as DESK_HERDR names it: the fake under use_fake_herdr, `herdr` on PATH in the
+# real-herdr scripts. The fake runs as the home, so a hook it fires reaches the home's store.
+herdr_do() {
+  if [ "$HERDR_REAL" = 1 ]; then
+    "${DESK_HERDR:-herdr}" "$@"
+  else
+    on home "${DESK_HERDR:-herdr}" "$@"
+  fi
+}
 
 # need_real_herdr: refuse to run unless a real herdr is on PATH and its server answers.
 need_real_herdr() {
-  command -v herdr >/dev/null 2>&1 || fail "no herdr"
-  herdr_do workspace list >/dev/null 2>&1 || fail "no herdr"
+  command -v herdr >/dev/null 2>&1 || fail "(env) no herdr"
+  herdr workspace list >/dev/null 2>&1 || fail "(env) no herdr server answers"
   HERDR_REAL=1
+}
+
+# link_event_plugin <command...>: link a temp plugin, desk-e2e, into the real herdr with the two event hooks of the
+# repo's manifest, each running the command. Nothing else of the manifest is linked. It refuses to run when a plugin
+# with that id is already linked, and runner_cleanup unlinks it.
+link_event_plugin() {
+  local plug="$E2E/event-plugin"
+  if herdr plugin list --plugin "$EVENT_PLUGIN" --json 2>/dev/null | jq -e '.result.plugins | length > 0' >/dev/null 2>&1; then
+    fail "(env) a plugin with the id $EVENT_PLUGIN is already linked"
+  fi
+  mkdir -p "$plug"
+  python3 - "$plug/herdr-plugin.toml" "$EVENT_PLUGIN" "$@" <<'PY'
+import json, sys
+
+dst, plugin_id = sys.argv[1:3]
+command = json.dumps(sys.argv[3:])
+out = 'id = "%s"\nname = "%s"\nversion = "0.0.0"\nmin_herdr_version = "0.9.0"\nplatforms = ["linux", "macos"]\n' % (plugin_id, plugin_id)
+for event in ("pane.agent_status_changed", "pane.closed"):
+    out += '\n[[events]]\non = "%s"\ncommand = %s\n' % (event, command)
+open(dst, "w").write(out)
+PY
+  run 0 herdr plugin link "$plug" --enabled
+  EVENT_PLUGIN_LINKED=1
+}
+
+# home_event_command: set EVENT_CMD to the event hook's command for the home: this build's binary on the home's four
+# folders, with the PATH and the herdr socket of this script, so the hook reaches the herdr that fired it.
+home_event_command() {
+  # shellcheck disable=SC2034 # read by the scripts that source this file
+  EVENT_CMD=(env -u DESK_SESSION -u DESK_RUN -u DESK_HOOKS
+    "XDG_CONFIG_HOME=$E2E/home/config" "XDG_STATE_HOME=$E2E/home/state"
+    "XDG_DATA_HOME=$E2E/home/data" "XDG_CACHE_HOME=$E2E/home/cache" "PATH=$PATH"
+    ${HERDR_SOCKET_PATH:+"HERDR_SOCKET_PATH=$HERDR_SOCKET_PATH"} "$BIN/herdr-desk" hook herdr-event)
+}
+
+# wrap_claude <key>: in the home's config, make the first word of the [agent] <key> template (worker or coordinator),
+# which the claude-code profile writes as claude, a wrapper that logs <key> to $CLAUDE_CALLS, then runs the real
+# claude. The wrapper's paths are written into it, because a pane under the real herdr does not inherit this script's
+# environment. It puts this script's herdr-desk first on PATH, so the `herdr-desk` the agent runs is the one under
+# test, not an installed one. Count the real sessions with claude_calls <key>.
+CLAUDE_CALLS="$E2E/claude-calls.txt"
+wrap_claude() {
+  local key=$1 real wrap="$E2E/count-claude-$1"
+  real=$(command -v claude) || fail "(env) no claude"
+  cat >"$wrap" <<SH
+#!/bin/sh
+printf '%s\n' '$key' >>'$CLAUDE_CALLS'
+PATH='$BIN':"\$PATH"
+export PATH
+exec '$real' "\$@"
+SH
+  chmod +x "$wrap"
+  python3 - "$E2E/home/config/herdr-desk/config.toml" "$wrap" "$key" <<'PY' || fail "the profile's $key template does not start with claude"
+import re, sys
+
+path, wrap, key = sys.argv[1:4]
+text = open(path).read()
+text, n = re.subn(r"(?m)^(%s\s*=\s*\[\s*)(['\"])claude\2" % key, lambda m: m.group(1) + '"%s"' % wrap, text)
+if n != 1:
+    sys.exit("no %s template starting with claude" % key)
+open(path, "w").write(text)
+PY
+}
+
+# claude_calls <key>: how many times the wrapper for that template ran.
+claude_calls() { grep -cx "$1" "$CLAUDE_CALLS" 2>/dev/null || true; }
+
+# real_coordinator_up <start_runs>: for the scripts that run a real coordinator session (b02, b03) on the real herdr, with
+# the stub as the worker. The home gets a root with self isolation, so any number of stub runs may share it, and the
+# profile's coordinator template with its first word wrapped, so each real session is counted.
+real_coordinator_up() {
+  need_real_herdr
+  command -v claude >/dev/null 2>&1 || fail "(env) no claude"
+  build
+  mkdir -p "$WORK/shared"
+  add_root "$WORK/shared" self "scratch space for stub workers; any number of runs may share it"
+  RC_NOTIFY=none
+  RC_CAP=2
+  RC_START=$1
+  runner_up home
+  python3 - "$E2E/home/config/herdr-desk/config.toml" <<'PY' || fail "the config has no coordinator line"
+import re, sys
+
+path = sys.argv[1]
+text = open(path).read()
+claude = '["claude", "--permission-mode", "auto", "--session-id", "{session}", "--append-system-prompt", "{prompt}"]'
+text, n = re.subn(r"(?m)^coordinator = \[.*\]$", lambda m: "coordinator = " + claude, text)
+if n != 1:
+    sys.exit(1)
+open(path, "w").write(text)
+PY
+  wrap_claude coordinator
+}
+
+# coordinator_open: open the coordinator on the real herdr, answer claude's trust question for the scratch root as a
+# person would, and wait until herdr shows its session. COORD_PANE and COORD_SESSION name it.
+coordinator_open() {
+  run 0 on home herdr-desk coordinator
+  COORD_PANE=$(sqlite3 "$DB" "SELECT pane FROM coordinator")
+  COORD_SESSION=$(sqlite3 "$DB" "SELECT session FROM coordinator")
+  SHOW_PANE=$COORD_PANE
+  track_workspaces
+  answer_trust_question "$COORD_PANE"
+  wait_long 120 "herdr to show the coordinator's session" pane_has_session "$COORD_SESSION"
+}
+
+# tell_coordinator <text>: type the text into the coordinator's pane and press Enter, as a person would.
+tell_coordinator() {
+  herdr_do pane send-text "$COORD_PANE" "$1" >/dev/null || fail "could not type into pane $COORD_PANE"
+  sleep 1
+  herdr_do pane send-keys "$COORD_PANE" Enter >/dev/null || fail "could not press Enter in pane $COORD_PANE"
+}
+
+run_count() { sqlite3 "$DB" "SELECT count(*) FROM runs"; }
+task_count() { on home herdr-desk list --all --json | jq '.tasks | length'; }
+at_least_two_tasks() { [ "$(task_count)" -ge 2 ]; }
+at_least_two_runs() { [ "$(run_count)" -ge 2 ]; }
+
+# end_real_coordinator: close what the script opened, check it is closed, and check the session count.
+end_real_coordinator() {
+  local id
+  SHOW_PANE=""
+  track_workspaces
+  close_tracked_workspaces
+  while read -r id; do
+    wait_long 20 "workspace $id to close" workspace_closed "$id"
+  done < <(sort -u "$E2E/workspaces.txt")
+  say "every workspace this test opened is closed ok"
+  [ "$(claude_calls coordinator)" = 1 ] || fail "claude ran $(claude_calls coordinator) times as the coordinator, not once"
 }
 
 # focused_workspace: the id of the workspace herdr has focused.
@@ -54,10 +200,10 @@ focused_workspace() {
   herdr_do workspace list | jq -r '[.result.workspaces[] | select(.focused)][0].workspace_id // ""'
 }
 
-# track_workspaces: add the workspace of every run row to $E2E/workspaces.txt. Only a daemon that is up is asked.
+# track_workspaces: add the workspace of every run row, and the coordinator's, to $E2E/workspaces.txt.
 track_workspaces() {
-  [ -S "$(sock home)" ] || return 0
-  on home herdr-desk runs --all --json 2>/dev/null | jq -r '.[].workspace | select(. != "")' >>"$E2E/workspaces.txt" || true
+  [ -f "$DB" ] || return 0
+  sqlite3 -cmd ".timeout 5000" -cmd "PRAGMA query_only = 1" "$DB" "SELECT workspace FROM runs WHERE workspace <> '' UNION SELECT workspace FROM coordinator" >>"$E2E/workspaces.txt" 2>/dev/null || true
 }
 
 # close_tracked_workspaces: close each workspace in $E2E/workspaces.txt, which a run row named. On the real herdr
@@ -109,25 +255,23 @@ answer_trust_question() {
   herdr_do pane send-keys "$pane" Enter >/dev/null || fail "could not send Enter to pane $pane"
 }
 
-# runner_cleanup: show SHOW_PANE's screen when the script failed, stop the daemons, close every pane the fake holds or
-# every workspace a run row named, then the shared cleanup. Only workspaces named by a run row are closed on the real
-# herdr.
+# runner_cleanup: show SHOW_PANE's screen when the script failed, close every pane the fake holds or every workspace
+# a run row named, unlink the temp plugin, then the shared cleanup, which stops the tickers. Only workspaces named by
+# a run row are closed on the real herdr.
 runner_cleanup() {
   local rc=$?
-  local d m id
+  local id
   if [ "$rc" != 0 ]; then show_pane; fi
   if [ "$HERDR_REAL" = 1 ]; then track_workspaces; fi
-  for d in "$E2E"/*/state/herdr-desk; do
-    [ -f "$d/daemon.json" ] || continue
-    m=$(basename "$(dirname "$(dirname "$d")")")
-    on "$m" herdr-desk daemon stop >/dev/null 2>&1 || true
-  done
   if [ "$HERDR_REAL" = 0 ] && [ -f "$E2E/herdr/state.json" ]; then
+    FAKE_HERDR_EVENTS=0
+    export FAKE_HERDR_EVENTS
     while read -r id; do
       herdr_do pane close "$id" >/dev/null 2>&1 || true
     done < <(herdr_do pane list 2>/dev/null | jq -r '.result.panes[].pane_id' 2>/dev/null)
   fi
   if [ "$HERDR_REAL" = 1 ]; then close_tracked_workspaces; fi
+  if [ "$EVENT_PLUGIN_LINKED" = 1 ]; then herdr plugin unlink "$EVENT_PLUGIN" >/dev/null 2>&1 || true; fi
   cleanup
 }
 trap runner_cleanup EXIT
@@ -138,18 +282,16 @@ add_root() {
 }
 
 # runner_config <machine>: write the machine's config from these variables, each with a default:
-#   RC_ENABLED true   RC_CAP 1   RC_DAY 20   RC_MINUTES 180   RC_POLL 1
+#   RC_ENABLED true   RC_CAP 1   RC_DAY 20   RC_MINUTES 180   RC_START propose
 #   RC_ROOTS ""       TOML for the roots, built with add_root
 #   RC_MODELS '["sonnet", "opus"]'
-#   RC_ROUTER stub | none   RC_NOTIFY herdr | none
-# The router and the worker are the stubs in $STUB.
+#   RC_NOTIFY herdr | none
+# The worker and the coordinator are the stubs in $STUB; the coordinator's template has the shape of the claude-code
+# profile's, so the stub shows which flags it was given.
 runner_config() {
-  local m=$1 models router="" notify=""
+  local m=$1 models notify=""
   local default_models='["sonnet", "opus"]'
   models=${RC_MODELS-$default_models}
-  if [ "${RC_ROUTER-stub}" != none ]; then
-    router="router = [\"$RUNNER_DIR/stub-router.sh\", \"$STUB\", \"{system}\", \"{schema}\"]"
-  fi
   if [ "${RC_NOTIFY-herdr}" != none ]; then
     notify="[notify]"$'\n'"command = [\"${DESK_HERDR:-herdr}\", \"notification\", \"show\", \"{title}\", \"--body\", \"{body}\"]"
   fi
@@ -159,29 +301,25 @@ enabled = ${RC_ENABLED-true}
 cap = ${RC_CAP-1}
 max_runs_per_day = ${RC_DAY-20}
 max_run_minutes = ${RC_MINUTES-180}
-poll_seconds = ${RC_POLL-1}
+
+[coordinator]
+start_runs = "${RC_START-propose}"
 
 ${RC_ROOTS-}
 [agent]
-$router
 worker = ["$RUNNER_DIR/stub-worker.sh", "$STUB", "{model}", "{session}", "{message}"]
+coordinator = ["$RUNNER_DIR/stub-coordinator.sh", "$STUB", "--session-id", "{session}", "--append-system-prompt", "{prompt}"]
 models = $models
 
 $notify
 TOML
 }
 
-# runner_up <machine>: set the machine up, write its runner config, and start its daemon.
+# runner_up <machine>: set the machine up as a home and write its runner config. Nothing runs: every command opens
+# the store, and the ticker is for the scripts that want it (ticker_up).
 runner_up() {
-  run 0 on "$1" herdr-desk setup --no-herdr
+  home_up "$1"
   runner_config "$1"
-  start_daemon "$1"
-}
-
-# restart_daemon: stop the home's daemon and start it again on the config as it is now.
-restart_daemon() {
-  stop_daemon home
-  start_daemon home
 }
 
 # make_repo <dir>: a git repository with one commit.
@@ -191,29 +329,24 @@ make_repo() {
   git -C "$1" -c user.name=e2e -c user.email=e2e@example.invalid commit -q --allow-empty -m init
 }
 
-# route_to <root> <isolation> <model> <reason>: what the stub router answers, in the shape `claude -p` prints.
-route_to() {
-  printf '{"structured_output": {"root": "%s", "isolation": "%s", "model": "%s", "reason": "%s"}}\n' \
-    "$1" "$2" "$3" "$4" >"$STUB/router-out.json"
-}
-
 # set_mode <task number> <mode>: what the stub worker does for that task.
 set_mode() { printf '%s' "$2" >"$STUB/mode-T$1"; }
 
-# arm_task <machine> <title> <add flags...>: add a task on thread agent and set it ready, as a person. The task
-# number is left in OUT. Pass --desk or -p <dir>: without one `herdr-desk add` takes the project of the current folder.
-arm_task() {
-  local m=$1 title=$2 n
+# start_task <machine> <title> <add flags...>: add a task and run `run start` on it, as a person. Pass --desk or -p
+# <dir>: without one `herdr-desk add` takes the project of the current folder. The task's number is left in TASK_N
+# and run start's line in OUT.
+start_task() {
+  local m=$1 title=$2
   shift 2
-  run 0 on "$m" herdr-desk add -t "$title" --thread agent "$@"
-  n=$OUT
-  run 0 on "$m" herdr-desk set "$n" ready
-  OUT=$n
+  run 0 on "$m" herdr-desk add -t "$title" "$@"
+  TASK_N=$OUT
+  run 0 on "$m" herdr-desk run start "$TASK_N"
 }
 
-# run_field <run id> <field>: a field of a run row.
+# run_field <run id> <field>: a column of a run row, read from the store without reconciling.
 run_field() {
-  on home herdr-desk runs --all --json | jq -r --argjson id "$1" --arg f "$2" '.[] | select(.id == $id) | .[$f]'
+  case "$2" in *[!a-z_]*) fail "run_field: no column '$2'" ;; esac
+  sqlite3 -cmd ".timeout 5000" -cmd "PRAGMA query_only = 1" "$DB" "SELECT $2 FROM runs WHERE id = $1"
 }
 run_is() { [ "$(run_field "$1" state)" = "$2" ]; }
 
@@ -258,3 +391,15 @@ pane_of_session() {
   herdr_do pane list | jq -r --arg s "$1" '[.result.panes[] | select(.agent_session.value? == $s)][0].pane_id // ""'
 }
 pane_has_session() { [ -n "$(pane_of_session "$1")" ]; }
+
+# report <pane> <state> [report-agent flags...]: tell herdr a pane's agent is in that state, as the stub worker does.
+report() {
+  local pane=$1 state=$2
+  shift 2
+  herdr_do pane report-agent "$pane" --source desk-e2e --agent stub --state "$state" "$@" >/dev/null
+}
+
+# now: the time in seconds since the epoch, with fractions, to time a wait.
+now() { python3 -c 'import time; print("%.3f" % time.time())'; }
+# elapsed <start>: seconds since a now() reading.
+elapsed() { awk -v a="$1" -v b="$(now)" 'BEGIN { printf "%.1f", b - a }'; }

@@ -1,20 +1,17 @@
 #!/usr/bin/env bash
-# H1 (runner): an armed task is running in a pane within two polls, with the task, session, and run in the pane's
-# environment. poll_seconds is 2, so "within two polls" is 2 x 2 s plus 1 s of slack.
+# H23 (runner): `herdr-desk run start` opens a pane with the task, session, and run in its environment, records the
+# pane on the run row, and notifies once.
 # shellcheck source=scripts/e2e/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 # shellcheck source=scripts/e2e/runner-lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/runner-lib.sh"
 build
 use_fake_herdr
-RC_POLL=2
 runner_up home
-route_to "$SCRATCH" in-place sonnet "stub router: nothing to isolate"
 
-run 0 on home herdr-desk add -t "spawn me" --desk --thread agent
-run 0 on home herdr-desk set T1 ready
-wait_long 5 "run 1 to be running within 2 polls" run_is 1 running
-say "spawned within 2 polls ok"
+start_task home "spawn me" --desk
+out_has "run 1  T1  running  $SCRATCH  in-place  sonnet"
+say "run start printed the running run ok"
 
 wait_file "$STUB/worker-run1.env"
 ENV="$STUB/worker-run1.env"
@@ -29,6 +26,11 @@ esac
 say "DESK_SESSION is a uuid ok"
 [ "$(env_value "$ENV" DESK_RUN)" = 1 ] || fail "DESK_RUN is '$(env_value "$ENV" DESK_RUN)'"
 say "DESK_RUN=1 ok"
+for pair in "XDG_CONFIG_HOME=config" "XDG_STATE_HOME=state" "XDG_DATA_HOME=data" "XDG_CACHE_HOME=cache"; do
+  name=${pair%%=*}
+  [ "$(env_value "$ENV" "$name")" = "$E2E/home/${pair#*=}" ] || fail "$name in the pane is '$(env_value "$ENV" "$name")', not $E2E/home/${pair#*=}"
+done
+say "XDG variables in the pane ok"
 
 PHYSICAL=$(cd "$BIN" && pwd -P)
 grep -Fx -e "exec $BIN/herdr-desk worker" -e "exec $PHYSICAL/herdr-desk worker" "$E2E/herdr/pane-commands.log" >/dev/null ||
@@ -43,9 +45,10 @@ PANE=$(run_field 1 pane)
 WS=$(run_field 1 workspace)
 if [ -z "$PANE" ] || [ -z "$WS" ]; then fail "the run row has no workspace or pane"; fi
 task_has_note 1 "run 1: workspace $WS, pane $PANE" || fail "no note 'run 1: workspace $WS, pane $PANE'"
-say "note records workspace and pane ok"
+task_has_note 1 "run 1 starting: $SCRATCH (in-place, sonnet)" || fail "no runner note for the start: $(task_notes 1)"
+say "notes record the start, workspace and pane ok"
 
-grep -F "herdr-desk: T1 started" "$E2E/herdr/notifications.log" | grep -F "spawn me" >/dev/null ||
-  fail "the notify command did not run: $(cat "$E2E/herdr/notifications.log" 2>&1)"
-say "notify ran ok"
+[ "$(grep -c "herdr-desk: T1 started" "$E2E/herdr/notifications.log")" = 1 ] || fail "the notify command did not run exactly once: $(cat "$E2E/herdr/notifications.log" 2>&1)"
+grep -F "herdr-desk: T1 started" "$E2E/herdr/notifications.log" | grep -F "spawn me" >/dev/null || fail "the notification lacks the title"
+say "notify ran once ok"
 pass
