@@ -153,8 +153,8 @@ func TestViewNarrowBoardDropsDetailsAndUsesShortFooter(t *testing.T) {
 func TestViewFooterWrapsAtDoubleSpaceGroups(t *testing.T) {
 	text := w3State(90, w3LiveData()).Text()
 	w3RequireContains(t, text,
-		"+ add  n ready  S run  s start  b blocked  r review  x done  a #agent  f focus  k kill",
-		"P pause  / search  p project  t thread  d done  ? keys",
+		"+ add  n ready  S run  s start  b blocked  r review  x done  a #agent  k kill  P pause",
+		"/ search  p project  t thread  d done  ? keys",
 	)
 	for _, line := range strings.Split(text, "\n") {
 		if len([]rune(line)) > 90 {

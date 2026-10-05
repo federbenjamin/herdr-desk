@@ -213,7 +213,7 @@ stderr: it exits 1 when the home does not answer, so a script can ask whether it
 | `herdr-desk runs [--all] [--json]` | checks the live runs against herdr once, then lists them, oldest first: `run <id>  T<n>  <state>  <root>  <isolation>  <model>  <elapsed>` (`-` for a field not decided yet); `no live runs` when none. `--all` lists every run; `--json` prints the array |
 | `herdr-desk runs kill <task>` | kills the processes in the task's pane, closes the pane, ends the run `killed`, and blocks the task; prints `T<n> blocked`. `no-run` when the task has no live run; an agent gets `not-allowed`. When the pane did not close, a process outlived the kill, or herdr could not say what ran in the pane (so nothing was signalled), the task is still blocked, the note on it says what is left, and the command exits 3; the ticker closes that pane again on its next tick |
 | `herdr-desk runner [status]` · `pause` · `resume` | prints `runner <state>`, and ` · <live>/<cap> live` when the state is `on` or `paused`, then ` · no ticker: …` when no ticker runs (the board's header ends `· no ticker` too, and `context` prints the same line), since nothing then stops a run at `max_run_minutes`. `pause` starts no new runs, live runs go on, and the pause survives a restart; an agent gets `not-allowed` |
-| `herdr-desk coordinator` | opens the desk's coordinator in its own herdr workspace, or focuses it when its pane is still open; prints `coordinator opened\|focused: workspace <id>, pane <id>`. The first call opens the workspace without focusing it. On a client it prints where to run it and exits 0; an agent session gets `not-allowed`; no herdr is `no-herdr` |
+| `herdr-desk coordinator` | opens the desk's coordinator in its own herdr workspace, or reports it when its pane is still open; prints `coordinator opened\|open: workspace <id>, pane <id>`. It never focuses: a script's herdr focus moves every attached herdr window, so the first call opens the workspace without focusing it and a later call only names it. On a client it prints where to run it and exits 0; an agent session gets `not-allowed`; no herdr is `no-herdr` |
 | `herdr-desk coordinator run` | what `coordinator` types in the pane: becomes the `[agent] coordinator` command with `{session}` and `{prompt}` filled in. Exit 2 when `$DESK_SESSION` is unset |
 | `herdr-desk context [--json]` | prints the desk as the coordinator reads it: `start_runs`, the runner's state, the caps and today's count, the roots with their `about`, the models, the board by section, the live runs with their state, and what changed since this coordinator's last `context`. It checks the runs against herdr once |
 | `herdr-desk skill coordinator` | prints the coordinator skill, which is the coordinator's system prompt |
@@ -270,7 +270,6 @@ Board page keys:
 | `s` · `b` · `r` | set `started` · `blocked` · `review` |
 | `x` | set `done`; asks `y/n` unless the task is in `review` |
 | `a` | toggle the thread `agent` |
-| `f` | focus the run's herdr pane (the home, with herdr, a live run with a pane) |
 | `k` | kill the task's live run after `y/n`; the home sets the task `blocked` |
 | `P` | pause or resume the runner |
 | `/` | search titles and ids as you type; `enter` keeps the filter, `esc` clears it |
@@ -375,7 +374,7 @@ decides nothing.
 
 `herdr-desk coordinator` opens the workspace without focusing it, records the session and its pane on the
 home, and runs the `[agent] coordinator` command with the coordinator skill (`herdr-desk skill coordinator`) as
-its system prompt. Called again while the pane is still there, it focuses that pane instead.
+its system prompt. Called again while the pane is still there, it reports that pane and focuses nothing.
 
 The coordinator runs `herdr-desk context` first on every turn. The board is the record; `context` only marks
 what changed since the coordinator's last call, so a turn that dies loses nothing. Text from tasks, notes,

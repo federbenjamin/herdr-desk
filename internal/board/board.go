@@ -43,7 +43,7 @@ var _ Home = (*api.Client)(nil)
 type Options struct {
 	Home    Home
 	IsHome  bool      // false on a client
-	Herdr   string    // the herdr binary; "" → no herdr: f and the file viewer are off
+	Herdr   string    // the herdr binary; "" → no herdr: the file viewer is off
 	In      io.Reader // the terminal
 	Out     io.Writer
 	Refresh time.Duration // 0 → 3 seconds
@@ -59,7 +59,7 @@ func Run(ctx context.Context, o Options) error {
 	}
 	m := runModel{
 		ctx:   ctx,
-		s:     NewState(Config{IsHome: o.IsHome, CanFocus: o.IsHome && o.Herdr != ""}),
+		s:     NewState(Config{IsHome: o.IsHome}),
 		x:     newExecutor(o),
 		every: every,
 	}
@@ -278,17 +278,6 @@ func (x *executor) run(ctx context.Context, e Effect) tea.Msg {
 		return afterWrite(err)
 	case Rearm:
 		return x.rearm(ctx, e)
-	case FocusRun:
-		argvs, err := focusArgvs(x.herdr, e.Run)
-		if err != nil {
-			return Failed{Err: err}
-		}
-		for _, argv := range argvs {
-			if err := x.do(ctx, argv); err != nil {
-				return Failed{Err: err}
-			}
-		}
-		return nil
 	case OpenRef:
 		if err := x.open(ctx, e); err != nil {
 			return Failed{Err: err}

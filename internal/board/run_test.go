@@ -143,61 +143,7 @@ func TestRunRefreshesAfterWritesWithAnEmptyActor(t *testing.T) {
 	}
 }
 
-func TestRunFocusesOnlyTheSelectedRunsWorkspaceAndPane(t *testing.T) {
-	now := time.Now()
-	home := &fakeHome{
-		tasks: []model.Task{{Number: 8, Title: "w5 focus task", Status: model.StatusStarted}},
-		runs:  []model.Run{{Task: 8, Workspace: "w5-workspace", Pane: "w5-pane", StartedTS: now}},
-	}
-	exec := &w5Executor{}
-	out := &lockedOutput{}
-	in, errs := w5StartRun(t, home, exec.w5Exec, out)
-
-	eventually(t, "the focus task draw", func() bool {
-		return strings.Contains(out.String(), "w5 focus task")
-	})
-	if _, err := io.WriteString(in, "f"); err != nil {
-		t.Fatalf("write focus key: %v", err)
-	}
-	eventually(t, "the three focus commands", func() bool { return len(exec.w5Calls()) == 3 })
-	w5Quit(t, in, errs)
-
-	want := [][]string{
-		{"w5-herdr", "workspace", "focus", "w5-workspace"},
-		{"w5-herdr", "pane", "zoom", "w5-pane", "--on"},
-		{"w5-herdr", "pane", "zoom", "w5-pane", "--off"},
-	}
-	if got := exec.w5Calls(); !reflect.DeepEqual(got, want) {
-		t.Errorf("focus argv = %#v, want %#v", got, want)
-	}
-}
-
 func TestRunRejectsInvalidTargetsAndAViewerThatIsNotInstalled(t *testing.T) {
-	t.Run("invalid pane or workspace runs no command", func(t *testing.T) {
-		now := time.Now()
-		home := &fakeHome{
-			tasks: []model.Task{{Number: 9, Title: "w5 invalid focus", Status: model.StatusStarted}},
-			runs:  []model.Run{{Task: 9, Workspace: "w5 invalid workspace", Pane: "w5-pane", StartedTS: now}},
-		}
-		exec := &w5Executor{}
-		out := &lockedOutput{}
-		in, errs := w5StartRun(t, home, exec.w5Exec, out)
-
-		eventually(t, "the invalid focus task draw", func() bool {
-			return strings.Contains(out.String(), "w5 invalid focus")
-		})
-		before := out.Len()
-		if _, err := io.WriteString(in, "f"); err != nil {
-			t.Fatalf("write focus key: %v", err)
-		}
-		eventually(t, "the refused focus draw", func() bool { return out.Len() > before })
-		w5Quit(t, in, errs)
-
-		if got := exec.w5Calls(); len(got) != 0 {
-			t.Errorf("invalid focus ran %#v, want no command", got)
-		}
-	})
-
 	t.Run("invalid ref runs no command", func(t *testing.T) {
 		task := model.Task{Number: 10, Title: "w5 invalid ref", Status: model.StatusOpen, Project: "/w5/project"}
 		home := &fakeHome{
@@ -550,7 +496,6 @@ func TestRunShowsEveryEffectRefusal(t *testing.T) {
 		{name: "kill run", home: &fakeHome{tasks: []model.Task{{Number: 60, Title: "w5 kill", Status: model.StatusStarted}}, runs: []model.Run{{Task: 60, StartedTS: time.Now()}}, kill: errors.New("w5 kill refused")}, input: "ky", err: "w5 kill refused"},
 		{name: "pause runner", home: &fakeHome{status: api.Status{RunnerState: api.RunnerStateOn}, pause: errors.New("w5 pause refused")}, input: "P", err: "w5 pause refused"},
 		{name: "append rearm note", home: &fakeHome{tasks: []model.Task{{Number: 61, Title: "w5 rearm", Status: model.StatusBlocked}}, append: errors.New("w5 append refused")}, input: "nw5 answer\r", err: "w5 append refused", kept: "answer: w5 answer"},
-		{name: "focus run", home: &fakeHome{tasks: []model.Task{{Number: 62, Title: "w5 focus refusal", Status: model.StatusStarted}}, runs: []model.Run{{Task: 62, Workspace: "w5-workspace", Pane: "w5-pane", StartedTS: time.Now()}}}, exec: (&w5Executor{err: errors.New("w5 focus refused")}).w5Exec, input: "f", err: "w5 focus refused"},
 		{name: "open URL", home: &fakeHome{tasks: []model.Task{{Number: 63, Title: "w5 open refusal", Status: model.StatusOpen}}, detail: store.TaskDetail{Task: model.Task{Number: 63, Title: "w5 open refusal", Status: model.StatusOpen}, History: []model.Event{{Kind: model.KindNote, Data: model.MustData(model.NoteData{Ref: "https://example.test/w5-refusal"})}}}}, exec: (&w5Executor{err: errors.New("w5 open refused")}).w5Exec, input: "\r", err: "w5 open refused", load: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -579,16 +524,27 @@ func TestRunShowsEveryEffectRefusal(t *testing.T) {
 }
 
 func TestRunUsesItsDefaultExecutorAndTreatsCancelledContextAsSuccess(t *testing.T) {
-	t.Run("default executor receives focus argv", func(t *testing.T) {
-		task := model.Task{Number: 64, Title: "w5 default executor", Status: model.StatusStarted}
-		home := &fakeHome{tasks: []model.Task{task}, runs: []model.Run{{Task: task.Number, Workspace: "w5-workspace", Pane: "w5-pane", StartedTS: time.Now()}}}
+	t.Run("default executor receives the viewer probe argv", func(t *testing.T) {
+		wd, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		task := model.Task{Number: 64, Title: "w5 default executor", Status: model.StatusOpen, Project: wd}
+		home := &fakeHome{
+			tasks:  []model.Task{task},
+			detail: store.TaskDetail{Task: task, History: []model.Event{{Kind: model.KindNote, Data: model.MustData(model.NoteData{Ref: "run_test.go"})}}},
+		}
 		out := &lockedOutput{}
 		in, errs := w5StartRun(t, home, nil, out)
-		eventually(t, "the focus task draw", func() bool { return strings.Contains(out.String(), task.Title) })
-		if _, err := io.WriteString(in, "f"); err != nil {
-			t.Fatalf("write focus: %v", err)
+		eventually(t, "the task draw", func() bool { return strings.Contains(out.String(), task.Title) })
+		if _, err := io.WriteString(in, "\r"); err != nil {
+			t.Fatalf("write enter key: %v", err)
 		}
-		eventually(t, "the default executor failure", func() bool { return strings.Contains(out.String(), "w5-herdr workspace focus") })
+		eventually(t, "the task detail", func() bool { return home.w5GetTaskCalls() == 1 && strings.Contains(out.String(), "FILES") })
+		if _, err := io.WriteString(in, "o"); err != nil {
+			t.Fatalf("write open key: %v", err)
+		}
+		eventually(t, "the default executor failure", func() bool { return strings.Contains(out.String(), "w5-herdr plugin list") })
 		w5Quit(t, in, errs)
 	})
 

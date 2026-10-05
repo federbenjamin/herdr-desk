@@ -14,7 +14,7 @@ import (
 func (a *app) coordinatorCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "coordinator",
-		Short: "Open the desk's coordinator in its own herdr workspace, or focus it when its pane is open",
+		Short: "Open the desk's coordinator in its own herdr workspace, or report it when its pane is open",
 		Args:  cobra.NoArgs,
 	}
 	cmd.RunE = a.do(func(_ *cobra.Command, _ []string) error {
@@ -41,7 +41,7 @@ func (a *app) coordinatorCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		verb := "focused"
+		verb := "open"
 		if opened {
 			verb = "opened"
 		}
