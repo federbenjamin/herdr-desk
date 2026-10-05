@@ -9,6 +9,7 @@ import (
 	"github.com/federbenjamin/herdr-desk/internal/api"
 	"github.com/federbenjamin/herdr-desk/internal/config"
 	"github.com/federbenjamin/herdr-desk/internal/model"
+	"github.com/federbenjamin/herdr-desk/internal/runner"
 	"github.com/federbenjamin/herdr-desk/internal/store"
 	"github.com/federbenjamin/herdr-desk/internal/worker"
 )
@@ -48,8 +49,12 @@ func (a *app) workerCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			message, err := a.workerMessage(cfg, run, worker.FirstMessage(d))
+			if err != nil {
+				return a.workerBlocked(c, actor, task, err)
+			}
 			argv := config.Expand(cfg.Agent.Worker, map[string]string{
-				"model": run.Model, "session": run.Session, "message": worker.FirstMessage(d),
+				"model": run.Model, "session": run.Session, "message": message,
 			})
 			bin, err := agentBinary("worker", argv)
 			if err != nil {
@@ -58,6 +63,20 @@ func (a *app) workerCmd() *cobra.Command {
 			return a.execAgent(bin, argv)
 		}),
 	}
+}
+
+// workerMessage returns the worker's {message}: first, or, when the run's root sets first_message, that template with
+// {task_file} replaced by the path of a file that holds first.
+func (a *app) workerMessage(cfg config.Config, run model.Run, first string) (string, error) {
+	root, ok := runner.FindRoot(runner.Roots(cfg, a.paths), run.Root)
+	if !ok || root.FirstMessage == "" {
+		return first, nil
+	}
+	path := a.paths.RunMessage(run.ID)
+	if err := config.WriteFileAtomic(path, []byte(first)); err != nil {
+		return "", fmt.Errorf("worker: cannot write the first message of run %d: %w", run.ID, err)
+	}
+	return root.Message(path), nil
 }
 
 // execAgent replaces this process with the agent argv names; bin is its first word's path.

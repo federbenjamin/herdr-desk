@@ -29,6 +29,7 @@ func TestRunKeepsExistingValuesAndCreatesTheHomePrerequisites(t *testing.T) {
 	existing.Runner.Enabled = true
 	existing.Runner.Cap = 7
 	existing.SecretScan.Command = []string{"scan-existing"}
+	existing.Roots = []config.Root{{Path: t.TempDir(), About: "app", Isolation: "self", FirstMessage: "/build {task_file}"}}
 	if err := existing.Save(p.ConfigFile()); err != nil {
 		t.Fatalf("save existing config: %v", err)
 	}
@@ -46,7 +47,7 @@ func TestRunKeepsExistingValuesAndCreatesTheHomePrerequisites(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load configured home: %v", err)
 	}
-	if !got.Runner.Enabled || got.Runner.Cap != 7 || !reflect.DeepEqual(got.SecretScan.Command, []string{"scan-existing"}) {
+	if !got.Runner.Enabled || got.Runner.Cap != 7 || !reflect.DeepEqual(got.SecretScan.Command, []string{"scan-existing"}) || !reflect.DeepEqual(got.Roots, existing.Roots) {
 		t.Errorf("Run lost existing config values: %#v", got)
 	}
 	info, err := os.Stat(p.ConfigFile())

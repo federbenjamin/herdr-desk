@@ -85,6 +85,12 @@ func (p Paths) Outbox() string { return filepath.Join(p.StateDir, "outbox.jsonl"
 // SessionsDir is StateDir/sessions.
 func (p Paths) SessionsDir() string { return filepath.Join(p.StateDir, "sessions") }
 
+// RunMessage is StateDir/runs/run-<id>.md: the first message of run id, written by the worker when its root sets
+// first_message.
+func (p Paths) RunMessage(id int64) string {
+	return filepath.Join(p.StateDir, "runs", fmt.Sprintf("run-%d.md", id))
+}
+
 // BackupState is StateDir/backup.json (written and read by internal/backup only).
 func (p Paths) BackupState() string { return filepath.Join(p.StateDir, "backup.json") }
 

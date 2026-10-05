@@ -39,11 +39,11 @@ func Resolve(t model.Task, given store.RunRoute, roots []config.Root, models []s
 	}
 	if out.Root == "" {
 		out.Root = roots[len(roots)-1].Path
-		if r, ok := findRoot(roots, t.Project); ok {
+		if r, ok := FindRoot(roots, t.Project); ok {
 			out.Root = r.Path
 		}
 	}
-	root, ok := findRoot(roots, out.Root)
+	root, ok := FindRoot(roots, out.Root)
 	if !ok {
 		return store.RunRoute{}, badRoute("root %q is not a listed root", out.Root)
 	}
@@ -79,7 +79,7 @@ func badRoute(format string, args ...any) error {
 }
 
 // findRoot returns the root written as path, else the first root that names the same folder through symlinks.
-func findRoot(roots []config.Root, path string) (config.Root, bool) {
+func FindRoot(roots []config.Root, path string) (config.Root, bool) {
 	if path == "" {
 		return config.Root{}, false
 	}

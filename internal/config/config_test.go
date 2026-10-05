@@ -35,6 +35,7 @@ func TestResolvePathsUsesEachXDGVariableAndConstructsNamedFiles(t *testing.T) {
 		"BackupLock":  {p.BackupLock(), "/state/herdr-desk/backup.lock"},
 		"Outbox":      {p.Outbox(), "/state/herdr-desk/outbox.jsonl"},
 		"SessionsDir": {p.SessionsDir(), "/state/herdr-desk/sessions"},
+		"RunMessage":  {p.RunMessage(7), "/state/herdr-desk/runs/run-7.md"},
 		"BackupState": {p.BackupState(), "/state/herdr-desk/backup.json"},
 		"DB":          {p.DB(), "/data/herdr-desk/desk.db"},
 		"ScratchRoot": {p.ScratchRoot(), "/data/herdr-desk/scratch"},
