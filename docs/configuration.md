@@ -22,7 +22,7 @@ start_runs = "propose" # propose | auto
 path = "~/code/example"
 about = "the app; runs its own build pipeline"
 isolation = "self"     # self | worktree | in-place; unset = worktree in a git work tree, else in-place
-first_message = "/build {task_file}" # optional; the worker's first message; see "The spawn"
+first_message = "/build {task_file}" # optional; the root's default first message, used after `run start --first-message` and the task's own `first_message` (docs/runner.md); see "The spawn"
 agents_may_start = false # optional; lets agent sessions other than the coordinator start runs in this root
 
 [agent]           # written by a profile; see the install section
