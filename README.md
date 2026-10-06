@@ -57,8 +57,9 @@ install it again with `claude plugin uninstall herdr-desk@herdr-desk`, then
 
 The plugin registers a `SessionStart` hook (`herdr-desk hook start --format claude-code`) and the `herdr-desk`
 skill. `herdr-desk setup` also writes the skill to `~/.claude/skills/herdr-desk/SKILL.md` when you pass
-`--skill-dir ~/.claude/skills`. It binds `prefix+t` (open the board) and `prefix+a` (capture) in
-herdr's `config.toml`, only for keys that are free; `--force` replaces a binding that holds them. It
+`--skill-dir ~/.claude/skills`. When herdr's `config.toml` exists, it binds `prefix+t` (open the board) and
+`prefix+a` (capture) there, only for keys that are free; with no such file it says so, writes no keys or
+sidebar row, and a later `herdr-desk setup` writes them; `--force` replaces a binding that holds them. It
 also writes the block that adds herdr-desk's row to herdr's sidebar (see [The sidebar row](docs/runner.md#the-sidebar-row)).
 It copies the file to `config.toml.herdr-desk-bak-<time>` first and never binds `ctrl+d`. The board's
 popup is a second entry, the action `open-popup`, and has no default key.
@@ -91,8 +92,7 @@ tells an agent's commands from yours: a caller with a session id is an agent. On
 
 ### No herdr
 
-Install the binary (a release archive from GitHub Releases,
-or `go install github.com/federbenjamin/herdr-desk/cmd/herdr-desk@latest`), then:
+Install the binary (`go install github.com/federbenjamin/herdr-desk/cmd/herdr-desk@latest`), then:
 
 ```sh
 herdr-desk setup
@@ -134,7 +134,7 @@ herdr-desk run start T1                         # start an agent on T1
 herdr-desk note "the sync job retries 3 times"  # record a fact in this session's journal
 ```
 
-In herdr, `herdr-desk setup` binds these keys when they are free:
+In herdr, `herdr-desk setup` binds these keys when herdr's `config.toml` exists and they are free:
 
 | key | does |
 |---|---|
