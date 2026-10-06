@@ -205,7 +205,7 @@ stderr: it exits 1 when the home does not answer, so a script can ask whether it
 | `herdr-desk show <task>` | one task with its steps and history; prints `first_message: <template>` under `model:` when the task sets one |
 | `herdr-desk set <task> [<status>] [--thread <t>] [--root <r>] [--isolation <i>] [--model <m>] [--first-message <template>] [--archive\|--unarchive] [--ref <ref>] [--merged]` | patches fields; `review --merged` writes the status that `runner.on_merged` names. `--first-message` sets the task's first-message template (it must hold `{task_file}`) and `--first-message ''` clears it. Setting `done` ends the task's live run, an `idle` one included |
 | `herdr-desk edit <task> [--title <t>] [--notes <n>] [--append-notes <text>]` | `--notes` replaces the notes. `--append-notes` adds `<text>` on a new line at the end: it writes only if nobody changed the notes since it read them, and when someone did it reads again and retries once; a second `stale` exits 1. Empty or whitespace-only `<text>` is refused `empty-text` and writes nothing |
-| `herdr-desk steps <task> add [--id <id>] <text>` · `toggle <id>` · `done <id>` · `rename <id> <text>` · `remove <id>` | generated step ids are `s1`, `s2`, … per task, never reused. `add --id <id>` picks the id (1 to 64 of letters, digits, `.`, `_`, `-`; never `s<n>`, which is `bad-input`); adding an id that exists writes nothing and keeps the step as it is. `done <id>` sets the step done and never flips it back: it prints `changed` or `unchanged`, exit 0 both times (`toggle` flips, as the board's `space` does). A step write from a run that is not the task's newest is `stale-run` |
+| `herdr-desk steps <task> add [--id <id>] <text>` · `toggle <id>` · `done <id>` · `rename <id> <text>` · `remove <id>` | generated step ids are `s1`, `s2`, … per task, never reused. `add --id <id>` picks the id (1 to 64 of letters, digits, `.`, `_`, `-`; never `s<n>`, which is `bad-input`); adding an id that exists writes nothing, keeps the step as it is, and prints the steps, then `unchanged`. `done <id>` sets the step done and never flips it back: it prints `changed` or `unchanged`, exit 0 both times (`toggle` flips, as the board's `space` does). `--json` prints `{"task": …, "changed": …}` for every op, `changed` true when the op wrote. A step write from a run that is not the task's newest is `stale-run` |
 | `herdr-desk note <text> [--task <task>] [--ref <ref>] [--branch <b>] [--tag <t>]…` | appends a note and prints `e<id>`, or `queued` when the home is unreachable (stderr says why the home did not answer) |
 | `herdr-desk note --merged --branch <b> [--pr <n>] [--sha <sha>] [<text>]` | records that a branch merged |
 | `herdr-desk decide <text> [--tag <k:v>]… [--replaces e<id>] [--task <task>]` | appends a decision |
@@ -401,7 +401,8 @@ session gets `not-allowed`. An agent cannot read a root's `agents_may_start`: it
 alone: an agent session gets `not-allowed` for each. A task's `first_message` is task text, like its notes and root:
 any session may set it with `set --first-message`, so a launcher agent that adds a task chooses the command its runs
 start on, and a worker may change it for the task's next run. This keeps an honest agent in its lane: a session id is
-self-declared, so the three caps are what bounds a dishonest one.
+self-declared, so what bounds a dishonest one is the live-run check (a session id that owns a live run is refused)
+and the three caps.
 
 ## The runner
 

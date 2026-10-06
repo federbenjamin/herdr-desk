@@ -524,18 +524,21 @@ func (a *app) stepsCmd() *cobra.Command {
 		}
 		switch {
 		case asJSON:
-			return a.printJSON(t)
+			return a.printJSON(api.StepResult{Task: t, Changed: changed})
 		case op.Op == "done" && changed:
 			a.say("changed")
 		case op.Op == "done":
 			a.say("unchanged")
 		default:
 			a.printSteps(t.Steps)
+			if !changed {
+				a.say("unchanged")
+			}
 		}
 		return nil
 	})
 	cmd.Flags().StringVar(&id, "id", "", "add only: the step's id, never s<n>; a second add with the same id changes nothing")
-	cmd.Flags().BoolVar(&asJSON, "json", false, "print the task as JSON")
+	cmd.Flags().BoolVar(&asJSON, "json", false, `print {"task": …, "changed": …} as JSON`)
 	return cmd
 }
 

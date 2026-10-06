@@ -38,7 +38,7 @@ Task ids: `T12`, `t12`, and `12` name the same task.
 | hand back with the PR | `herdr-desk set T12 review --ref <pr-url>`; add `--merged` once the PR is merged |
 | close a task | `herdr-desk set T12 done` |
 | add to a task's notes | `herdr-desk edit T12 --append-notes "<text>"` |
-| tick steps | `herdr-desk steps T12 add "<text>"`, `add --id <id> "<text>"` (you pick the id; never `s<n>`; a second `add --id` with the same id changes nothing), `done <id>` (prints `changed` or `unchanged`; never flips back), `toggle s1`, `rename s1 "<text>"`, `remove s1` |
+| tick steps | `herdr-desk steps T12 add "<text>"`, `add --id <id> "<text>"` (you pick the id; never `s<n>`; a second `add --id` with the same id changes nothing and prints the steps, then `unchanged`), `done <id>` (prints `changed` or `unchanged`; never flips back), `toggle s1`, `rename s1 "<text>"`, `remove s1`; with `--json`, every op prints `{"task": …, "changed": …}` |
 | record a fact | `herdr-desk note "<text>" --task T12 --ref <path-or-url>` |
 | record a decision | `herdr-desk decide "<text>" --tag k:v` (`--replaces e<id>` when it replaces one) |
 | read the session journal | `herdr-desk session <id> --md` (no id: the current session); the file the session-start hook named is rewritten after each write of yours, so reading that path is current too |

@@ -5,8 +5,59 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/federbenjamin/herdr-desk/internal/api"
 	"github.com/federbenjamin/herdr-desk/internal/store"
 )
+
+func TestStepsAddWithAnExistingIDPrintsTheStepsThenUnchanged(t *testing.T) {
+	home, _ := startOnlyHome(t, nil)
+	addTask(t, home, "resume a pipeline")
+
+	first := runHomeDesk(t, home, "steps", "T1", "add", "--id", "u1", "unit one")
+	requireSuccess(t, first)
+	if first.stdout != "u1 [ ] unit one\n" {
+		t.Fatalf("first add output = %q, want the steps alone", first.stdout)
+	}
+	again := runHomeDesk(t, home, "steps", "T1", "add", "--id", "u1", "unit one again")
+	requireSuccess(t, again)
+	if again.stdout != "u1 [ ] unit one\nunchanged\n" {
+		t.Fatalf("second add output = %q, want the steps, then unchanged", again.stdout)
+	}
+}
+
+func TestStepsJSONPrintsTheTaskAndWhetherEachOpChangedIt(t *testing.T) {
+	home, _ := startOnlyHome(t, nil)
+	addTask(t, home, "report every op")
+
+	for _, test := range []struct {
+		args    []string
+		changed bool
+		steps   int
+	}{
+		{[]string{"add", "generated"}, true, 1},
+		{[]string{"add", "--id", "u1", "caller id"}, true, 2},
+		{[]string{"add", "--id", "u1", "caller id again"}, false, 2},
+		{[]string{"done", "u1"}, true, 2},
+		{[]string{"done", "u1"}, false, 2},
+		{[]string{"toggle", "s1"}, true, 2},
+		{[]string{"rename", "s1", "renamed"}, true, 2},
+		{[]string{"remove", "s1"}, true, 1},
+	} {
+		args := append([]string{"steps", "T1"}, test.args...)
+		result := runHomeDesk(t, home, append(args, "--json")...)
+		requireSuccess(t, result)
+		var got api.StepResult
+		decoder := json.NewDecoder(strings.NewReader(result.stdout))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&got); err != nil {
+			t.Fatalf("%v: decode %q: %v", test.args, result.stdout, err)
+		}
+		if got.Task.Number != 1 || got.Changed != test.changed || len(got.Task.Steps) != test.steps {
+			t.Fatalf("%v --json = task T%d, changed %v, %d steps; want T1, changed %v, %d steps",
+				test.args, got.Task.Number, got.Changed, len(got.Task.Steps), test.changed, test.steps)
+		}
+	}
+}
 
 func TestW6StepsAddUsesTheRequestedIDAndDoneReportsWhetherItChanged(t *testing.T) {
 	home, _ := startOnlyHome(t, nil)

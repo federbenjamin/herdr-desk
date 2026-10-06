@@ -29,7 +29,8 @@ func Roots(c config.Config, p config.Paths) []config.Root {
 // in-place; for the model, the first of models ("" when there are none); for the first_message, the resolved root's
 // ("" when it sets none). The route is then checked: the root is listed, the isolation is self, worktree, or
 // in-place, the model is in models when models is not empty, and the first_message is empty or holds {task_file}. A
-// failed check is bad-input.
+// failed check is bad-input. A root whose isolation default git could not decide (git missing or timed out, the
+// folder unreadable) is an error, never in-place.
 func Resolve(t model.Task, given store.RunRoute, roots []config.Root, models []string) (store.RunRoute, error) {
 	if len(roots) == 0 {
 		return store.RunRoute{}, badRoute("there is no root to run in")
@@ -55,8 +56,12 @@ func Resolve(t model.Task, given store.RunRoute, roots []config.Root, models []s
 		}
 	}
 	if out.Isolation == "" {
+		tree, err := isWorkTree(context.Background(), out.Root)
+		if err != nil {
+			return store.RunRoute{}, fmt.Errorf("root %s: its isolation is unset and git could not say whether it is a work tree; set the root's or the task's isolation, or fix git: %w", out.Root, err)
+		}
 		out.Isolation = "in-place"
-		if ok, _ := isWorkTree(context.Background(), out.Root); ok {
+		if tree {
 			out.Isolation = "worktree"
 		}
 	}
