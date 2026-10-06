@@ -99,7 +99,7 @@ claude_plugin() {
 # only when it fails, so the log is where a step that did not finish is reported.
 finish() {
   install_from_path
-  if (umask 077 && mkdir -p "$(dirname "$install_log")" && : >"$install_log") 2>/dev/null; then
+  if (umask 077 && mkdir -p "$(dirname "$install_log")" && touch "$install_log" && chmod 600 "$install_log" && : >"$install_log") 2>/dev/null; then
     configure 2>&1 | tee "$install_log"
   else
     configure

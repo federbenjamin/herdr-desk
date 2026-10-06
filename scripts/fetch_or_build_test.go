@@ -502,6 +502,46 @@ func TestFetchOrBuildInstallLogHoldsOnlyTheLatestInstall(t *testing.T) {
 	}
 }
 
+func TestFetchOrBuildMakesAnExistingInstallLogPrivate(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		mode os.FileMode
+	}{
+		{"readable by all", 0o644},
+		{"read-only to its owner", 0o400},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRig(t)
+			r.release(t)
+			r.addDesk(t)
+			r.addClaude(t)
+			log := r.installLog()
+			if err := os.MkdirAll(filepath.Dir(log), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(log, []byte("an earlier install\n"), tc.mode); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(log, tc.mode); err != nil {
+				t.Fatal(err)
+			}
+
+			r.run(t)
+
+			info, err := os.Stat(log)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := info.Mode().Perm(); got != 0o600 {
+				t.Errorf("install log mode = %04o, want 0600", got)
+			}
+			if got := readFile(t, log); strings.Contains(got, "an earlier install") || !strings.Contains(got, "Claude Code plugin installed") {
+				t.Errorf("the install log does not hold just this install:\n%s", got)
+			}
+		})
+	}
+}
+
 func TestFetchOrBuildReportsWithoutAnInstallLogWhenItCannotWriteOne(t *testing.T) {
 	r := newRig(t)
 	r.release(t)
