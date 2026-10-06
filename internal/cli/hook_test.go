@@ -27,14 +27,14 @@ func TestClaudeHookWritesAPrivateJournalViewForEveryRenderingSource(t *testing.T
 
 			path := filepath.Join(home.Paths.SessionsDir(), sessionID+".md")
 			lines := strings.Split(strings.TrimSuffix(result.stdout, "\n"), "\n")
-			if len(lines) != 3 {
-				t.Fatalf("hook %s stdout lines = %q, want exactly three lines", source, result.stdout)
+			if len(lines) != 2 {
+				t.Fatalf("hook %s stdout lines = %q, want exactly two lines", source, result.stdout)
 			}
 			if lines[0] != "herdr-desk journal for this session: "+path {
 				t.Fatalf("hook %s first line = %q, want journal path %q", source, lines[0], path)
 			}
-			if strings.TrimSpace(lines[1]) == "" || strings.TrimSpace(lines[2]) == "" {
-				t.Fatalf("hook %s instructions = %q, want two non-empty record instructions", source, result.stdout)
+			if lines[1] != "Read the journal again with `herdr-desk session "+sessionID+" --md`." {
+				t.Fatalf("hook %s second line = %q, want the read instruction", source, lines[1])
 			}
 			view, err := os.ReadFile(path)
 			if err != nil {

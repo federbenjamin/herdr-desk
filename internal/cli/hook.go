@@ -70,7 +70,6 @@ func (a *app) hookCmd() *cobra.Command {
 			return err
 		}
 		a.say("herdr-desk journal for this session: %s", path)
-		a.say("Record facts with `herdr-desk note \"<text>\"` (add `--branch <b>` for branch work) and choices with `herdr-desk decide \"<text>\"`.")
 		a.say("Read the journal again with `herdr-desk session %s --md`.", in.SessionID)
 		return nil
 	})
