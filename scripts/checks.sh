@@ -28,4 +28,4 @@ if [ -n "$unformatted" ]; then
   echo "$unformatted" >&2
   exit 1
 fi
-shellcheck scripts/*.sh scripts/e2e/*.sh
+shellcheck scripts/*.sh scripts/e2e/*.sh docs/media/hero.sh
