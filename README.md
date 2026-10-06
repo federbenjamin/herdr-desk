@@ -9,6 +9,8 @@
   <a href="https://github.com/herdrdev/herdr"><img src="https://img.shields.io/badge/herdr-%E2%89%A5%200.9.0-blue" alt="herdr ≥ 0.9.0"></a>
 </p>
 
+<p align="center"><img src="docs/media/hero.png" alt="The herdr-desk board in a herdr pane: the runner on at 2/3, tasks under NEEDS YOU, IN MOTION and ON DECK, two of them on live runs, and a task's page with its notes, steps and history on the right" width="720"></p>
+
 herdr-desk is a task board for people who work with coding agents in [herdr](https://github.com/herdrdev/herdr).
 A coordinator agent turns what you ask for into tasks and runs, a runner starts an agent on a task in its own
 herdr workspace and hands the task back to you, and a journal gives every agent session a memory. It is one
@@ -127,7 +129,8 @@ Every command works with no ticker running; only the timed jobs wait (see
 ```sh
 herdr-desk add -t "Add retry to the sync job"   # prints T1
 herdr-desk                                      # the board; q quits
-herdr-desk run start T1                         # start an agent on T1 (needs herdr and the runner on)
+herdr-desk setup --runner on                    # once: let runs start (needs herdr)
+herdr-desk run start T1                         # start an agent on T1
 herdr-desk note "the sync job retries 3 times"  # record a fact in this session's journal
 ```
 

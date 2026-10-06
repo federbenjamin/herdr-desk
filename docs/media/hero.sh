@@ -17,11 +17,18 @@ herdr_bin=$(command -v herdr)
 # Short on purpose: herdr's socket lives under this HOME and its path must fit sun_path (104 bytes on macOS).
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/hd.XXXXXX")
 tmp=$(cd -P "$tmp" && pwd)
-server_started=0
+server_pid=""
+server_ours=0
 ticker_started=0
+# Stops only what this script started: `herdr server stop` once the server is known to listen under this HOME, else
+# the process it spawned.
 teardown() {
   if [ "$ticker_started" = 1 ]; then herdr-desk ticker stop >/dev/null 2>&1 || true; fi
-  if [ "$server_started" = 1 ]; then herdr server stop >/dev/null 2>&1 || true; fi
+  if [ "$server_ours" = 1 ]; then
+    herdr server stop >/dev/null 2>&1 || true
+  elif [ -n "$server_pid" ]; then
+    kill "$server_pid" 2>/dev/null || true
+  fi
   rm -rf -- "$tmp"
 }
 trap teardown EXIT
@@ -63,14 +70,15 @@ server_running() { herdr status server 2>/dev/null | grep -q '^status: running';
 
 # herdr's own server, started only when none answers under this HOME, and checked to listen under it.
 if server_running; then echo "hero.sh: a herdr server already answers under $HOME" >&2; exit 1; fi
-(nohup herdr server >"$tmp/server.log" 2>&1 &)
-server_started=1
+nohup herdr server >"$tmp/server.log" 2>&1 &
+server_pid=$!
 poll 40 server_running || { echo "hero.sh: herdr server did not answer; its log:" >&2; cat "$tmp/server.log" >&2; exit 1; }
 sock=$(herdr status server | sed -n 's/^socket: //p')
 case "$(cd -P "$(dirname "$sock")" && pwd)/" in
   "$tmp"/*) ;;
   *) echo "hero.sh: herdr's socket $sock is not under $tmp" >&2; exit 1 ;;
 esac
+server_ours=1
 
 # The fixture: two git roots, alpha and beta, and a worker that tells herdr it is working and then sleeps.
 work=$tmp/work
@@ -81,7 +89,7 @@ for r in alpha beta; do
 done
 cat >"$tmp/bin/fake-agent" <<'AGENT'
 #!/bin/sh
-herdr pane report-agent "$HERDR_PANE_ID" --source hero --agent fake --state working >/dev/null 2>&1 || true
+herdr pane report-agent "$HERDR_PANE_ID" --source hero --agent worker --state working >/dev/null 2>&1 || true
 printf 'fake agent on model %s\n' "$1"
 exec sleep 3600
 AGENT
@@ -119,8 +127,14 @@ poll 40 ticker_running || { echo "hero.sh: the ticker did not start; its log:" >
 
 # The tasks. add prints T<n>.
 add() { herdr-desk add "$@"; }
-t_review=$(add -t "Fix the flaky upload test" -p "$work/alpha")
-herdr-desk note "the test waited on a fixed sleep; it polls the queue now" --task "$t_review" >/dev/null
+t_review=$(add -t "Fix the flaky upload test" -p "$work/alpha" \
+  -n "Fails about one CI run in 30. The upload worker may not be done when the assertion runs.")
+herdr-desk steps "$t_review" add "replace the fixed sleep with a poll on the queue" >/dev/null
+herdr-desk steps "$t_review" add "run the test 200 times" >/dev/null
+herdr-desk steps "$t_review" add "say the cause in the PR" >/dev/null
+for s in s1 s2 s3; do herdr-desk steps "$t_review" toggle "$s" >/dev/null; done
+herdr-desk note "the test slept 2s and hoped; it polls the queue now, 200 runs green" --task "$t_review" \
+  --ref https://github.com/example/app/pull/41 >/dev/null
 herdr-desk set "$t_review" review >/dev/null
 t_blocked=$(add -t "Pick a delimiter for the CSV export" -p "$work/beta")
 herdr-desk set "$t_blocked" blocked >/dev/null
@@ -147,17 +161,21 @@ poll 80 two_running || { echo "hero.sh: the two runs did not reach running:" >&2
 ws=$(herdr workspace create --cwd "$work/alpha" --label desk --focus)
 board=$(printf '%s' "$ws" | jq -r '.result.root_pane.pane_id')
 herdr pane wait-output "$board" --match '$' --source recent --timeout 10000 >/dev/null
+herdr pane run "$board" "command -v herdr-desk" >/dev/null
+herdr pane wait-output "$board" --match "$tmp/bin/herdr-desk" --source recent --timeout 10000 >/dev/null ||
+  { echo "hero.sh: herdr-desk in a pane is not the build" >&2; exit 1; }
 herdr pane run "$board" "clear; exec herdr-desk" >/dev/null
 
 # vhs runs under this same environment, so its client attaches to this server. The first attach shows herdr's
-# welcome, then its settings: Enter, then Escape, dismisses both. j j selects the first IN MOTION row, whose page
-# shows on the right. vhs needs a frame after Show before the Screenshot.
+# welcome, then its settings: Enter, then Escape, dismisses both. j selects the review row, whose page shows on
+# the right: a page with a live run names its root's full path, which would put this machine's temp folder in the
+# picture. vhs needs a frame after Show before the Screenshot.
 cat >"$tmp/hero.tape" <<TAPE
 Output "$tmp/hero.gif"
 Set Shell bash
 Set FontSize 14
 Set Width 1600
-Set Height 760
+Set Height 560
 Set Padding 0
 Env PS1 "\$ "
 Hide
@@ -166,9 +184,11 @@ Enter
 Wait+Screen@15s /continue/
 Enter
 Wait+Screen@5s /integrations/
+Sleep 1s
 Escape
-Wait+Screen@10s /IN MOTION/
-Type "jj"
+Wait+Screen@10s /running ·/
+Type "j"
+Wait+Screen@5s /200 times/
 Sleep 1s
 Show
 Sleep 1s
