@@ -15,7 +15,7 @@ max_run_minutes = 180
 on_merged = "review"   # review | done
 
 [coordinator]
-# WARNING: auto lets the coordinator and any agent start runs that spend your quota unasked
+# WARNING: auto lets the coordinator start runs unasked and agents set tasks ready, which spends your quota; another agent may start a run only in a root with agents_may_start = true
 start_runs = "propose" # propose | auto
 
 [[roots]]
@@ -23,6 +23,7 @@ path = "~/code/example"
 about = "the app; runs its own build pipeline"
 isolation = "self"     # self | worktree | in-place; unset = worktree in a git work tree, else in-place
 first_message = "/build {task_file}" # optional; the worker's first message; see "The spawn"
+agents_may_start = false # optional; lets agent sessions other than the coordinator start runs in this root
 
 [agent]           # written by a profile; see the install section
 worker = []
@@ -59,7 +60,7 @@ A root named `scratch` (`$XDG_DATA_HOME/herdr-desk/scratch`, a git repo) is alwa
 no project has a root to run in.
 
 State lives in `$XDG_STATE_HOME/herdr-desk` (`ticker.lock`, `ticker.json`, `herdr-desk.log`, `backup.lock`,
-the outbox, the runner's pause file, session views, each run's first-message file under `runs/`, and on a
+the outbox, the runner's pause file, session views, each run's first-message file under `runs/` (the ticker removes it once the run has ended, failed, or been killed), and on a
 client the ssh control socket);
 the store is one SQLite file under `$XDG_DATA_HOME/herdr-desk`; the offline snapshot is under
 `$XDG_CACHE_HOME/herdr-desk`.
