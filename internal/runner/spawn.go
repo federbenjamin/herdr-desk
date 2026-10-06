@@ -163,7 +163,7 @@ func (r *Runner) workdir(ctx context.Context, t model.Task, run model.Run) (stri
 		}
 		return root, nil
 	}
-	dir := filepath.Join(filepath.Dir(root), filepath.Base(root)+"-T"+strconv.Itoa(t.Number))
+	dir := worktreeDir(root, t.Number)
 	if isWorkTree(ctx, dir) {
 		return dir, nil
 	}
@@ -179,6 +179,12 @@ func (r *Runner) workdir(ctx context.Context, t model.Task, run model.Run) (stri
 		return "", err
 	}
 	return dir, nil
+}
+
+// worktreeDir is task's worktree for worktree isolation in root: <parent of root>/<base of root>-T<task>.
+func worktreeDir(root string, task int) string {
+	root = filepath.Clean(root)
+	return filepath.Join(filepath.Dir(root), filepath.Base(root)+"-T"+strconv.Itoa(task))
 }
 
 // isWorkTree reports whether dir is the top of a git work tree.
