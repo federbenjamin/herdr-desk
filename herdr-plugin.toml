@@ -4,7 +4,7 @@ id = "herdr-desk"
 name = "herdr-desk"
 version = "0.1.0"
 min_herdr_version = "0.9.0"
-description = "A task board and session journal: one home per desk, a CLI, and a board pane."
+description = "A task board for you and your agents, with a coordinator, a runner, and a session journal."
 platforms = ["linux", "macos"]
 
 # Installs a checksum-verified release binary for this version and platform, else builds from
