@@ -58,3 +58,19 @@ func TestW6FirstMessageWithHandBackRetainsTheInstruction(t *testing.T) {
 		t.Fatalf("FirstMessage with hand-back = %q, want the hand-back instruction", got)
 	}
 }
+
+func TestW6FirstMessageHistoryNamesFirstMessagePatch(t *testing.T) {
+	template := "Read {task_file}."
+	detail := store.TaskDetail{
+		Task: model.Task{Number: 24, Title: "show the template change"},
+		History: []model.Event{{
+			TS:   time.Date(2026, time.October, 4, 14, 2, 0, 0, time.UTC),
+			Kind: model.KindSet,
+			Data: model.MustData(model.Patch{FirstMessage: &template}),
+		}},
+	}
+
+	if got := worker.FirstMessage(detail, false); !strings.Contains(got, "- 2026-10-04 14:02Z user: changed first_message\n") {
+		t.Fatalf("FirstMessage history = %q, want first_message patch named", got)
+	}
+}

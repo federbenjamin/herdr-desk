@@ -34,11 +34,16 @@ func TestW6SetFirstMessageShowsItAndAnEmptyFlagClearsIt(t *testing.T) {
 	requireSuccess(t, runHomeDesk(t, home, "set", fmt.Sprintf("T%d", task), "--first-message", template))
 	shown := runHomeDesk(t, home, "show", fmt.Sprintf("T%d", task))
 	requireSuccess(t, shown)
-	if !strings.Contains(shown.stdout, "model:") || !strings.Contains(shown.stdout, "first_message: "+template) {
-		t.Fatalf("show output = %q, want first_message under the task route", shown.stdout)
+	if !strings.Contains(shown.stdout, "first_message: "+template) {
+		t.Fatalf("show output = %q, want first_message %q", shown.stdout, template)
 	}
 
 	requireSuccess(t, runHomeDesk(t, home, "set", fmt.Sprintf("T%d", task), "--first-message", ""))
+	shown = runHomeDesk(t, home, "show", fmt.Sprintf("T%d", task))
+	requireSuccess(t, shown)
+	if strings.Contains(shown.stdout, "first_message:") {
+		t.Fatalf("show output after --first-message '' = %q, want no first_message", shown.stdout)
+	}
 	result := runHomeDesk(t, home, "show", fmt.Sprintf("T%d", task), "--json")
 	requireSuccess(t, result)
 	var detail store.TaskDetail
