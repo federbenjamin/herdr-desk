@@ -248,7 +248,7 @@ func newFakeClientIn(t *testing.T, stateDir string) herdr.Client {
 		t.Fatalf("make fake-herdr path absolute: %v", err)
 	}
 	t.Setenv("FAKE_HERDR_DIR", stateDir)
-	return herdr.Client{Bin: bin, Timeout: 2 * time.Second}
+	return herdr.Client{Bin: bin, Timeout: pollBound}
 }
 
 func createWorkspace(t *testing.T, client herdr.Client) herdr.Created {
