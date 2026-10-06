@@ -155,6 +155,8 @@ func (r *Runner) findHerdr() (Herdr, error) {
 
 // Jobs is the ticker's run jobs, once: reconcile, the deadline, start what waits, fail runs left starting, close
 // the panes left open again, and block tasks left started. With no live run and no pane left open, herdr is not asked.
+// Then two sweeps, which run with or without a live run and never ask herdr: remove the first-message files of
+// final runs, and remove the clean worktrees of done tasks.
 func (r *Runner) Jobs(ctx context.Context) {
 	_ = r.Reconcile(ctx) // Reconcile logs its errors.
 	r.deadline(ctx)
@@ -162,6 +164,8 @@ func (r *Runner) Jobs(ctx context.Context) {
 	r.failStaleStarting(ctx)
 	r.closeLeftOpen(ctx)
 	r.repairStarted(ctx)
+	r.sweepRunFiles(ctx)
+	r.sweepWorktrees(ctx)
 }
 
 // deadline stops every running run past runner.max_run_minutes. It asks herdr for its panes only when one is.
