@@ -290,6 +290,7 @@ func (a *app) showTask(d store.TaskDetail) {
 	a.say("%s", taskLine(t))
 	for _, f := range []struct{ name, value string }{
 		{"project", t.Project}, {"root", t.Root}, {"isolation", t.Isolation}, {"model", t.Model},
+		{"first_message", t.FirstMessage},
 	} {
 		if f.value != "" {
 			a.say("%s: %s", f.name, f.value)
@@ -324,7 +325,7 @@ func (a *app) printSteps(steps []model.Step) {
 }
 
 func (a *app) setCmd() *cobra.Command {
-	var thread, root, isolation, mdl, ref string
+	var thread, root, isolation, mdl, firstMessage, ref string
 	var archive, unarchive, merged, asJSON bool
 	cmd := &cobra.Command{
 		Use:   "set <task> [<status>]",
@@ -353,6 +354,7 @@ func (a *app) setCmd() *cobra.Command {
 		}{
 			{"thread", &thread, &p.Thread}, {"root", &root, &p.Root},
 			{"isolation", &isolation, &p.Isolation}, {"model", &mdl, &p.Model},
+			{"first-message", &firstMessage, &p.FirstMessage},
 		} {
 			if changed(f.name) {
 				*f.dst = f.value
@@ -381,6 +383,7 @@ func (a *app) setCmd() *cobra.Command {
 	f.StringVar(&root, "root", "", "the root the task runs in")
 	f.StringVar(&isolation, "isolation", "", "self, worktree, or in-place")
 	f.StringVar(&mdl, "model", "", "the model a run uses")
+	f.StringVar(&firstMessage, "first-message", "", "the worker's first message, holding {task_file}; '' clears it (default: the root's)")
 	f.BoolVar(&archive, "archive", false, "archive the task")
 	f.BoolVar(&unarchive, "unarchive", false, "bring the task back from the archive")
 	f.StringVar(&ref, "ref", "", "a file or PR this change is about")
@@ -472,33 +475,38 @@ func (a *app) appendNotes(c *api.Client, actor store.Actor, n int, p model.Patch
 	return model.Task{}, err
 }
 
-// stepOp reads the words after `herdr-desk steps <task>`.
-func stepOp(args []string) (model.StepOp, error) {
+const stepsUse = "add [--id <id>] <text> · toggle <id> · done <id> · rename <id> <text> · remove <id>"
+
+// stepOp reads the words after `herdr-desk steps <task>`; hasID says --id was given, id is its value.
+func stepOp(args []string, id string, hasID bool) (model.StepOp, error) {
 	op, rest := args[0], args[1:]
 	switch {
+	case hasID && (op != "add" || id == ""):
+		return model.StepOp{}, usage("--id <id> goes with add only, and names a step: " + stepsUse)
 	case op == "add" && len(rest) > 0:
-		return model.StepOp{Op: op, Text: strings.Join(rest, " ")}, nil
-	case (op == "toggle" || op == "remove") && len(rest) == 1:
+		return model.StepOp{Op: op, ShortID: id, Text: strings.Join(rest, " ")}, nil
+	case (op == "toggle" || op == "done" || op == "remove") && len(rest) == 1:
 		return model.StepOp{Op: op, ShortID: rest[0]}, nil
 	case op == "rename" && len(rest) > 1:
 		return model.StepOp{Op: op, ShortID: rest[0], Text: strings.Join(rest[1:], " ")}, nil
 	}
-	return model.StepOp{}, usage("use: add <text> · toggle <id> · rename <id> <text> · remove <id>")
+	return model.StepOp{}, usage("use: " + stepsUse)
 }
 
 func (a *app) stepsCmd() *cobra.Command {
 	var asJSON bool
+	var id string
 	cmd := &cobra.Command{
-		Use:   "steps <task> add <text> | toggle <id> | rename <id> <text> | remove <id>",
-		Short: "Change a task's steps",
+		Use:   "steps <task> add [--id <id>] <text> | toggle <id> | done <id> | rename <id> <text> | remove <id>",
+		Short: "Change a task's steps; done prints changed or unchanged",
 		Args:  cobra.MinimumNArgs(2),
 	}
-	cmd.RunE = a.do(func(_ *cobra.Command, args []string) error {
+	cmd.RunE = a.do(func(cmd *cobra.Command, args []string) error {
 		n, err := parseTask(args[0])
 		if err != nil {
 			return err
 		}
-		op, err := stepOp(args[1:])
+		op, err := stepOp(args[1:], id, cmd.Flags().Changed("id"))
 		if err != nil {
 			return err
 		}
@@ -510,16 +518,23 @@ func (a *app) stepsCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		t, err := c.Step(a.ctx, actor, n, op)
+		t, changed, err := c.Step(a.ctx, actor, n, op)
 		if err != nil {
 			return err
 		}
-		if asJSON {
+		switch {
+		case asJSON:
 			return a.printJSON(t)
+		case op.Op == "done" && changed:
+			a.say("changed")
+		case op.Op == "done":
+			a.say("unchanged")
+		default:
+			a.printSteps(t.Steps)
 		}
-		a.printSteps(t.Steps)
 		return nil
 	})
+	cmd.Flags().StringVar(&id, "id", "", "add only: the step's id, never s<n>; a second add with the same id changes nothing")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the task as JSON")
 	return cmd
 }

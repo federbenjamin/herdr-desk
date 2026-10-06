@@ -53,7 +53,7 @@ func TestFirstMessageRendersTheCompleteTaskInThePublishedShape(t *testing.T) {
 		"- 2026-10-04 14:21Z agent: status blocked (docs/blocker.md)\n" +
 		"- 2026-10-04 14:30Z user: decided: ship after review\n\n" +
 		"When the work is finished, hand the task back: run `herdr-desk set T7 review --ref <a file or PR that shows the work>`. Add `--merged` when that PR is merged. If you cannot finish, record what you need with `herdr-desk note --task T7 \"<what you need>\"`, then run `herdr-desk set T7 blocked`. Finish with review or blocked.\n"
-	if got := worker.FirstMessage(detail); got != want {
+	if got := worker.FirstMessage(detail, true); got != want {
 		t.Errorf("FirstMessage() =\n%s\nwant\n%s", got, want)
 	}
 }
@@ -91,7 +91,7 @@ func TestFirstMessageLeavesOutEmptySectionsAndTheirBlankLines(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := worker.FirstMessage(tc.detail); got != tc.want {
+			if got := worker.FirstMessage(tc.detail, true); got != tc.want {
 				t.Errorf("FirstMessage() =\n%s\nwant\n%s", got, tc.want)
 			}
 		})
@@ -106,7 +106,7 @@ func TestFirstMessageOmitsReferencesThatAreNotPresent(t *testing.T) {
 	}}
 	want := "You are working on desk task T11: No ref\n\nHistory (oldest first):\n" +
 		"- 2026-10-04 14:02Z agent: note: plain note\n\n" + strings.ReplaceAll(handBack, "T<n>", "T11") + "\n"
-	if got := worker.FirstMessage(detail); got != want {
+	if got := worker.FirstMessage(detail, true); got != want {
 		t.Errorf("FirstMessage() =\n%s\nwant\n%s", got, want)
 	}
 }
@@ -121,7 +121,7 @@ func TestFirstMessageNamesChangedFieldsWhenASetDoesNotChangeStatus(t *testing.T)
 	}}
 	want := "You are working on desk task T12: Changed fields\n\nHistory (oldest first):\n" +
 		"- 2026-10-04 14:02Z user: changed title, root\n\n" + strings.ReplaceAll(handBack, "T<n>", "T12") + "\n"
-	if got := worker.FirstMessage(detail); got != want {
+	if got := worker.FirstMessage(detail, true); got != want {
 		t.Errorf("FirstMessage() =\n%s\nwant\n%s", got, want)
 	}
 }
@@ -136,7 +136,7 @@ func TestFirstMessageLeavesOutRouterAndStepEvents(t *testing.T) {
 	}}
 	want := "You are working on desk task T13: Visible history\n\nHistory (oldest first):\n" +
 		"- 2026-10-04 14:04Z user: note: visible note\n\n" + strings.ReplaceAll(handBack, "T<n>", "T13") + "\n"
-	if got := worker.FirstMessage(detail); got != want {
+	if got := worker.FirstMessage(detail, true); got != want {
 		t.Errorf("FirstMessage() =\n%s\nwant\n%s", got, want)
 	}
 }
@@ -154,7 +154,7 @@ func TestFirstMessageDropsOldestHistoryLinesBeforeExceeding64KiB(t *testing.T) {
 		})
 	}
 
-	got := worker.FirstMessage(store.TaskDetail{Task: model.Task{Number: 14, Title: "Long history"}, History: history})
+	got := worker.FirstMessage(store.TaskDetail{Task: model.Task{Number: 14, Title: "Long history"}, History: history}, true)
 	if len(got) > 64*1024 {
 		t.Fatalf("FirstMessage() length = %d, want at most %d", len(got), 64*1024)
 	}
@@ -187,7 +187,7 @@ func TestFirstMessageCarriesTemplateLookingTextWithoutExpansion(t *testing.T) {
 	detail := store.TaskDetail{Task: model.Task{Number: 15, Title: "Use {session} --model", Notes: "Keep {model} --flag unchanged."}}
 	want := "You are working on desk task T15: Use {session} --model\n\n" +
 		"Keep {model} --flag unchanged.\n\n" + strings.ReplaceAll(handBack, "T<n>", "T15") + "\n"
-	if got := worker.FirstMessage(detail); got != want {
+	if got := worker.FirstMessage(detail, true); got != want {
 		t.Errorf("FirstMessage() =\n%s\nwant\n%s", got, want)
 	}
 }
@@ -203,7 +203,7 @@ func TestFirstMessageRendersRefOnlyChangesAndMergedEvents(t *testing.T) {
 	want := "You are working on desk task T16: Merge it\n\nHistory (oldest first):\n" +
 		"- 2026-10-04 14:02Z user: changed (https://example.test/pr/16)\n" +
 		"- 2026-10-04 14:03Z user: merged feature/merge-it\n\n" + strings.ReplaceAll(handBack, "T<n>", "T16") + "\n"
-	if got := worker.FirstMessage(detail); got != want {
+	if got := worker.FirstMessage(detail, true); got != want {
 		t.Errorf("FirstMessage() =\n%s\nwant\n%s", got, want)
 	}
 }

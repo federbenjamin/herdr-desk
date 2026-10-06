@@ -14,10 +14,10 @@ import (
 
 const maxMessage = 64 << 10
 
-// FirstMessage returns the worker's first message for a task: the title, the notes, the steps, the history, and
-// how to hand the task back. Events tagged router and step events are left out. It is at most 64 KiB: the
-// oldest history lines are dropped first and a line says how many.
-func FirstMessage(d store.TaskDetail) string {
+// FirstMessage returns the worker's first message for a task: the title, the notes, the steps, the history, and,
+// when handBack is true, how to hand the task back. Events tagged router and step events are left out. It is at
+// most 64 KiB and ends with a newline: the oldest history lines are dropped first and a line says how many.
+func FirstMessage(d store.TaskDetail, handBack bool) string {
 	t := d.Task
 	head := []string{fmt.Sprintf("You are working on desk task T%d: %s", t.Number, t.Title)}
 	if notes := strings.TrimSpace(t.Notes); notes != "" {
@@ -34,9 +34,15 @@ func FirstMessage(d store.TaskDetail) string {
 		}
 		head = append(head, strings.Join(lines, "\n"))
 	}
-	handBack := fmt.Sprintf("When the work is finished, hand the task back: run `herdr-desk set T%[1]d review --ref <a file or PR that shows the work>`. "+
-		"Add `--merged` when that PR is merged. If you cannot finish, record what you need with `herdr-desk note --task T%[1]d \"<what you need>\"`, "+
-		"then run `herdr-desk set T%[1]d blocked`. Finish with review or blocked.", t.Number)
+	var tail []string
+	end := "\n"
+	if handBack {
+		back := fmt.Sprintf("When the work is finished, hand the task back: run `herdr-desk set T%[1]d review --ref <a file or PR that shows the work>`. "+
+			"Add `--merged` when that PR is merged. If you cannot finish, record what you need with `herdr-desk note --task T%[1]d \"<what you need>\"`, "+
+			"then run `herdr-desk set T%[1]d blocked`. Finish with review or blocked.", t.Number)
+		tail = []string{back}
+		end = "\n\n" + back + "\n"
+	}
 
 	var history []string
 	for _, ev := range d.History {
@@ -54,7 +60,7 @@ func FirstMessage(d store.TaskDetail) string {
 			}
 			parts = append(parts, strings.Join(append(lines, kept...), "\n"))
 		}
-		return strings.Join(append(parts, handBack), "\n\n") + "\n"
+		return strings.Join(append(parts, tail...), "\n\n") + "\n"
 	}
 	msg := build(0)
 	if len(msg) > maxMessage {
@@ -72,13 +78,12 @@ func FirstMessage(d store.TaskDetail) string {
 		msg = build(dropped)
 	}
 	if len(msg) > maxMessage {
-		// Only a title, notes, or steps past the limit on their own get here: the text before the hand-back is cut.
-		tail := "\n\n" + handBack + "\n"
-		body := msg[:maxMessage-len(tail)]
+		// Only a title, notes, or steps past the limit on their own get here: the text before the hand-back, when there is one, is cut.
+		body := msg[:maxMessage-len(end)]
 		for !utf8.ValidString(body) {
 			body = body[:len(body)-1]
 		}
-		msg = body + tail
+		msg = body + end
 	}
 	return msg
 }
@@ -142,6 +147,7 @@ func patchFields(p model.Patch) []string {
 		{"root", p.Root != nil},
 		{"isolation", p.Isolation != nil},
 		{"model", p.Model != nil},
+		{"first_message", p.FirstMessage != nil},
 		{"archived", p.Archived != nil},
 	} {
 		if f.set {
