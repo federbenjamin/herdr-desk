@@ -85,9 +85,6 @@ func (r *Runner) sweepWorktrees(ctx context.Context) {
 		dir := worktreeDir(t.Root, t.Number)
 		ours, err := isWorkTree(ctx, dir)
 		if err != nil {
-			if ctx.Err() != nil {
-				return
-			}
 			r.logErr("T%d: worktree %s left alone, it could not be checked", t.Number, dir, err)
 			continue
 		}
