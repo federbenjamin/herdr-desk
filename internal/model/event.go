@@ -48,23 +48,24 @@ type TaskData struct {
 
 // Patch is a change to a task's fields. As a set event's payload it holds only the fields that changed.
 type Patch struct {
-	Status    *Status `json:"status,omitempty"`
-	Title     *string `json:"title,omitempty"`
-	Notes     *string `json:"notes,omitempty"`
-	NotesWere *string `json:"notes_were,omitempty"` // precondition: the notes the writer read; never stored in a set event
-	Thread    *string `json:"thread,omitempty"`
-	Root      *string `json:"root,omitempty"`
-	Isolation *string `json:"isolation,omitempty"`
-	Model     *string `json:"model,omitempty"`
-	Archived  *bool   `json:"archived,omitempty"`
-	Ref       string  `json:"ref,omitempty"`
-	Merged    bool    `json:"merged,omitempty"`
+	Status       *Status `json:"status,omitempty"`
+	Title        *string `json:"title,omitempty"`
+	Notes        *string `json:"notes,omitempty"`
+	NotesWere    *string `json:"notes_were,omitempty"` // precondition: the notes the writer read; never stored in a set event
+	Thread       *string `json:"thread,omitempty"`
+	Root         *string `json:"root,omitempty"`
+	Isolation    *string `json:"isolation,omitempty"`
+	Model        *string `json:"model,omitempty"`
+	FirstMessage *string `json:"first_message,omitempty"`
+	Archived     *bool   `json:"archived,omitempty"`
+	Ref          string  `json:"ref,omitempty"`
+	Merged       bool    `json:"merged,omitempty"`
 }
 
 // StepOp is one change to a task's steps, and a step event's payload.
 type StepOp struct {
-	Op      string `json:"op"` // add | toggle | rename | remove
-	ShortID string `json:"short_id,omitempty"`
+	Op      string `json:"op"`                 // add | toggle | done | rename | remove
+	ShortID string `json:"short_id,omitempty"` // add: the caller's id, "" → generated
 	Text    string `json:"text,omitempty"`
 }
 

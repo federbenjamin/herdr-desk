@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -140,6 +141,10 @@ func (s *Store) checkPatch(a Actor, p model.Patch) (model.Patch, error) {
 	if p.Isolation != nil && !model.ValidIsolation(*p.Isolation) {
 		return p, refuse(model.CodeBadInput, "isolation must be self, worktree, or in-place, not %q", *p.Isolation)
 	}
+	if p.FirstMessage != nil && !model.ValidFirstMessage(*p.FirstMessage) {
+		return p, refuse(model.CodeBadInput, "first_message must be empty or hold {%s}, the path of the task's file, not %q",
+			model.TaskFile, *p.FirstMessage)
+	}
 	return p, nil
 }
 
@@ -149,7 +154,8 @@ func (s *Store) setWrite(ctx context.Context, a Actor, number int, p model.Patch
 	out *model.Task) write {
 	return write{
 		kind: model.KindSet,
-		scan: []string{deref(p.Title), deref(p.Notes), deref(p.Thread), deref(p.Root), deref(p.Isolation), deref(p.Model), p.Ref},
+		scan: []string{deref(p.Title), deref(p.Notes), deref(p.Thread), deref(p.Root), deref(p.Isolation), deref(p.Model),
+			deref(p.FirstMessage), p.Ref},
 		prepare: func(tx *sql.Tx) (int, any, error) {
 			cur, err := readTask(ctx, tx, number)
 			if err != nil {
@@ -186,6 +192,7 @@ func (s *Store) setWrite(ctx context.Context, a Actor, number int, p model.Patch
 				{p.Root, &out.Root, &diff.Root},
 				{p.Isolation, &out.Isolation, &diff.Isolation},
 				{p.Model, &out.Model, &diff.Model},
+				{p.FirstMessage, &out.FirstMessage, &diff.FirstMessage},
 			} {
 				if f.want != nil && *f.want != *f.cur {
 					*f.set, *f.cur, changed = f.want, *f.want, true
@@ -203,9 +210,10 @@ func (s *Store) setWrite(ctx context.Context, a Actor, number int, p model.Patch
 		apply: func(tx *sql.Tx, ev model.Event) error {
 			out.UpdatedTS = ev.TS
 			_, err := tx.ExecContext(ctx,
-				`UPDATE tasks SET title=?, notes=?, status=?, thread=?, root=?, isolation=?, model=?, archived=?, updated_ts=? WHERE number=?`,
-				out.Title, out.Notes, string(out.Status), out.Thread, out.Root, out.Isolation, out.Model, out.Archived,
-				formatTS(ev.TS), number)
+				`UPDATE tasks SET title=?, notes=?, status=?, thread=?, root=?, isolation=?, model=?, first_message=?, archived=?,
+					updated_ts=? WHERE number=?`,
+				out.Title, out.Notes, string(out.Status), out.Thread, out.Root, out.Isolation, out.Model, out.FirstMessage,
+				out.Archived, formatTS(ev.TS), number)
 			return err
 		},
 	}
@@ -253,46 +261,46 @@ func deref(p *string) string {
 	return *p
 }
 
-// Step changes a task's steps. Step ids are s1, s2, … per task and are never reused.
-func (s *Store) Step(ctx context.Context, a Actor, number int, op model.StepOp) (model.Task, error) {
-	switch op.Op {
-	case "add":
-		op.ShortID = ""
-	case "toggle", "remove":
-		op.Text = ""
-	case "rename":
-	default:
-		return model.Task{}, refuse(model.CodeBadInput, "unknown step op %q; want add, toggle, rename, or remove", op.Op)
-	}
-	if (op.Op == "add" || op.Op == "rename") && strings.TrimSpace(op.Text) == "" {
-		return model.Task{}, refuse(model.CodeEmptyText, "a step needs text")
+// Step changes a task's steps and reports whether it wrote an event. add takes the caller's ShortID, or generates
+// s1, s2, … per task, never reused; an add whose id the task already has writes nothing and leaves that step as it is.
+// done sets a step done and writes nothing when it already is. A step write from a run that is not the task's newest
+// is refused stale-run.
+func (s *Store) Step(ctx context.Context, a Actor, number int, op model.StepOp) (model.Task, bool, error) {
+	op, err := checkStepOp(op)
+	if err != nil {
+		return model.Task{}, false, err
 	}
 	var out model.Task
-	_, err := s.append(ctx, a, write{
+	evs, err := s.append(ctx, a, write{
 		kind: model.KindStep,
-		scan: []string{op.Text},
+		scan: []string{op.ShortID, op.Text},
 		prepare: func(tx *sql.Tx) (int, any, error) {
-			if _, err := readTask(ctx, tx, number); err != nil {
+			cur, err := readTask(ctx, tx, number)
+			if err != nil {
 				return 0, nil, err
 			}
-			if op.Op == "add" {
-				var n int
-				err := tx.QueryRowContext(ctx,
-					`SELECT COUNT(*) FROM events WHERE task = ? AND kind = 'step' AND json_extract(data, '$.op') = 'add'`,
-					number).Scan(&n)
+			out = cur
+			if a.Run != 0 {
+				if err := checkNewestRun(ctx, tx, a.Run, number); err != nil {
+					return 0, nil, err
+				}
+			}
+			if op.Op == "add" && op.ShortID == "" {
+				n, err := generatedSteps(ctx, tx, number)
 				if err != nil {
 					return 0, nil, err
 				}
 				op.ShortID = "s" + strconv.Itoa(n+1)
 				return number, op, nil
 			}
-			var one int
-			err := tx.QueryRowContext(ctx, `SELECT 1 FROM steps WHERE task = ? AND short_id = ?`, number, op.ShortID).Scan(&one)
-			if err == sql.ErrNoRows {
+			i := slices.IndexFunc(cur.Steps, func(st model.Step) bool { return st.ShortID == op.ShortID })
+			switch {
+			case i < 0 && op.Op == "add":
+				return number, op, nil
+			case i < 0:
 				return 0, nil, refuse(model.CodeUnknownStep, "T%d has no step %q", number, op.ShortID)
-			}
-			if err != nil {
-				return 0, nil, err
+			case op.Op == "add", op.Op == "done" && cur.Steps[i].Done:
+				return 0, nil, nil
 			}
 			return number, op, nil
 		},
@@ -306,6 +314,8 @@ func (s *Store) Step(ctx context.Context, a Actor, number int, op model.StepOp) 
 				args = []any{number, op.ShortID, op.Text, number}
 			case "toggle":
 				q, args = `UPDATE steps SET done = 1 - done WHERE task = ? AND short_id = ?`, []any{number, op.ShortID}
+			case "done":
+				q, args = `UPDATE steps SET done = 1 WHERE task = ? AND short_id = ?`, []any{number, op.ShortID}
 			case "rename":
 				q, args = `UPDATE steps SET text = ? WHERE task = ? AND short_id = ?`, []any{op.Text, number, op.ShortID}
 			case "remove":
@@ -322,5 +332,51 @@ func (s *Store) Step(ctx context.Context, a Actor, number int, op model.StepOp) 
 			return err
 		},
 	})
-	return out, err
+	if err != nil {
+		return model.Task{}, false, err
+	}
+	return out, len(evs) > 0, nil
+}
+
+// checkStepOp checks a step op's values before any transaction and clears the fields its op does not take.
+func checkStepOp(op model.StepOp) (model.StepOp, error) {
+	switch op.Op {
+	case "add":
+		if op.ShortID != "" && (!model.ValidStepID(op.ShortID) || model.GeneratedStepID(op.ShortID)) {
+			return op, refuse(model.CodeBadInput,
+				"a step id is 1 to 64 letters, digits, '.', '_', or '-', and never s<n>, which the desk generates; not %q", op.ShortID)
+		}
+	case "toggle", "done", "remove":
+		op.Text = ""
+	case "rename":
+	default:
+		return op, refuse(model.CodeBadInput, "unknown step op %q; want add, toggle, done, rename, or remove", op.Op)
+	}
+	if (op.Op == "add" || op.Op == "rename") && strings.TrimSpace(op.Text) == "" {
+		return op, refuse(model.CodeEmptyText, "a step needs text")
+	}
+	return op, nil
+}
+
+// generatedSteps counts the task's add events whose step id the store generated. It reads every add's id and
+// counts in Go, so the count and checkStepOp's refusal share model.GeneratedStepID.
+func generatedSteps(ctx context.Context, q querier, task int) (int, error) {
+	rows, err := q.QueryContext(ctx,
+		`SELECT json_extract(data, '$.short_id') FROM events WHERE task = ? AND kind = 'step' AND json_extract(data, '$.op') = 'add'`,
+		task)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	n := 0
+	for rows.Next() {
+		var id sql.NullString
+		if err := rows.Scan(&id); err != nil {
+			return 0, err
+		}
+		if model.GeneratedStepID(id.String) {
+			n++
+		}
+	}
+	return n, rows.Err()
 }

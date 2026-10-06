@@ -75,6 +75,8 @@ var migrations = []string{
 		pane TEXT NOT NULL,
 		cursor INTEGER NOT NULL DEFAULT 0
 	);`,
+	`ALTER TABLE tasks ADD COLUMN first_message TEXT NOT NULL DEFAULT '';
+	ALTER TABLE runs ADD COLUMN first_message TEXT NOT NULL DEFAULT '';`,
 }
 
 func schemaVersion(ctx context.Context, q querier) (int, error) {

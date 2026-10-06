@@ -26,7 +26,7 @@ type Home interface {
 	GetTask(ctx context.Context, number int) (store.TaskDetail, error)
 	AddTask(ctx context.Context, a store.Actor, in store.AddTaskInput) (model.Task, error)
 	SetTask(ctx context.Context, a store.Actor, number int, p model.Patch) (model.Task, error)
-	Step(ctx context.Context, a store.Actor, number int, op model.StepOp) (model.Task, error)
+	Step(ctx context.Context, a store.Actor, number int, op model.StepOp) (model.Task, bool, error)
 	Append(ctx context.Context, r api.AppendRequest) (ev model.Event, queued bool, err error)
 	ListRuns(ctx context.Context) ([]model.Run, error)
 	Status(ctx context.Context) (api.Status, error)
@@ -265,7 +265,7 @@ func (x *executor) run(ctx context.Context, e Effect) tea.Msg {
 		}
 		return afterWrite(err)
 	case StepTask:
-		_, err := x.home.Step(ctx, user, e.Task, e.Op)
+		_, _, err := x.home.Step(ctx, user, e.Task, e.Op)
 		return afterWrite(err)
 	case KillRun:
 		_, err := x.home.KillRun(ctx, user, e.Task)

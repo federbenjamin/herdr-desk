@@ -115,7 +115,8 @@ func NewServer(o ServerOptions) *Server {
 			return t, err
 		}),
 		MethodTasksSteps: bind(func(ctx context.Context, r stepsRequest) (any, error) {
-			return st.Step(ctx, r.Actor, r.Number, r.Op)
+			t, changed, err := st.Step(ctx, r.Actor, r.Number, r.Op)
+			return StepResult{Task: t, Changed: changed}, err
 		}),
 		MethodEventsAppend: bind(s.appendEvent),
 		MethodSessionView: bind(func(ctx context.Context, r sessionRequest) (any, error) {
