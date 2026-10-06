@@ -4,15 +4,20 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/federbenjamin/herdr-desk/internal/config"
 )
@@ -169,7 +174,10 @@ func (r *rig) release(t *testing.T) {
 
 func (r *rig) run(t *testing.T) string {
 	t.Helper()
-	cmd := exec.Command("sh", "fetch-or-build.sh")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "sh", "fetch-or-build.sh")
+	cmd.WaitDelay = 5 * time.Second
 	cmd.Env = r.env
 	cmd.Stdin = strings.NewReader("this input must not reach setup or claude\n")
 	out, err := cmd.CombinedOutput()
@@ -537,6 +545,167 @@ func TestFetchOrBuildMakesAnExistingInstallLogPrivate(t *testing.T) {
 			}
 			if got := readFile(t, log); strings.Contains(got, "an earlier install") || !strings.Contains(got, "Claude Code plugin installed") {
 				t.Errorf("the install log does not hold just this install:\n%s", got)
+			}
+		})
+	}
+}
+
+// snapshot records each entry under root without following a symlink: its type and mode, its mtime, and a
+// file's content or a symlink's target.
+func snapshot(t *testing.T, root string) map[string]string {
+	t.Helper()
+	got := map[string]string{}
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		entry := fmt.Sprintf("%v %d", info.Mode(), info.ModTime().UnixNano())
+		switch {
+		case info.Mode()&os.ModeSymlink != 0:
+			target, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			entry += " -> " + target
+		case info.Mode().IsRegular():
+			entry += " " + readFile(t, path)
+		}
+		got[path] = entry
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got
+}
+
+func TestFetchOrBuildChangesOnlyTheInstallLogEntry(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// place puts an entry at log; outside is a folder beside the state folder for what that entry points at.
+		place func(t *testing.T, log, outside string)
+		// kept: the entry is not a file the install may replace, so it stays as it was and no log is written.
+		kept bool
+	}{
+		{name: "a symlink to a read-only file", place: func(t *testing.T, log, outside string) {
+			target := filepath.Join(outside, "notes")
+			if err := os.WriteFile(target, []byte("the user's notes\n"), 0o400); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, log); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "a symlink to a writable file", place: func(t *testing.T, log, outside string) {
+			target := filepath.Join(outside, "notes")
+			if err := os.WriteFile(target, []byte("the user's notes\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, log); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "a symlink to nothing", place: func(t *testing.T, log, outside string) {
+			if err := os.Symlink(filepath.Join(outside, "absent"), log); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "a hard link to another file", place: func(t *testing.T, log, outside string) {
+			target := filepath.Join(outside, "notes")
+			if err := os.WriteFile(target, []byte("the user's notes\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Link(target, log); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "a FIFO", place: func(t *testing.T, log, outside string) {
+			if err := syscall.Mkfifo(log, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if info, err := os.Lstat(log); err == nil && info.Mode()&os.ModeNamedPipe != 0 {
+					if f, err := os.OpenFile(log, os.O_RDONLY|syscall.O_NONBLOCK, 0); err == nil {
+						_ = f.Close()
+					}
+				}
+			})
+		}},
+		{name: "a folder", kept: true, place: func(t *testing.T, log, outside string) {
+			if err := os.Mkdir(log, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(log, "kept"), []byte("kept\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "a symlink to a folder", kept: true, place: func(t *testing.T, log, outside string) {
+			target := filepath.Join(outside, "folder")
+			if err := os.Mkdir(target, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(target, "kept"), []byte("kept\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, log); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRig(t)
+			r.release(t)
+			r.addDesk(t)
+			r.addClaude(t)
+			log := r.installLog()
+			outside := filepath.Join(r.dir, "outside")
+			for _, d := range []string{filepath.Dir(log), outside} {
+				if err := os.MkdirAll(d, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			tc.place(t, log, outside)
+			beforeOutside := snapshot(t, outside)
+			beforeLog := snapshot(t, log)
+
+			out := r.run(t)
+
+			if got := snapshot(t, outside); !maps.Equal(got, beforeOutside) {
+				t.Errorf("the install changed what install.log pointed at\nbefore: %v\nafter:  %v", beforeOutside, got)
+			}
+			entries, err := os.ReadDir(filepath.Dir(log))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var names []string
+			for _, e := range entries {
+				names = append(names, e.Name())
+			}
+			if !slices.Equal(names, []string{"install.log"}) {
+				t.Errorf("the state folder holds %v, want only install.log", names)
+			}
+			if !strings.Contains(out, "Claude Code plugin installed") {
+				t.Errorf("the output lacks the install's report:\n%s", out)
+			}
+			if tc.kept {
+				if got := snapshot(t, log); !maps.Equal(got, beforeLog) {
+					t.Errorf("the install changed the entry at install.log\nbefore: %v\nafter:  %v", beforeLog, got)
+				}
+				return
+			}
+			info, err := os.Lstat(log)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
+				t.Errorf("install.log is %v, want a regular file at 0600", info.Mode())
+			}
+			if got := readFile(t, log); strings.Contains(got, "the user's notes") || !strings.HasPrefix(got, "herdr-desk: claude found at ") || !strings.Contains(got, "Claude Code plugin installed") {
+				t.Errorf("install.log does not hold just this install:\n%s", got)
 			}
 		})
 	}

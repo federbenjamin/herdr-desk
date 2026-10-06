@@ -29,10 +29,11 @@ install_log="${XDG_STATE_HOME:-$HOME/.local/state}/herdr-desk/install.log"
 go_cmd="${DESK_GO:-go}"
 version="${DESK_VERSION:-}"
 tmpdir=""
+log_tmp=""
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
-trap 'if [ -n "$tmpdir" ]; then rm -rf "$tmpdir"; fi' EXIT
+trap 'if [ -n "$tmpdir" ]; then rm -rf "$tmpdir"; fi; if [ -n "$log_tmp" ]; then rm -f "$log_tmp"; fi' EXIT
 
 # place copies $out to $install_dir/herdr-desk through a temp file and a rename. A copy over the file in
 # place would change a binary a running ticker has open, and macOS kills a process whose signed
@@ -96,11 +97,17 @@ claude_plugin() {
 
 # finish places the binary, runs configure with its report also written to $install_log, and exits 0:
 # herdr aborts the whole plugin install on a failed build command, and shows a build command's output
-# only when it fails, so the log is where a step that did not finish is reported.
+# only when it fails, so the log is where a step that did not finish is reported. The report goes to a new
+# 0600 file that is then renamed over $install_log, so a symlink, hard link, or FIFO there is replaced, never
+# written through; a folder there is left alone.
 finish() {
   install_from_path
-  if (umask 077 && mkdir -p "$(dirname "$install_log")" && touch "$install_log" && chmod 600 "$install_log" && : >"$install_log") 2>/dev/null; then
-    configure 2>&1 | tee "$install_log"
+  log_dir=$(dirname "$install_log")
+  if (umask 077 && mkdir -p "$log_dir") 2>/dev/null && log_tmp=$(mktemp "$log_dir/.install.log.XXXXXX" 2>/dev/null); then
+    configure 2>&1 | tee "$log_tmp"
+    if [ ! -d "$install_log" ]; then
+      mv -f "$log_tmp" "$install_log" 2>/dev/null
+    fi
   else
     configure
   fi
