@@ -92,7 +92,7 @@ func TestWorkerExpandsOneMessageArgumentAndExecutesTheResolvedProgram(t *testing
 	if err != nil {
 		t.Fatalf("get worker task: %v", err)
 	}
-	message := worker.FirstMessage(detail)
+	message := worker.FirstMessage(detail, true)
 	wantArgv := config.Expand(workerTemplate, map[string]string{"model": run.Model, "session": run.Session, "message": message})
 	var gotPath string
 	var gotArgv []string
@@ -170,7 +170,7 @@ func TestWorkerSendsTheRootsFirstMessageNamingAFileThatHoldsTheTask(t *testing.T
 	if err != nil {
 		t.Fatalf("read the run's first message: %v", err)
 	}
-	if want := worker.FirstMessage(detail); string(got) != want {
+	if want := worker.FirstMessage(detail, false); string(got) != want {
 		t.Fatalf("%s holds %q, want worker.FirstMessage %q", file, got, want)
 	}
 	for path, want := range map[string]os.FileMode{file: 0o600, filepath.Dir(file): 0o700} {

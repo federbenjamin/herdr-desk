@@ -15,7 +15,7 @@ import (
 )
 
 // stBreak makes every refusal condition true at once except the ones a case lifts: the runner is off, paused,
-// has no herdr, and the day's cap is spent, and the caller is a stranger agent session.
+// has no herdr, and the day's cap is spent.
 func stBreak(f *fixture, task int) {
 	f.t.Helper()
 	f.config.Runner.MaxRunsPerDay = 1
@@ -25,34 +25,39 @@ func stBreak(f *fixture, task int) {
 }
 
 // The refusal order is part of the contract: a caller told runner-paused must not first have been told
-// cap-reached, and an agent must learn nothing about the runner's state.
+// cap-reached, and a session that owns a live run must learn nothing about the runner's state.
 func TestStartRefusesInTheDocumentedOrderWhenSeveralGatesAreShut(t *testing.T) {
 	cases := []struct {
 		name  string
 		shut  func(f *fixture)
 		actor store.Actor
 		want  string
+		live  bool
 	}{
-		{"not-allowed beats everything", func(f *fixture) {
+		{"not-allowed for a session that owns a live run beats everything", func(f *fixture) {
 			f.config.Runner.Enabled = false
 			firePauseFile(t, f.paths)
 			f.herdr = nil
-		}, store.Actor{Session: "stranger"}, model.CodeNotAllowed},
+		}, store.Actor{}, model.CodeNotAllowed, true},
 		{"runner-off beats paused, no herdr, and the cap", func(f *fixture) {
 			f.config.Runner.Enabled = false
 			firePauseFile(t, f.paths)
 			f.herdr = nil
-		}, store.Actor{}, model.CodeRunnerOff},
+		}, store.Actor{}, model.CodeRunnerOff, false},
 		{"runner-paused beats no herdr and the cap", func(f *fixture) {
 			firePauseFile(t, f.paths)
 			f.herdr = nil
-		}, store.Actor{}, model.CodeRunnerPaused},
-		{"no-herdr beats the cap", func(f *fixture) { f.herdr = nil }, store.Actor{}, model.CodeNoHerdr},
-		{"cap-reached when nothing else is shut", func(f *fixture) {}, store.Actor{}, model.CodeCapReached},
+		}, store.Actor{}, model.CodeRunnerPaused, false},
+		{"no-herdr beats the cap", func(f *fixture) { f.herdr = nil }, store.Actor{}, model.CodeNoHerdr, false},
+		{"cap-reached when nothing else is shut", func(f *fixture) {}, store.Actor{}, model.CodeCapReached, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture(t, "", "self")
+			if tc.live {
+				_, run, _ := f.start()
+				tc.actor = store.Actor{Session: run.Session}
+			}
 			spent := f.armThread("spends the cap", "agent")
 			stBreak(f, spent.Number)
 			tc.shut(f)

@@ -100,7 +100,7 @@ func (a *app) runCmd() *cobra.Command {
 	var route store.RunRoute
 	var asJSON bool
 	start := &cobra.Command{
-		Use:   "start <task> [--root <r>] [--isolation <i>] [--model <m>] [--json]",
+		Use:   "start <task> [--root <r>] [--isolation <i>] [--model <m>] [--first-message <template>] [--json]",
 		Short: "Start a run of the task now, or queue it as waiting; a task with a live run prints that run",
 		Args:  cobra.ExactArgs(1),
 	}
@@ -136,6 +136,7 @@ func (a *app) runCmd() *cobra.Command {
 	f.StringVar(&route.Root, "root", "", "the root to run in (default: the task's, else its project's root, else the scratch root)")
 	f.StringVar(&route.Isolation, "isolation", "", "self, worktree, or in-place (default: the task's, else the root's)")
 	f.StringVar(&route.Model, "model", "", "one of [agent] models (default: the task's, else the first)")
+	f.StringVar(&route.FirstMessage, "first-message", "", "the worker's first message, holding {task_file} (default: the task's, else the root's)")
 	f.BoolVar(&asJSON, "json", false, "print the run as JSON")
 	cmd.AddCommand(start)
 	return cmd
