@@ -19,14 +19,16 @@ tar -czf "$REL/$ASSET" -C "$BIN" herdr-desk
 (cd "$REL" && shasum -a 256 "$ASSET" >checksums.txt)
 
 # A PATH with no herdr-desk on it, so the script must install one: every folder that holds a herdr-desk is
-# dropped, the test's own and any the machine has installed.
-CLEAN_PATH=$(tr ':' '\n' <<<"$PATH" | while read -r d; do [ -x "$d/herdr-desk" ] || printf '%s\n' "$d"; done | paste -sd: -)
+# dropped, the test's own and any the machine has installed. Every folder that holds a claude is dropped too, so the
+# script's Claude Code step never runs a real claude.
+CLEAN_PATH=$(tr ':' '\n' <<<"$PATH" | while read -r d; do [ -x "$d/herdr-desk" ] || [ -x "$d/claude" ] || printf '%s\n' "$d"; done | paste -sd: -)
 
-# install <name> <base-url> [extra env...]: run the script with its own output folders.
+# install <name> <base-url> [extra env...]: run the script as a person on machine <name>, with its own output
+# folders; the setup it ends with writes only that machine's folders.
 install() {
   local name=$1 base=$2
   shift 2
-  run "${WANT:-0}" env PATH="$CLEAN_PATH" DESK_REPO_ROOT="$REPO" DESK_VERSION="$V" DESK_BASE_URL="$base" \
+  run "${WANT:-0}" on "$name" env PATH="$CLEAN_PATH" DESK_REPO_ROOT="$REPO" DESK_VERSION="$V" DESK_BASE_URL="$base" \
     DESK_OUT="$E2E/$name/out/herdr-desk" DESK_INSTALL_DIR="$E2E/$name/inst" "$@" sh "$REPO/scripts/fetch-or-build.sh"
 }
 

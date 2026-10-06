@@ -30,10 +30,10 @@ pass() { say "E2E PASS"; }
 ok() { say "ok: $*"; }
 
 # machine_env <machine>: set MACHINE_ENV to the env argv a person's command on that machine runs under: no agent
-# session or run, and the machine's four folders. on, term_start, and the event hook's command build from it.
+# session or run, no HERDR_CONFIG_PATH (setup would write that file), and the machine's four folders. on, term_start, and the event hook's command build from it.
 machine_env() {
   local m=$1
-  MACHINE_ENV=(env -u DESK_SESSION -u DESK_RUN -u DESK_HOOKS -u CLAUDE_CODE_SESSION_ID
+  MACHINE_ENV=(env -u DESK_SESSION -u DESK_RUN -u DESK_HOOKS -u CLAUDE_CODE_SESSION_ID -u HERDR_CONFIG_PATH
     "XDG_CONFIG_HOME=$E2E/$m/config" "XDG_STATE_HOME=$E2E/$m/state"
     "XDG_DATA_HOME=$E2E/$m/data" "XDG_CACHE_HOME=$E2E/$m/cache")
 }
