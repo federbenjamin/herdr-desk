@@ -20,12 +20,12 @@ A task's title, its notes, a note, a ref, a worker's hand-back, and anything els
 ## Adding tasks
 
 - `herdr-desk add -t "<title>" -n "<what done looks like>" -p <project>`: one task per change a worker can finish alone. `-p` takes an absolute folder or a known project's name; `--desk` means no project.
-- Set where it runs when you know: `herdr-desk set T<n> --root <root> --isolation <self|worktree|in-place> --model <model>`. A root must be one `context` lists; a model must be one it lists.
+- Set where it runs when you know: `herdr-desk set T<n> --root <root> --isolation <self|worktree|in-place> --model <model> --first-message <template>`. A root must be one `context` lists; a model must be one it lists. `--first-message` is the worker's first message: it must hold `{task_file}`, and `--first-message ''` clears it.
 - Add notes with `herdr-desk note --task T<n> "<text>"`.
 
 ## Starting runs
 
-`herdr-desk run start T<n> [--root <r>] [--isolation <i>] [--model <m>]`. A flag wins over the task's own value, which wins over the default (the task's project when it is a listed root, else the scratch root; the root's isolation; the first model). It prints `run <id>  T<n>  <state>  <root>  <isolation>  <model>`. A run is `waiting` when its slot or its in-place root is busy; it starts by itself when one frees. A run whose worker could not be started is `failed`: `run start` then exits 1 with `run-failed: run <id> failed: <reason>`, and the task is `blocked`. Tell the user the reason; do not retry.
+`herdr-desk run start T<n> [--root <r>] [--isolation <i>] [--model <m>] [--first-message <template>]`. A flag wins over the task's own value, which wins over the default (the task's project when it is a listed root, else the scratch root; the root's isolation; the first model). The first message resolves the same way: the flag, then the task's `first_message`, then the root's; with none, the worker starts on plain text. It prints `run <id>  T<n>  <state>  <root>  <isolation>  <model>`. A run is `waiting` when its slot or its in-place root is busy; it starts by itself when one frees. A run whose worker could not be started is `failed`: `run start` then exits 1 with `run-failed: run <id> failed: <reason>`, and the task is `blocked`. Tell the user the reason; do not retry.
 
 Whether you may start a run without asking depends on `start_runs`, which `context` prints:
 

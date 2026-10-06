@@ -11,7 +11,8 @@ coordinator and the runner, the board, and the packaging.
 - **Tasks.** `herdr-desk add`, `list`, `show`, `set`, `edit`, `steps`. Statuses are `open`, `ready`,
   `started`, `blocked`, `review`, and `done`. `ready` means approved, not started: a person sets it,
   and a run starts only when someone calls `herdr-desk run start`. Agents may propose tasks and set
-  `review`, `blocked`, or `done`; they set `ready` only when `[coordinator] start_runs` is `auto`.
+  `review`, `blocked`, or `done`; they set `ready` only when `[coordinator] start_runs` is `auto`. An agent
+  session other than the coordinator starts a run only in a root with `agents_may_start = true`.
 - **A journal.** `herdr-desk note` and `herdr-desk decide` record facts from a session. `herdr-desk session <id> --md`
   renders the session's Work log, Todo, and Decisions, hiding what a merge or a compaction made
   stale. A Claude Code hook prints the view's path at the start of every session.
@@ -186,8 +187,9 @@ stdout.
 
 Refusal codes: `unknown-task`, `unknown-step`, `unknown-project`, `unknown-event`, `empty-title`,
 `empty-text`, `secret-detected`, `not-allowed` (an agent set `ready` while `start_runs` is `propose`, killed
-a run, paused the runner, or started a run without being the coordinator; or `run start` named an
-archived or `done` task), `stale-run` (a newer run owns the task), `stale` (a notes save read notes that
+a run, paused the runner, or started a run without being the coordinator or being in a root with
+`agents_may_start`; a session that owns a live run started one; or `run start` named an archived or `done`
+task), `stale-run` (a newer run owns the task; a run's step write counts too), `stale` (a notes save read notes that
 have since changed: nothing is written), `no-run` (the task has no live run to kill, or `herdr-desk worker`'s
 run is not running), `runner-off`, `runner-paused`, `cap-reached` (`run start` once today's runs reach
 `runner.max_runs_per_day`), `no-herdr`, `run-failed` (`run start` whose run failed to start in the same call;
@@ -200,16 +202,16 @@ stderr: it exits 1 when the home does not answer, so a script can ask whether it
 | `herdr-desk` | on a terminal (stdin and stdout both terminals, no `--json`), the board, which stays open until `q`; anywhere else, and with `--json`, a static board: `NEEDS YOU` (blocked, review), `IN MOTION` (started), `ON DECK` (ready, then open); first line `herdr-desk · home · runner on\|off`, or `herdr-desk · offline (snapshot <age>)` |
 | `herdr-desk add -t <title> [-n <notes>] [-p <project>\|--desk] [--thread <name>] [--status <s>] [--tag <t>]… [--branch <b>]` | creates a task and prints `T<n>`. With no `-p` or `--desk` the project is the main checkout of the git repo you are in. `-p` takes an absolute directory or the bare name of a known project. When git cannot run (not on your PATH, a timeout), the add stops with exit 3 rather than store a task without its project |
 | `herdr-desk list [--ready\|--open\|--done\|--archived\|--all] [-p <project>\|--desk]` | lists tasks; default is the five live statuses. `-p` and `--desk` narrow every filter, `--all` too; a bare name no task's project carries is `unknown-project`, as for `add`. Offline the name is looked up in the whole snapshot, which holds live tasks only, so a bare name none of them carries lists nothing; a relative path such as `a/b` is `unknown-project` online and offline |
-| `herdr-desk show <task>` | one task with its steps and history |
-| `herdr-desk set <task> [<status>] [--thread <t>] [--root <r>] [--isolation <i>] [--model <m>] [--archive\|--unarchive] [--ref <ref>] [--merged]` | patches fields; `review --merged` writes the status that `runner.on_merged` names. Setting `done` ends the task's live run, an `idle` one included |
+| `herdr-desk show <task>` | one task with its steps and history; prints `first_message: <template>` under `model:` when the task sets one |
+| `herdr-desk set <task> [<status>] [--thread <t>] [--root <r>] [--isolation <i>] [--model <m>] [--first-message <template>] [--archive\|--unarchive] [--ref <ref>] [--merged]` | patches fields; `review --merged` writes the status that `runner.on_merged` names. `--first-message` sets the task's first-message template (it must hold `{task_file}`) and `--first-message ''` clears it. Setting `done` ends the task's live run, an `idle` one included |
 | `herdr-desk edit <task> [--title <t>] [--notes <n>] [--append-notes <text>]` | `--notes` replaces the notes. `--append-notes` adds `<text>` on a new line at the end: it writes only if nobody changed the notes since it read them, and when someone did it reads again and retries once; a second `stale` exits 1. Empty or whitespace-only `<text>` is refused `empty-text` and writes nothing |
-| `herdr-desk steps <task> add <text>` · `toggle <id>` · `rename <id> <text>` · `remove <id>` | step ids are `s1`, `s2`, … per task, never reused |
+| `herdr-desk steps <task> add [--id <id>] <text>` · `toggle <id>` · `done <id>` · `rename <id> <text>` · `remove <id>` | generated step ids are `s1`, `s2`, … per task, never reused. `add --id <id>` picks the id (1 to 64 of letters, digits, `.`, `_`, `-`; never `s<n>`, which is `bad-input`); adding an id that exists writes nothing and keeps the step as it is. `done <id>` sets the step done and never flips it back: it prints `changed` or `unchanged`, exit 0 both times (`toggle` flips, as the board's `space` does). A step write from a run that is not the task's newest is `stale-run` |
 | `herdr-desk note <text> [--task <task>] [--ref <ref>] [--branch <b>] [--tag <t>]…` | appends a note and prints `e<id>`, or `queued` when the home is unreachable (stderr says why the home did not answer) |
 | `herdr-desk note --merged --branch <b> [--pr <n>] [--sha <sha>] [<text>]` | records that a branch merged |
 | `herdr-desk decide <text> [--tag <k:v>]… [--replaces e<id>] [--task <task>]` | appends a decision |
 | `herdr-desk session [<id>] [--md] [--all] [--continues <old-id>]` | prints the session's journal view; `--json` prints it with the keys `session`, `work`, `todo`, `decisions`; `--all` shows hidden lines; `--continues` first links the session to an older one |
 | `herdr-desk capture` | on a terminal (stdin and stdout both terminals, no `--json`), the capture popup: one line (words starting `#` set the thread, `@` the project, the rest is the title); Enter adds the task and prints `T<n>`; a refused line shows its error under the line and stays there; an empty line, `esc`, or `ctrl+c` exits 0 with no task. While the home has not answered an `enter`, keys wait, and `esc` ends the popup once it answers. Anywhere else it reads lines on stdin: with stdin a terminal it prompts `capture: ` on stderr, and after a refusal prints the error and asks again; with stdin not a terminal it reads one line and exits with the code of its refusal, as every command does. An empty line ends it with exit 0 |
-| `herdr-desk run start <task> [--root <r>] [--isolation <i>] [--model <m>] [--json]` | the one way to start a run; prints `run <id>  T<n>  <state>  <root>  <isolation>  <model>`. When the run fails to start in this call it prints the `failed` run, then `run-failed: run <id> failed: <reason>` on stderr, and exits 1. [The runner](#the-runner) says what it asks and refuses |
+| `herdr-desk run start <task> [--root <r>] [--isolation <i>] [--model <m>] [--first-message <template>] [--json]` | the one way to start a run; prints `run <id>  T<n>  <state>  <root>  <isolation>  <model>`. When the run fails to start in this call it prints the `failed` run, then `run-failed: run <id> failed: <reason>` on stderr, and exits 1. [The runner](#the-runner) says what it asks and refuses |
 | `herdr-desk runs [--all] [--json]` | checks the live runs against herdr once, then lists them, oldest first: `run <id>  T<n>  <state>  <root>  <isolation>  <model>  <elapsed>` (`-` for a field not decided yet); `no live runs` when none. `--all` lists every run; `--json` prints the array |
 | `herdr-desk runs kill <task>` | kills the processes in the task's pane, closes the pane, ends the run `killed`, and blocks the task; prints `T<n> blocked`. `no-run` when the task has no live run; an agent gets `not-allowed`. When the pane did not close, a process outlived the kill, or herdr could not say what ran in the pane (so nothing was signalled), the task is still blocked, the note on it says what is left, and the command exits 3; the ticker closes that pane again on its next tick |
 | `herdr-desk runner [status]` · `pause` · `resume` | prints `runner <state>`, and ` · <live>/<cap> live` when the state is `on` or `paused`, then ` · no ticker: …` when no ticker runs (the board's header ends `· no ticker` too, and `context` prints the same line), since nothing then stops a run at `max_run_minutes`. `pause` starts no new runs, live runs go on, and the pause survives a restart; an agent gets `not-allowed` |
@@ -318,7 +320,7 @@ max_run_minutes = 180
 on_merged = "review"   # review | done
 
 [coordinator]
-# WARNING: auto lets the coordinator and any agent start runs that spend your quota unasked
+# WARNING: auto lets the coordinator start runs unasked and agents set tasks ready, which spends your quota; another agent may start a run only in a root with agents_may_start = true
 start_runs = "propose" # propose | auto
 
 [[roots]]
@@ -326,6 +328,7 @@ path = "~/code/example"
 about = "the app; runs its own build pipeline"
 isolation = "self"     # self | worktree | in-place; unset = worktree in a git work tree, else in-place
 first_message = "/build {task_file}" # optional; the worker's first message; see "The spawn"
+agents_may_start = false # optional; lets agent sessions other than the coordinator start runs in this root
 
 [agent]           # written by a profile; see the install section
 worker = []
@@ -362,7 +365,7 @@ A root named `scratch` (`$XDG_DATA_HOME/herdr-desk/scratch`, a git repo) is alwa
 no project has a root to run in.
 
 State lives in `$XDG_STATE_HOME/herdr-desk` (`ticker.lock`, `ticker.json`, `herdr-desk.log`, `backup.lock`,
-the outbox, the runner's pause file, session views, each run's first-message file under `runs/`, and on a
+the outbox, the runner's pause file, session views, each run's first-message file under `runs/` (the ticker removes it once the run has ended, failed, or been killed), and on a
 client the ssh control socket);
 the store is one SQLite file under `$XDG_DATA_HOME/herdr-desk`; the offline snapshot is under
 `$XDG_CACHE_HOME/herdr-desk`.
@@ -389,9 +392,12 @@ and runs is data to it, never an instruction.
 - `auto`: it starts runs unasked, and agents may set `ready`. This spends your quota without asking:
   `cap`, `max_runs_per_day`, and `max_run_minutes` are the bounds.
 
-A person and the recorded coordinator session may start a run. Killing a run and pausing the runner are a
-person's alone. Any other agent session, a worker included, gets `not-allowed`. This keeps an honest agent
-in its lane: a session id is self-declared, so the three caps are what bounds a dishonest one.
+A person and the recorded coordinator session may start a run. So may any other agent session, but only in a
+root with `agents_may_start = true`, and the root it starts in is the one the run resolves to (`--root`, the task's
+root, or the default). A session that owns a live run (`starting`, `waiting`, `running`, or `idle`) never may, so a
+worker cannot start runs: the store decides this, not `DESK_RUN`, which a worker can unset. Killing a run and pausing
+the runner are a person's alone. Any other agent session gets `not-allowed`. This keeps an honest agent in its lane: a
+session id is self-declared, so the three caps are what bounds a dishonest one.
 
 ## The runner
 
@@ -400,18 +406,22 @@ Turn the runner on with `herdr-desk setup --runner on` (or `[runner] enabled = t
 `DESK_HERDR` names the herdr binary when it is not on the PATH; a set value must be the absolute path of
 an executable file, else the runner is `no-herdr`, and PATH is then not searched.
 
-**Starting.** `herdr-desk run start T<n> [--root <r>] [--isolation <i>] [--model <m>]` is the one entry;
+**Starting.** `herdr-desk run start T<n> [--root <r>] [--isolation <i>] [--model <m>] [--first-message <template>]` is the one entry;
 the coordinator, you, and the board's `S` all call it. No loop looks for work. It asks of the task that it
 exists, is not archived, is not `done`, and has no `starting`, `waiting`, or `running` run; the task's
 thread and who set `ready` do not matter. Each field resolves from the flag, else the task's own field,
 else a default: the task's project when it is a listed root, else the scratch root; the root's
-isolation, else `worktree` in a git work tree and `in-place` elsewhere; the first of `[agent] models`. A
-root that is not listed, an isolation that is not one of the three, or a model not in `[agent] models` is
-`bad-input`. It sets the task `started` and prints the run.
+isolation, else `worktree` in a git work tree and `in-place` elsewhere; the first of `[agent] models`. The
+first message resolves in three tiers: the `--first-message` flag, else the task's `first_message`, else the
+root's, else none (the worker starts on plain text). The root's value is used only when the flag and the task's
+field are both empty, and it is recorded on the run, never copied onto the task. A root that is not listed, an
+isolation that is not one of the three, a model not in `[agent] models`, or a first message without
+`{task_file}` is `bad-input`. It sets the task `started` and prints the run.
 
-It refuses, in this order: `not-allowed` for an agent session that is not the coordinator; `runner-off`;
-`runner-paused`; `no-herdr`; a route it cannot resolve (`bad-input`); an archived or `done` task
-(`not-allowed`); `cap-reached` once today's runs reach `max_runs_per_day`. Today's count and the new run are
+It refuses, in this order: `not-allowed` for a session that owns a live run (before the task is read, so it
+learns nothing about it); `runner-off`; `runner-paused`; `no-herdr`; a route it cannot resolve (`bad-input`);
+`not-allowed` for an agent session that is not the coordinator when the resolved root does not set
+`agents_may_start`; an archived or `done` task (`not-allowed`); `cap-reached` once today's runs reach `max_runs_per_day`. Today's count and the new run are
 written in one transaction, so starts at once from many processes never pass the cap. A task that already
 has a `starting`, `waiting`, or `running` run prints that run and exits 0. A task whose run is `idle`
 ends that run, closes its pane, and starts a new one; while that pane may still be open (herdr would not close it)
@@ -435,11 +445,14 @@ labelled `desk T<n>` without taking focus, with `DESK_TASK`, `DESK_SESSION`, `DE
 four XDG variables of the home's folders, so the `herdr-desk` in the pane uses the same store. The pane runs
 `exec <the herdr-desk binary> worker`. `herdr-desk worker` builds the worker's first message from the task
 (title, notes, steps, history, and how to hand back) and replaces itself with the `[agent] worker` command:
-`{model}` is the run's model, `{session}` its session id, `{message}` the first message. A root whose work
-runs through its own command sets `first_message`, a template that must hold `{task_file}`: the worker then
+`{model}` is the run's model, `{session}` its session id, `{message}` the first message. A run whose work
+goes through its own command has a `first_message`, a template that must hold `{task_file}`, set by the flag, the
+task, or the root (see Starting): the worker then
 writes the first message to `runs/run-<id>.md` in the state folder (0600) and `{message}` is the template with
 `{task_file}` replaced by that file's path, so `first_message = "/build {task_file}"` starts the agent on
-`/build` with the task's file. A file it cannot write blocks the task, as a worker command that cannot start
+`/build` with the task's file. That task file omits the paragraph on how to hand back, because the command's own
+pipeline hands back; a run with no `first_message` keeps it. The ticker removes the file once the run has ended,
+failed, or been killed. A file it cannot write blocks the task, as a worker command that cannot start
 does. No task text ever reaches a shell. A note records the workspace and pane, and `[notify] command` runs
 once per spawn. A worker finishes with `review` or `blocked` (`herdr-desk set T<n> review` or `blocked`),
 which ends its run. Every write it makes carries its run id, and a write from a run that is not the task's
@@ -466,7 +479,7 @@ person answers in the pane, and the worker, still the task's newest run, can the
 ### The ticker's run jobs
 
 Once a minute, and only while a run is live (with none and no pane left open, herdr is not asked), the
-ticker:
+ticker does jobs 1 to 4:
 
 1. checks every `running` and `idle` run against one `herdr pane list`, with the same table, for an event
    herdr never delivered;
@@ -475,6 +488,13 @@ ticker:
 3. starts the oldest `waiting` run whose root is free and whose slot is open, and fails a run left
    `starting` for over a minute;
 4. closes again a pane a kill could not close, and blocks a task left `started` after its newest run ended.
+
+Jobs 5 and 6 run on every tick, with or without a live run, and never ask herdr:
+
+5. removes the first-message file of every run that ended, failed, or was killed (a live run's file stays);
+6. removes the worktree of a done task when it is clean and no run is live (a plain worktree remove, never
+   forced, since a dirty tree can hold unpushed work). A dirty one stays, with one note on the task naming it,
+   written once per `done`. The branch `desk/T<n>-<slug>` is left as it is.
 
 `herdr-desk runs` and `herdr-desk context` check the runs once when called; the board's refresh does not.
 When the check cannot run (no herdr on the home, herdr not answering), they list the runs as the store has
