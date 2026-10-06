@@ -53,22 +53,21 @@ type Runner struct {
 	OnMerged      string `toml:"on_merged"` // "review" | "done"
 }
 
-// Root: written by `herdr-desk roots`; read by run start's route. FirstMessage is written by hand and read by the
-// worker: when set, it is the worker's {message}, with {task_file} replaced by the path of a file that holds the first
-// message the worker would otherwise get.
+// Root: written by `herdr-desk roots`; read by run start's route. FirstMessage is written by hand and is the last tier
+// of a run's first_message, after run start's flag and the task's own field: when a run has one, it is the worker's
+// {message}, with {task_file} replaced by the path of a file that holds the first message the worker would otherwise
+// get. AgentsMayStart is written by hand: it lets agent sessions other than the coordinator start runs in this root.
 type Root struct {
-	Path         string `toml:"path"`
-	About        string `toml:"about"`
-	Isolation    string `toml:"isolation"` // "" | self | worktree | in-place
-	FirstMessage string `toml:"first_message,omitempty"`
+	Path           string `toml:"path"`
+	About          string `toml:"about"`
+	Isolation      string `toml:"isolation"` // "" | self | worktree | in-place
+	FirstMessage   string `toml:"first_message,omitempty"`
+	AgentsMayStart bool   `toml:"agents_may_start,omitempty"`
 }
 
-// taskFile is the one placeholder of a root's first_message.
-const taskFile = "task_file"
-
-// Message is the root's first_message with {task_file} replaced by path, each placeholder in one pass.
-func (r Root) Message(path string) string {
-	return Expand([]string{r.FirstMessage}, map[string]string{taskFile: path})[0]
+// TaskFileMessage is a first_message template with {task_file} replaced by path, each placeholder in one pass.
+func TaskFileMessage(template, path string) string {
+	return Expand([]string{template}, map[string]string{model.TaskFile: path})[0]
 }
 
 // Agent: Worker, Coordinator, and Models are written by a profile and read by the runner. SessionEnv is read by
@@ -87,9 +86,9 @@ const (
 )
 
 // Coordinator: StartRuns is "propose" (the coordinator proposes runs and waits for a go-ahead) or "auto" (it starts
-// them unasked, and an agent may set a task ready).
+// them unasked, and an agent may set a task ready). Another agent may start a run only in a root with AgentsMayStart.
 type Coordinator struct {
-	StartRuns string `toml:"start_runs" comment:"WARNING: auto lets the coordinator and any agent start runs that spend your quota unasked"`
+	StartRuns string `toml:"start_runs" comment:"WARNING: auto lets the coordinator start runs unasked and agents set tasks ready, which spends your quota; another agent may start a run only in a root with agents_may_start = true"`
 }
 
 // Notify: written by setup; read by the runner (U2).
@@ -280,8 +279,8 @@ func (c Config) Validate() error {
 		if !model.ValidIsolation(r.Isolation) {
 			return fmt.Errorf("roots %s: isolation must be self, worktree, or in-place, not %q", r.Path, r.Isolation)
 		}
-		if r.FirstMessage != "" && !strings.Contains(r.FirstMessage, "{"+taskFile+"}") {
-			return fmt.Errorf("roots %s: first_message must hold {%s}, the path of the task's file, or the worker gets no task", r.Path, taskFile)
+		if !model.ValidFirstMessage(r.FirstMessage) {
+			return fmt.Errorf("roots %s: first_message must hold {%s}, the path of the task's file, or the worker gets no task", r.Path, model.TaskFile)
 		}
 	}
 	if err := checkSSHTarget(c.Client.Home); err != nil {

@@ -155,6 +155,8 @@ func (r *Runner) findHerdr() (Herdr, error) {
 
 // Jobs is the ticker's run jobs, once: reconcile, the deadline, start what waits, fail runs left starting, close
 // the panes left open again, and block tasks left started. With no live run and no pane left open, herdr is not asked.
+// Then two sweeps, which run with or without a live run and never ask herdr: remove the first-message files of
+// final runs, and remove the clean worktrees of done tasks.
 func (r *Runner) Jobs(ctx context.Context) {
 	_ = r.Reconcile(ctx) // Reconcile logs its errors.
 	r.deadline(ctx)
@@ -162,6 +164,8 @@ func (r *Runner) Jobs(ctx context.Context) {
 	r.failStaleStarting(ctx)
 	r.closeLeftOpen(ctx)
 	r.repairStarted(ctx)
+	r.sweepRunFiles(ctx)
+	r.sweepWorktrees(ctx)
 }
 
 // deadline stops every running run past runner.max_run_minutes. It asks herdr for its panes only when one is.
@@ -298,15 +302,23 @@ func (r *Runner) repairStarted(ctx context.Context) {
 
 // startedBy reports whether the newest status write in history is the one that started the run.
 func startedBy(history []model.Event, run int64) bool {
+	i, st, ok := newestStatusWrite(history)
+	return ok && history[i].Run == run && st == model.StatusStarted
+}
+
+// newestStatusWrite returns the index and status of the newest event in history that writes a status: a set event
+// whose patch has one, or a task event, whose payload carries its status under the same key. ok is false, with i
+// -1, when no event does.
+func newestStatusWrite(history []model.Event) (i int, st model.Status, ok bool) {
 	for i := len(history) - 1; i >= 0; i-- {
 		e := history[i]
 		var p model.Patch
 		if (e.Kind != model.KindSet && e.Kind != model.KindTask) || json.Unmarshal(e.Data, &p) != nil || p.Status == nil {
 			continue
 		}
-		return e.Run == run && *p.Status == model.StatusStarted
+		return i, *p.Status, true
 	}
-	return false
+	return -1, "", false
 }
 
 // fail sets the run failed while it is in state from, with msg as its reason, then notes msg on its task and sets

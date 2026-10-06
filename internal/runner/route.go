@@ -26,9 +26,11 @@ func Roots(c config.Config, p config.Paths) []config.Root {
 // Resolve returns the route a run of t takes, roots as Roots lists them (the scratch root last). Each field is
 // given's, else the task's own, else a default: for the root, the task's project when it is a listed root, else the
 // scratch root; for the isolation, the root's, else worktree when the root is the top of a git work tree, else
-// in-place; for the model, the first of models ("" when there are none). The route is then checked: the root is
-// listed, the isolation is self, worktree, or in-place, and the model is in models when models is not empty. A
-// failed check is bad-input.
+// in-place; for the model, the first of models ("" when there are none); for the first_message, the resolved root's
+// ("" when it sets none). The route is then checked: the root is listed, the isolation is self, worktree, or
+// in-place, the model is in models when models is not empty, and the first_message is empty or holds {task_file}. A
+// failed check is bad-input. A root whose isolation default git could not decide (git missing or timed out, the
+// folder unreadable) is an error, never in-place.
 func Resolve(t model.Task, given store.RunRoute, roots []config.Root, models []string) (store.RunRoute, error) {
 	if len(roots) == 0 {
 		return store.RunRoute{}, badRoute("there is no root to run in")
@@ -54,8 +56,12 @@ func Resolve(t model.Task, given store.RunRoute, roots []config.Root, models []s
 		}
 	}
 	if out.Isolation == "" {
+		tree, err := isWorkTree(context.Background(), out.Root)
+		if err != nil {
+			return store.RunRoute{}, fmt.Errorf("root %s: its isolation is unset and git could not say whether it is a work tree; set the root's or the task's isolation, or fix git: %w", out.Root, err)
+		}
 		out.Isolation = "in-place"
-		if isWorkTree(context.Background(), out.Root) {
+		if tree {
 			out.Isolation = "worktree"
 		}
 	}
@@ -71,6 +77,14 @@ func Resolve(t model.Task, given store.RunRoute, roots []config.Root, models []s
 	if len(models) > 0 && !slices.Contains(models, out.Model) {
 		return store.RunRoute{}, badRoute("model %q is not in [agent] models", out.Model)
 	}
+	for _, msg := range []string{given.FirstMessage, t.FirstMessage, root.FirstMessage} {
+		if out.FirstMessage == "" {
+			out.FirstMessage = msg
+		}
+	}
+	if !model.ValidFirstMessage(out.FirstMessage) {
+		return store.RunRoute{}, badRoute("first_message must be empty or hold {%s}, the path of the task's file, not %q", model.TaskFile, out.FirstMessage)
+	}
 	return out, nil
 }
 
@@ -78,7 +92,7 @@ func badRoute(format string, args ...any) error {
 	return &model.Refusal{Code: model.CodeBadInput, Msg: fmt.Sprintf(format, args...)}
 }
 
-// findRoot returns the root written as path, else the first root that names the same folder through symlinks.
+// FindRoot returns the root written as path, else the first root that names the same folder through symlinks.
 func FindRoot(roots []config.Root, path string) (config.Root, bool) {
 	if path == "" {
 		return config.Root{}, false

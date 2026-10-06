@@ -254,6 +254,9 @@ wait_long() {
 # wait_for <what> <command...>: poll until the command succeeds, up to 10 s.
 wait_for() { wait_long 10 "$@"; }
 
+# gone <path>: nothing is at the path; a condition for wait_long.
+gone() { [ ! -e "$1" ]; }
+
 # mode <file>: its permission bits, as 600.
 mode() { stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1"; }
 

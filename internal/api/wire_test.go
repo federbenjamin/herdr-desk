@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -62,7 +63,7 @@ func TestARequestOfAnotherWireVersionIsRefusedAndTheOutboxKeepsItsEntries(t *tes
 
 	sent, err := c.Flush(context.Background())
 	var re *api.RPCError
-	if sent != 0 || !errors.As(err, &re) || re.BadRequest || !strings.Contains(re.Message, "wire version 2 and this home speaks 1") {
+	if sent != 0 || !errors.As(err, &re) || re.BadRequest || !strings.Contains(re.Message, fmt.Sprintf("wire version %d and this home speaks %d", api.WireVersion+1, api.WireVersion)) {
 		t.Fatalf("Flush across versions = (%d, %v), want nothing sent and an error naming both versions that is not a bad request", sent, err)
 	}
 	if b, err := os.ReadFile(m.Paths.Outbox()); err != nil || !strings.Contains(string(b), "written by a newer client") {
@@ -83,8 +84,8 @@ func TestARequestWithAFieldTheHomeDoesNotKnowIsRefusedWhole(t *testing.T) {
 	}
 	cfg := homeConfig(t, home)
 	for _, input := range []string{
-		`{"version":1,"method":"tasks.set","params":{"actor":{},"number":1,"patch":{"title":"after","colour":"red"}}}`,
-		`{"version":1,"method":"tasks.set","params":{"actor":{},"number":1,"patch":{"title":"after"}},"priority":"high"}`,
+		`{"version":2,"method":"tasks.set","params":{"actor":{},"number":1,"patch":{"title":"after","colour":"red"}}}`,
+		`{"version":2,"method":"tasks.set","params":{"actor":{},"number":1,"patch":{"title":"after"}},"priority":"high"}`,
 	} {
 		var out bytes.Buffer
 		if err := api.ServeRPC(context.Background(), home.Paths, cfg, strings.NewReader(input), &out); err != nil {

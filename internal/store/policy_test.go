@@ -152,7 +152,7 @@ func TestOpenRejectsInvalidOptionsAndUnusableOrNewerDatabases(t *testing.T) {
 		if err != nil {
 			t.Fatalf("open future database: %v", err)
 		}
-		if _, err := db.Exec("PRAGMA user_version = 3"); err != nil {
+		if _, err := db.Exec("PRAGMA user_version = 4"); err != nil {
 			db.Close()
 			t.Fatalf("set future schema version: %v", err)
 		}
@@ -161,8 +161,8 @@ func TestOpenRejectsInvalidOptionsAndUnusableOrNewerDatabases(t *testing.T) {
 		}
 
 		_, err = store.Open(path, store.Options{})
-		if err == nil || !strings.Contains(err.Error(), "schema version 3") {
-			t.Fatalf("Open future database error = %v, want it to name version 3", err)
+		if err == nil || !strings.Contains(err.Error(), "schema version 4") {
+			t.Fatalf("Open future database error = %v, want it to name version 4", err)
 		}
 		db, err = sqlOpenSQLite(path)
 		if err != nil {
@@ -173,8 +173,8 @@ func TestOpenRejectsInvalidOptionsAndUnusableOrNewerDatabases(t *testing.T) {
 		if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 			t.Fatalf("read schema version: %v", err)
 		}
-		if version != 3 {
-			t.Fatalf("schema version after refused Open = %d, want 3", version)
+		if version != 4 {
+			t.Fatalf("schema version after refused Open = %d, want 4", version)
 		}
 		var tables int
 		if err := db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'").Scan(&tables); err != nil {
@@ -206,7 +206,7 @@ func TestClosedStoreReturnsErrorsForEveryReadAndWrite(t *testing.T) {
 		}},
 		{"set task", func() error { _, err := st.SetTask(ctx, store.Actor{}, 1, model.Patch{Ref: "ref"}); return err }},
 		{"change step", func() error {
-			_, err := st.Step(ctx, store.Actor{}, 1, model.StepOp{Op: "add", Text: "closed"})
+			_, _, err := st.Step(ctx, store.Actor{}, 1, model.StepOp{Op: "add", Text: "closed"})
 			return err
 		}},
 		{"write note", func() error {
@@ -267,11 +267,11 @@ func TestRemovedStepsRejectRenameAndToggleAndBlankAddsWriteNothing(t *testing.T)
 	ctx := context.Background()
 	st := openStore(t, store.Options{})
 	task := addOpenTask(t, st)
-	withStep, err := st.Step(ctx, store.Actor{}, task.Number, model.StepOp{Op: "add", Text: "remove me"})
+	withStep, _, err := st.Step(ctx, store.Actor{}, task.Number, model.StepOp{Op: "add", Text: "remove me"})
 	if err != nil {
 		t.Fatalf("add step: %v", err)
 	}
-	if _, err := st.Step(ctx, store.Actor{}, task.Number, model.StepOp{Op: "remove", ShortID: withStep.Steps[0].ShortID}); err != nil {
+	if _, _, err := st.Step(ctx, store.Actor{}, task.Number, model.StepOp{Op: "remove", ShortID: withStep.Steps[0].ShortID}); err != nil {
 		t.Fatalf("remove step: %v", err)
 	}
 	before := eventCount(t, st)
@@ -286,7 +286,7 @@ func TestRemovedStepsRejectRenameAndToggleAndBlankAddsWriteNothing(t *testing.T)
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := st.Step(ctx, store.Actor{}, task.Number, tc.op)
+			_, _, err := st.Step(ctx, store.Actor{}, task.Number, tc.op)
 			if got := refusalCode(t, err); got != tc.code {
 				t.Fatalf("refusal code = %q, want %q", got, tc.code)
 			}
@@ -461,7 +461,7 @@ func TestEachTextualWriteIsScannedOnceAsOneJoinedInput(t *testing.T) {
 			name:      "add step text",
 			fragments: []string{"step marker"},
 			write: func(st *store.Store, task int) error {
-				_, err := st.Step(ctx, store.Actor{}, task, model.StepOp{Op: "add", Text: "step marker"})
+				_, _, err := st.Step(ctx, store.Actor{}, task, model.StepOp{Op: "add", Text: "step marker"})
 				return err
 			},
 		},
@@ -599,7 +599,7 @@ func guardedWriteCases(ctx context.Context) []guardedWriteCase {
 		{
 			name: "add step",
 			write: func(st *store.Store, task int) error {
-				_, err := st.Step(ctx, store.Actor{}, task, model.StepOp{Op: "add", Text: "secret candidate"})
+				_, _, err := st.Step(ctx, store.Actor{}, task, model.StepOp{Op: "add", Text: "secret candidate"})
 				return err
 			},
 		},

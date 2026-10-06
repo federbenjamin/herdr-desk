@@ -5,18 +5,22 @@ Turn the runner on with `herdr-desk setup --runner on` (or `[runner] enabled = t
 `DESK_HERDR` names the herdr binary when it is not on the PATH; a set value must be the absolute path of
 an executable file, else the runner is `no-herdr`, and PATH is then not searched.
 
-**Starting.** `herdr-desk run start T<n> [--root <r>] [--isolation <i>] [--model <m>]` is the one entry;
+**Starting.** `herdr-desk run start T<n> [--root <r>] [--isolation <i>] [--model <m>] [--first-message <template>]` is the one entry;
 the coordinator, you, and the board's `S` all call it. No loop looks for work. It asks of the task that it
 exists, is not archived, is not `done`, and has no `starting`, `waiting`, or `running` run; the task's
 thread and who set `ready` do not matter. Each field resolves from the flag, else the task's own field,
 else a default: the task's project when it is a listed root, else the scratch root; the root's
-isolation, else `worktree` in a git work tree and `in-place` elsewhere; the first of `[agent] models`. A
-root that is not listed, an isolation that is not one of the three, or a model not in `[agent] models` is
-`bad-input`. It sets the task `started` and prints the run.
+isolation, else `worktree` in a git work tree and `in-place` elsewhere; the first of `[agent] models`. The
+first message resolves in three tiers: the `--first-message` flag, else the task's `first_message`, else the
+root's, else none (the worker starts on plain text). The root's value is used only when the flag and the task's
+field are both empty, and it is recorded on the run, never copied onto the task. A root that is not listed, an
+isolation that is not one of the three, a model not in `[agent] models`, or a first message without
+`{task_file}` is `bad-input`. It sets the task `started` and prints the run.
 
-It refuses, in this order: `not-allowed` for an agent session that is not the coordinator; `runner-off`;
-`runner-paused`; `no-herdr`; a route it cannot resolve (`bad-input`); an archived or `done` task
-(`not-allowed`); `cap-reached` once today's runs reach `max_runs_per_day`. Today's count and the new run are
+It refuses, in this order: `not-allowed` for a session that owns a live run (before the task is read, so it
+learns nothing about it); `runner-off`; `runner-paused`; `no-herdr`; a route it cannot resolve (`bad-input`);
+`not-allowed` for an agent session that is not the coordinator when the resolved root does not set
+`agents_may_start` ([who may start](coordinator.md)); an archived or `done` task (`not-allowed`); `cap-reached` once today's runs reach `max_runs_per_day`. Today's count and the new run are
 written in one transaction, so starts at once from many processes never pass the cap. A task that already
 has a `starting`, `waiting`, or `running` run prints that run and exits 0. A task whose run is `idle`
 ends that run, closes its pane, and starts a new one; while that pane may still be open (herdr would not close it)
@@ -40,11 +44,14 @@ labelled `desk T<n>` without taking focus, with `DESK_TASK`, `DESK_SESSION`, `DE
 four XDG variables of the home's folders, so the `herdr-desk` in the pane uses the same store. The pane runs
 `exec <the herdr-desk binary> worker`. `herdr-desk worker` builds the worker's first message from the task
 (title, notes, steps, history, and how to hand back) and replaces itself with the `[agent] worker` command:
-`{model}` is the run's model, `{session}` its session id, `{message}` the first message. A root whose work
-runs through its own command sets `first_message`, a template that must hold `{task_file}`: the worker then
+`{model}` is the run's model, `{session}` its session id, `{message}` the first message. A run whose work
+goes through its own command has a `first_message`, a template that must hold `{task_file}`, set by the flag, the
+task, or the root (see Starting): the worker then
 writes the first message to `runs/run-<id>.md` in the state folder (0600) and `{message}` is the template with
 `{task_file}` replaced by that file's path, so `first_message = "/build {task_file}"` starts the agent on
-`/build` with the task's file. A file it cannot write blocks the task, as a worker command that cannot start
+`/build` with the task's file. That task file omits the paragraph on how to hand back, because the command's own
+pipeline hands back; a run with no `first_message` keeps it. The ticker removes the file once the run has ended,
+failed, or been killed. A file it cannot write blocks the task, as a worker command that cannot start
 does. No task text ever reaches a shell. A note records the workspace and pane, and `[notify] command` runs
 once per spawn. A worker finishes with `review` or `blocked` (`herdr-desk set T<n> review` or `blocked`),
 which ends its run. Every write it makes carries its run id, and a write from a run that is not the task's
@@ -71,7 +78,7 @@ person answers in the pane, and the worker, still the task's newest run, can the
 ## The ticker's run jobs
 
 Once a minute, and only while a run is live (with none and no pane left open, herdr is not asked), the
-ticker:
+ticker does jobs 1 to 4:
 
 1. checks every `running` and `idle` run against one `herdr pane list`, with the same table, for an event
    herdr never delivered;
@@ -80,6 +87,13 @@ ticker:
 3. starts the oldest `waiting` run whose root is free and whose slot is open, and fails a run left
    `starting` for over a minute;
 4. closes again a pane a kill could not close, and blocks a task left `started` after its newest run ended.
+
+Jobs 5 and 6 run on every tick, with or without a live run, and never ask herdr:
+
+5. removes the first-message file of every run that ended, failed, or was killed (a live run's file stays);
+6. removes the worktree of a done task when it is clean and no run is live (a plain worktree remove, never
+   forced, since a dirty tree can hold unpushed work). A dirty one stays, with one note on the task naming it,
+   written once per `done`. The branch `desk/T<n>-<slug>` is left as it is.
 
 `herdr-desk runs` and `herdr-desk context` check the runs once when called; the board's refresh does not.
 When the check cannot run (no herdr on the home, herdr not answering), they list the runs as the store has

@@ -12,8 +12,9 @@ import (
 )
 
 // Start starts a run of the task on route, each field of which wins over the task's own and the defaults (Resolve).
-// It refuses, in this order: not-allowed for a session that is not the recorded coordinator's, runner-off,
-// runner-paused, no-herdr, a route Resolve refuses, and then, from the store, the task's own refusals and
+// It refuses, in this order: not-allowed for a session that owns a live run, runner-off, runner-paused, no-herdr, a
+// route Resolve refuses, not-allowed for an agent session that is not the recorded coordinator's when the resolved
+// root does not set agents_may_start, and then, from the store, the task's own refusals and
 // cap-reached once today's runs reach runner.max_runs_per_day, counted in the transaction that inserts the run. The
 // store decides starting or waiting; a starting run is spawned, and the sidebar rows are reported. A task that
 // already has a starting, waiting, or running run gets that run and no error. A task whose run was idle gets a new
@@ -22,7 +23,8 @@ import (
 // spawn that fails returns the failed run, its reason on it, and no error. A run whose state cannot be read back
 // after its spawn is an error.
 func (r *Runner) Start(ctx context.Context, a store.Actor, task int, route store.RunRoute) (model.Run, error) {
-	if err := r.mayStart(ctx, a); err != nil {
+	deferred, err := r.mayStart(ctx, a)
+	if err != nil {
 		return model.Run{}, err
 	}
 	state, h, why := r.compute()
@@ -45,9 +47,13 @@ func (r *Runner) Start(ctx context.Context, a store.Actor, task int, route store
 	if err != nil {
 		return model.Run{}, err
 	}
-	resolved, err := Resolve(d.Task, route, Roots(c, r.o.Paths), c.Agent.Models)
+	roots := Roots(c, r.o.Paths)
+	resolved, err := Resolve(d.Task, route, roots, c.Agent.Models)
 	if err != nil {
 		return model.Run{}, err
+	}
+	if root, _ := FindRoot(roots, resolved.Root); deferred && !root.AgentsMayStart {
+		return model.Run{}, &model.Refusal{Code: model.CodeNotAllowed, Msg: "only a person or the desk's coordinator may start a run"}
 	}
 	run, err := r.o.Store.StartRun(ctx, task, resolved, store.RunCaps{Slots: c.Runner.Cap, PerDay: c.Runner.MaxRunsPerDay, Since: r.midnight()})
 	if errors.Is(err, store.ErrRunLive) {
@@ -122,20 +128,29 @@ func (r *Runner) readBack(ctx context.Context, run model.Run) (model.Run, error)
 	return model.Run{}, fmt.Errorf("T%d run %d: its state could not be read back: %w", run.Task, run.ID, err)
 }
 
-// mayStart refuses an agent session that is not the recorded coordinator's: a person and the coordinator may
-// start runs, a worker and any other agent may not.
-func (r *Runner) mayStart(ctx context.Context, a store.Actor) error {
+// mayStart allows a person and the recorded coordinator, and refuses a session that owns a live run in the store,
+// whatever its environment says. Any other agent session is deferred: Start allows it only in a resolved root that
+// sets agents_may_start.
+func (r *Runner) mayStart(ctx context.Context, a store.Actor) (deferred bool, err error) {
 	if a.Session == "" {
-		return nil
+		return false, nil
 	}
 	c, ok, err := r.o.Store.Coordinator(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if ok && c.Session == a.Session {
-		return nil
+		return false, nil
 	}
-	return &model.Refusal{Code: model.CodeNotAllowed, Msg: "only a person or the desk's coordinator may start a run"}
+	run, ok, err := r.o.Store.LiveRunOfSession(ctx, a.Session)
+	if err != nil {
+		return false, err
+	}
+	if ok {
+		return false, &model.Refusal{Code: model.CodeNotAllowed,
+			Msg: fmt.Sprintf("a session that owns a live run may not start one (run %d of T%d)", run.ID, run.Task)}
+	}
+	return true, nil
 }
 
 // midnight is the start of the runner's today: runner.max_runs_per_day counts the runs started since.

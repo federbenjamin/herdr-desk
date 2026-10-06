@@ -413,7 +413,7 @@ func TestSessionEventsReadsEachChainTaskWithItsOwnStepsAndLastDoneEvent(t *testi
 	add(store.Actor{Session: "elsewhere"}, "elsewhere")
 	stepped := add(me, "stepped")
 	for _, text := range []string{"first", "second"} {
-		if _, err := st.Step(ctx, me, stepped.Number, model.StepOp{Op: "add", Text: text}); err != nil {
+		if _, _, err := st.Step(ctx, me, stepped.Number, model.StepOp{Op: "add", Text: text}); err != nil {
 			t.Fatalf("add step %s: %v", text, err)
 		}
 	}

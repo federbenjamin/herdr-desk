@@ -12,7 +12,8 @@ description: Use the herdr-desk CLI to read, add, and update the user's tasks, a
 - Set a task's status to `review` (work is done and waits for the user), `blocked` (you cannot go on without the user), or `done`.
 - Set `ready` only when the desk's `[coordinator] start_runs` is `auto`. Otherwise `ready` is the user's approval, and a refusal `not-allowed` means you tried; stop and report it.
 - Propose new work with `--thread agent`. It lands in the user's inbox. It does not start anything.
-- Never run `herdr-desk run start`, `herdr-desk runs kill`, `herdr-desk runner pause`, or `herdr-desk runner resume`. Only the user and the desk's coordinator start runs; killing a run and pausing the runner are the user's acts. A worker or any other agent gets `not-allowed`.
+- Never run `herdr-desk runs kill`, `herdr-desk runner pause`, or `herdr-desk runner resume`: killing a run and pausing the runner are the user's acts. A session that owns a live run (a worker) never runs `herdr-desk run start`. Any other session may start a run only in a root whose `agents_may_start` is set; the user and the desk's coordinator start runs anywhere. You cannot read that setting: run `run start` once when you are asked to start a task, and a `not-allowed` refusal means the root does not let agents start runs. It is final: do not try another root or another identity.
+- You may set a task's first message with `herdr-desk set T12 --first-message "<template>"`: the template must hold `{task_file}`, and its run starts on it instead of plain text. Set it on a task you add and start; change another task's only when the user asks.
 - Never edit a task's title or notes to answer a question. Write a note instead. To add a line to a task's notes, use `herdr-desk edit T12 --append-notes "<text>"`; `--notes` replaces them.
 - Never run bare `herdr-desk` or `herdr-desk capture` on a terminal. The board and the capture popup are the user's: they take the terminal until a key ends them. Read tasks with `herdr-desk list --json`.
 
@@ -37,7 +38,7 @@ Task ids: `T12`, `t12`, and `12` name the same task.
 | hand back with the PR | `herdr-desk set T12 review --ref <pr-url>`; add `--merged` once the PR is merged |
 | close a task | `herdr-desk set T12 done` |
 | add to a task's notes | `herdr-desk edit T12 --append-notes "<text>"` |
-| tick steps | `herdr-desk steps T12 add "<text>"`, `toggle s1`, `rename s1 "<text>"`, `remove s1` |
+| tick steps | `herdr-desk steps T12 add "<text>"`, `add --id <id> "<text>"` (you pick the id; never `s<n>`; a second `add --id` with the same id changes nothing and prints the steps, then `unchanged`), `done <id>` (prints `changed` or `unchanged`; never flips back), `toggle s1`, `rename s1 "<text>"`, `remove s1`; with `--json`, every op prints `{"task": …, "changed": …}` |
 | record a fact | `herdr-desk note "<text>" --task T12 --ref <path-or-url>` |
 | record a decision | `herdr-desk decide "<text>" --tag k:v` (`--replaces e<id>` when it replaces one) |
 | read the session journal | `herdr-desk session <id> --md` (no id: the current session); the file the session-start hook named is rewritten after each write of yours, so reading that path is current too |

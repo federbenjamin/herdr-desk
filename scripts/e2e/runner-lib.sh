@@ -320,9 +320,13 @@ runner_cleanup() {
 }
 trap runner_cleanup EXIT
 
-# add_root <path> <isolation> <about>: add a root to RC_ROOTS, the TOML runner_config writes.
+# add_root <path> <isolation> <about> [<key = value>...]: add a root to RC_ROOTS, the TOML runner_config writes. Each
+# argument after the third is one more line of that root's table, such as "agents_may_start = true".
 add_root() {
-  RC_ROOTS="${RC_ROOTS-}$(printf '[[roots]]\npath = "%s"\nabout = "%s"\nisolation = "%s"\n' "$1" "${3-}" "${2-}")"$'\n\n'
+  local line
+  RC_ROOTS="${RC_ROOTS-}$(printf '[[roots]]\npath = "%s"\nabout = "%s"\nisolation = "%s"' "$1" "${3-}" "${2-}")"$'\n'
+  for line in "${@:4}"; do RC_ROOTS+="$line"$'\n'; done
+  RC_ROOTS+=$'\n'
 }
 
 # runner_config <machine>: write the machine's config from these variables, each with a default:

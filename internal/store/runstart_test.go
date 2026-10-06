@@ -20,7 +20,8 @@ func TestOpenMigratesRoutingRunsToStartingWithoutLeavingThemOpen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open version-1 database: %v", err)
 	}
-	if _, err := db.Exec(`CREATE TABLE runs(
+	if _, err := db.Exec(`CREATE TABLE tasks(number INTEGER PRIMARY KEY);
+	CREATE TABLE runs(
 		id INTEGER PRIMARY KEY,
 		task INTEGER NOT NULL,
 		state TEXT NOT NULL,
@@ -69,8 +70,8 @@ func TestOpenMigratesRoutingRunsToStartingWithoutLeavingThemOpen(t *testing.T) {
 	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatalf("read migrated user_version: %v", err)
 	}
-	if version != 2 {
-		t.Errorf("user_version = %d, want 2", version)
+	if version != 3 {
+		t.Errorf("user_version = %d, want 3", version)
 	}
 	var leftOpen int
 	if err := db.QueryRow("SELECT left_open FROM runs WHERE id = 1").Scan(&leftOpen); err != nil {
