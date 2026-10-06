@@ -24,45 +24,57 @@ coordinator and the runner, the board, and the packaging.
 herdr-desk is one static binary, `herdr-desk`, for macOS and Linux. The herdr plugin needs herdr 0.9.0 or
 later, and Go to build the binary when no release matches your platform. Pick the line that fits.
 
-### herdr with Claude Code
+### With herdr
 
 ```sh
 herdr plugin install federbenjamin/herdr-desk
 ```
 
-herdr runs `scripts/fetch-or-build.sh`: it downloads the release binary for your platform, checks
-its SHA-256 against `checksums.txt`, and builds from source with Go when no release matches. When no
-`herdr-desk` is on your PATH it copies the binary to `~/.local/bin/herdr-desk` and says so. A later install
-replaces that copy and tells you to run `herdr-desk ticker stop`; herdr's next start runs the new ticker. A
-`herdr-desk` from anywhere else (Homebrew, `go install`) is left alone.
+That is the whole install. After herdr shows its preview and you confirm, its build step
+(`scripts/fetch-or-build.sh`) does the rest, with a line in its report (below) for each thing it wrote or
+skipped:
 
-Then set up the home and the Claude Code plugin:
+- **The binary.** It downloads the release for your platform, checks its SHA-256 against `checksums.txt`,
+  and builds from source with Go when no release matches. When no `herdr-desk` is on your PATH it copies
+  the binary to `~/.local/bin/herdr-desk`. A later install replaces that copy and tells you to run
+  `herdr-desk ticker stop`; herdr's next start runs the new ticker. A `herdr-desk` from anywhere else
+  (Homebrew, `go install`) is left alone.
+- **`herdr-desk setup`.** It writes `~/.config/herdr-desk/config.toml` (0600; values already there are kept)
+  and the scratch root. In herdr's `config.toml` it binds `prefix+t` (open the board) and `prefix+a`
+  (capture) where they are free and adds herdr-desk's sidebar row (see
+  [The sidebar row](docs/runner.md#the-sidebar-row)), each in one marked block, copying the file to
+  `config.toml.herdr-desk-bak-<time>` first. When herdr has no `config.toml` yet, it creates one holding only
+  those two blocks; when it cannot find herdr either, it writes nothing there, says why, and says to run
+  `herdr-desk setup` once herdr is found. It never binds `ctrl+d`.
+- **Claude Code.** When `claude` is on your PATH, setup uses the `claude-code` profile, which fills `[agent]`
+  so runs and the coordinator start Claude Code, and the step installs the Claude Code plugin
+  (`claude plugin marketplace add federbenjamin/herdr-desk`, then `claude plugin install herdr-desk@herdr-desk`).
+  With no `claude`, it says so and points to [herdr with another agent](#herdr-with-another-agent).
 
-```sh
-herdr-desk setup --profile claude-code
-```
+herdr shows a build step's output only when the step fails, and a step that did not finish does not fail
+the install, so the build step also writes its report to `~/.local/state/herdr-desk/install.log`
+(`$XDG_STATE_HOME/herdr-desk/install.log` when that is set); each install replaces it. A step that did not
+finish is reported there with its reason. Once the cause is fixed, `herdr-desk setup` re-runs setup (add
+`--profile claude-code` for Claude Code), and `claude plugin marketplace add federbenjamin/herdr-desk`, then
+`claude plugin install herdr-desk@herdr-desk`, re-runs the Claude Code plugin step. `herdr-desk setup --force`
+replaces another program's binding of `prefix+t` or `prefix+a`. The board's popup is a second entry, the
+action `open-popup`, and has no default key.
 
-In Claude Code:
+To undo the install: `claude plugin uninstall herdr-desk@herdr-desk`, `herdr plugin uninstall herdr-desk`, then
+delete the two `herdr-desk` blocks from herdr's `config.toml` or put its `config.toml.herdr-desk-bak-<time>`
+back.
 
-```
-/plugin marketplace add federbenjamin/herdr-desk
-/plugin install herdr-desk@herdr-desk
-```
+The Claude Code plugin registers a `SessionStart` hook (`herdr-desk hook start --format claude-code`) and the
+`herdr-desk` skill. Optional, and only on a machine where `claude` was not on your PATH at install: inside
+Claude Code, run `/plugin marketplace add federbenjamin/herdr-desk`, then `/plugin install herdr-desk@herdr-desk`.
+`herdr-desk setup` also writes the skill to `~/.claude/skills/herdr-desk/SKILL.md` when you pass
+`--skill-dir ~/.claude/skills`.
 
 Claude Code keeps a plugin by its version. A release changes the version, so `claude plugin update
 herdr-desk@herdr-desk` picks up the new skill. A build from source between releases keeps the version, so
 `claude plugin update` says it is already at the latest and keeps the old skill: remove the plugin and
 install it again with `claude plugin uninstall herdr-desk@herdr-desk`, then
 `claude plugin install herdr-desk@herdr-desk`.
-
-The plugin registers a `SessionStart` hook (`herdr-desk hook start --format claude-code`) and the `herdr-desk`
-skill. `herdr-desk setup` also writes the skill to `~/.claude/skills/herdr-desk/SKILL.md` when you pass
-`--skill-dir ~/.claude/skills`. When herdr's `config.toml` exists, it binds `prefix+t` (open the board) and
-`prefix+a` (capture) there, only for keys that are free; with no such file it says so, writes no keys or
-sidebar row, and a later `herdr-desk setup` writes them; `--force` replaces a binding that holds them. It
-also writes the block that adds herdr-desk's row to herdr's sidebar (see [The sidebar row](docs/runner.md#the-sidebar-row)).
-It copies the file to `config.toml.herdr-desk-bak-<time>` first and never binds `ctrl+d`. The board's
-popup is a second entry, the action `open-popup`, and has no default key.
 
 **Trust each root once.** `claude` asks "Is this a project you created or one you trust?" the first time
 it starts in a folder it has not trusted, and herdr shows that pane as `blocked` with no session.
@@ -74,8 +86,10 @@ task `blocked` with a note naming the pane.
 
 ### herdr with another agent
 
-Install the plugin as above and run `herdr-desk setup`. The profile is what teaches herdr-desk to start your
-agent, so set the `[agent]` values in `~/.config/herdr-desk/config.toml` yourself:
+Install the plugin as above. With no `claude` on your PATH, the install runs `herdr-desk setup` with no
+profile and its report (`install.log`, above) points here. The profile is what teaches herdr-desk to start
+your agent, so set the `[agent]` values in `~/.config/herdr-desk/config.toml` yourself (with `claude` on
+your PATH the install filled them for Claude Code; replace them):
 
 ```toml
 [agent]
@@ -92,14 +106,12 @@ tells an agent's commands from yours: a caller with a session id is an agent. On
 
 ### No herdr
 
-Install the binary (`go install github.com/federbenjamin/herdr-desk/cmd/herdr-desk@latest`), then:
-
 ```sh
-herdr-desk setup
-herdr-desk add -t "first task"
-herdr-desk
+go install github.com/federbenjamin/herdr-desk/cmd/herdr-desk@latest
 ```
 
+`herdr-desk add -t "first task"` and the board (`herdr-desk`) work at once, and
+`herdr-desk setup --profile claude-code --skill-dir ~/.claude/skills` is the optional profile and skill step.
 Every command works with no ticker running; only the timed jobs wait (see
 [Running the ticker](docs/ticker.md)). Runs and the coordinator need herdr.
 
@@ -135,7 +147,8 @@ herdr-desk run start T1                         # start an agent on T1
 herdr-desk note "the sync job retries 3 times"  # record a fact in this session's journal
 ```
 
-In herdr, `herdr-desk setup` binds these keys when herdr's `config.toml` exists and they are free:
+In herdr, `herdr-desk setup` binds these keys where they are free, and creates herdr's `config.toml` when herdr
+has none:
 
 | key | does |
 |---|---|

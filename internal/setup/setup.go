@@ -17,6 +17,7 @@ import (
 	"github.com/federbenjamin/herdr-desk/internal/api"
 	"github.com/federbenjamin/herdr-desk/internal/config"
 	"github.com/federbenjamin/herdr-desk/internal/gitcmd"
+	"github.com/federbenjamin/herdr-desk/internal/herdr"
 	"github.com/federbenjamin/herdr-desk/internal/model"
 	"github.com/federbenjamin/herdr-desk/internal/sidebar"
 )
@@ -36,8 +37,8 @@ type Options struct {
 const gitTimeout = 30 * time.Second
 
 // Run writes the config (keeping an existing one's values), creates the scratch root, applies the profile, writes
-// the skill, and writes the herdr keys and sidebar row. It prints one line per thing it wrote or skipped. It never
-// prompts.
+// the skill, and writes the herdr keys and sidebar row, creating herdr's config when herdr is found and has none. It
+// prints one line per thing it wrote or skipped. It never prompts.
 func Run(ctx context.Context, o Options) error {
 	out := o.Out
 	if out == nil {
@@ -60,11 +61,13 @@ func Run(ctx context.Context, o Options) error {
 	if err != nil {
 		return err
 	}
-	herdrFile := ""
+	herdrFile, notFound := "", ""
 	if !o.NoHerdr {
 		herdrFile = herdrConfigPath(getenv)
 		if _, err := os.Stat(herdrFile); errors.Is(err, fs.ErrNotExist) {
-			herdrFile = ""
+			if _, err := herdr.Find(); err != nil {
+				herdrFile, notFound = "", err.Error()
+			}
 		} else if err != nil {
 			return fmt.Errorf("herdr's config: %w", err)
 		}
@@ -104,7 +107,7 @@ func Run(ctx context.Context, o Options) error {
 		fmt.Fprintln(out, "herdr: left alone (--no-herdr)")
 		return nil
 	case herdrFile == "":
-		fmt.Fprintln(out, "herdr: no config file; keys and sidebar row not written")
+		fmt.Fprintf(out, "herdr: no herdr found (%s) and no config file; keys and sidebar row not written. Once herdr is found, run: herdr-desk setup\n", notFound)
 		return nil
 	}
 	return writeHerdr(herdrFile, o.Force, out)
@@ -122,8 +125,12 @@ func changed(c bool) string {
 	return "unchanged"
 }
 
-// herdrConfigPath is <XDG_CONFIG_HOME or HOME/.config>/herdr/config.toml.
+// herdrConfigPath is HERDR_CONFIG_PATH when set, the file herdr itself reads then; else
+// <XDG_CONFIG_HOME or HOME/.config>/herdr/config.toml.
 func herdrConfigPath(getenv func(string) string) string {
+	if path := getenv("HERDR_CONFIG_PATH"); path != "" {
+		return path
+	}
 	base := getenv("XDG_CONFIG_HOME")
 	if base == "" {
 		base = filepath.Join(getenv("HOME"), ".config")
@@ -199,10 +206,12 @@ func writeSkill(skillDir string, out io.Writer) error {
 }
 
 // writeHerdr writes herdr-desk's keys and its sidebar row into herdr's config at path, copying it to
-// <path>.herdr-desk-bak-<time> first when the text changes: one backup for both.
+// <path>.herdr-desk-bak-<time> first when the text changes: one backup for both. A missing file is created holding
+// only those two blocks, with no backup.
 func writeHerdr(path string, force bool, out io.Writer) error {
 	old, err := os.ReadFile(path)
-	if err != nil {
+	missing := errors.Is(err, fs.ErrNotExist)
+	if err != nil && !missing {
 		return err
 	}
 	keyed, bound, skipped := WriteHerdrKeys(string(old), force)
@@ -213,21 +222,28 @@ func writeHerdr(path string, force bool, out io.Writer) error {
 	if note != "" {
 		fmt.Fprintln(out, note)
 	}
-	if text == string(old) {
+	switch {
+	case missing:
+		if err := createHerdrConfig(path, text); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "herdr: %s created (herdr had no config file; it holds only herdr-desk's keys and sidebar row)\n", path)
+	case text == string(old):
 		fmt.Fprintf(out, "herdr: %s unchanged\n", path)
 		return nil
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return err
-	}
-	backup := path + ".herdr-desk-bak-" + time.Now().UTC().Format("20060102-150405.000000000")
-	if err := os.WriteFile(backup, old, info.Mode().Perm()); err != nil {
-		return err
-	}
-	fmt.Fprintf(out, "herdr: backed up to %s\n", backup)
-	if err := os.WriteFile(path, []byte(text), info.Mode().Perm()); err != nil {
-		return err
+	default:
+		info, err := os.Stat(path)
+		if err != nil {
+			return err
+		}
+		backup := path + ".herdr-desk-bak-" + time.Now().UTC().Format("20060102-150405.000000000")
+		if err := os.WriteFile(backup, old, info.Mode().Perm()); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "herdr: backed up to %s\n", backup)
+		if err := os.WriteFile(path, []byte(text), info.Mode().Perm()); err != nil {
+			return err
+		}
 	}
 	for _, k := range bound {
 		fmt.Fprintf(out, "herdr: %s bound\n", k)
@@ -236,6 +252,26 @@ func writeHerdr(path string, force bool, out io.Writer) error {
 		fmt.Fprintln(out, "herdr: sidebar row $desk written")
 	}
 	return nil
+}
+
+// createHerdrConfig writes text to a new file at path, 0600 as herdr's own is. It fails rather than overwrite a file
+// that appeared after writeHerdr found none.
+func createHerdrConfig(path, text string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	_, err = f.WriteString(text)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		os.Remove(path)
+	}
+	return err
 }
 
 // ClientAdd makes this machine a client of home, an ssh target: it sends a status request through the [client]

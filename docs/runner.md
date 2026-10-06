@@ -72,7 +72,7 @@ and `DESK_HOOKS=off` exit 0 and write nothing. What the hook does with the pane'
 | `working`, and the run is `idle` | `running` | `started` |
 
 A repeated event changes nothing. A worker that stops at a question before it has an agent session, such
-as the `claude` trust question ([Install](../README.md#herdr-with-claude-code)), shows as `blocked` with no session: the task stays `blocked` until a
+as the `claude` trust question ([Install](../README.md#with-herdr)), shows as `blocked` with no session: the task stays `blocked` until a
 person answers in the pane, and the worker, still the task's newest run, can then hand it back.
 
 ## The ticker's run jobs
@@ -110,6 +110,9 @@ or `idle`. The text goes out when a run starts, on herdr's events, on a hand-bac
 a timer, so a row shows when a run started, not how long it has run, and the card goes with its pane.
 
 `herdr-desk setup` writes the herdr config block that shows the token, in a fenced block, backing the file
-up first as it does for keys. When your herdr config already has its own `[ui.sidebar.agents]` table, setup
-leaves it alone and prints the row to add by hand. A herdr config that does not parse as TOML is left alone too,
-and setup says so.
+up first as it does for keys. When herdr is found and has no config file, setup creates one holding only
+herdr-desk's keys and sidebar blocks (`HERDR_CONFIG_PATH`, when set, names the file). When your herdr config
+already has its own `[ui.sidebar.agents]` table, setup leaves that table alone and prints the row to add by
+hand. A herdr config that does not parse as TOML gets no sidebar block, and setup says so with the parse
+error and the row to add. It still gets the keys block where the keys are free (setup places that block by
+text, not by parsing), after the backup.
