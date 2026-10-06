@@ -47,6 +47,30 @@ while [ $# -gt 0 ]; do
 done
 `
 
+const deskStub = `#!/bin/sh
+if IFS= read -r _; then
+  echo "herdr-desk read stdin" >>"$COMMAND_LOG"
+  exit 97
+fi
+echo "herdr-desk $*" >>"$COMMAND_LOG"
+echo "setup output"
+exit "${DESK_EXIT:-0}"
+`
+
+const claudeStub = `#!/bin/sh
+if IFS= read -r _; then
+  echo "claude $* read stdin" >>"$COMMAND_LOG"
+  exit 97
+fi
+echo "claude $*" >>"$COMMAND_LOG"
+echo "claude $* output"
+case "$1 $2 $3" in
+  "plugin marketplace add") exit "${CLAUDE_MARKETPLACE_EXIT:-0}" ;;
+  "plugin install herdr-desk@herdr-desk") exit "${CLAUDE_INSTALL_EXIT:-0}" ;;
+esac
+exit 0
+`
+
 type rig struct {
 	dir     string
 	fixture string
@@ -143,11 +167,38 @@ func (r *rig) run(t *testing.T) string {
 	t.Helper()
 	cmd := exec.Command("sh", "fetch-or-build.sh")
 	cmd.Env = r.env
+	cmd.Stdin = strings.NewReader("this input must not reach setup or claude\n")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("fetch-or-build.sh failed: %v\n%s", err, out)
 	}
 	return string(out)
+}
+
+func (r *rig) commandLog(t *testing.T) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(r.dir, "commands.log"))
+	if err == nil {
+		return string(b)
+	}
+	if os.IsNotExist(err) {
+		return ""
+	}
+	t.Fatal(err)
+	return ""
+}
+
+func (r *rig) addDesk(t *testing.T) {
+	t.Helper()
+	writeExec(t, filepath.Join(r.dir, "stubs", "herdr-desk"), deskStub)
+	r.env = append(r.env, "COMMAND_LOG="+filepath.Join(r.dir, "commands.log"))
+}
+
+func (r *rig) addClaude(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(r.dir, "stubs", "claude")
+	writeExec(t, path, claudeStub)
+	return path
 }
 
 func readFile(t *testing.T, path string) string {
@@ -270,5 +321,101 @@ func TestFetchOrBuildFailsWhenItCannotInstall(t *testing.T) {
 	}
 	if !strings.Contains(string(out), install+"/herdr-desk") {
 		t.Errorf("the failure does not name the install destination:\n%s", out)
+	}
+}
+
+func TestFetchOrBuildPrebuiltSetsUpWithoutClaudeOrPlugin(t *testing.T) {
+	r := newRig(t)
+	r.release(t)
+	r.addDesk(t)
+
+	out := r.run(t)
+
+	if got := r.commandLog(t); got != "herdr-desk setup\n" {
+		t.Errorf("setup command log = %q, want only the no-profile setup command", got)
+	}
+	if !strings.Contains(out, "herdr-desk: no claude on PATH; setup uses no profile. To start another agent, set [agent] in the herdr-desk config named below (README: herdr with another agent).") {
+		t.Errorf("output does not explain the no-claude setup profile:\n%s", out)
+	}
+	if !strings.Contains(out, "herdr-desk: no claude on PATH, so the Claude Code plugin was not installed. Inside Claude Code: /plugin marketplace add federbenjamin/herdr-desk, then /plugin install herdr-desk@herdr-desk") {
+		t.Errorf("output does not explain how to install the plugin without claude:\n%s", out)
+	}
+}
+
+func TestFetchOrBuildSourceSetsUpAndInstallsClaudePlugin(t *testing.T) {
+	r := newRig(t)
+	r.addDesk(t)
+	claudePath := r.addClaude(t)
+
+	out := r.run(t)
+
+	if got, want := r.commandLog(t), "herdr-desk setup --profile claude-code\nclaude plugin marketplace add federbenjamin/herdr-desk\nclaude plugin install herdr-desk@herdr-desk\n"; got != want {
+		t.Errorf("commands = %q, want %q", got, want)
+	}
+	if !strings.Contains(out, "herdr-desk: claude found at "+claudePath+"; setup uses the claude-code profile.") {
+		t.Errorf("output does not name the claude binary and profile:\n%s", out)
+	}
+	if !strings.Contains(out, "herdr-desk: Claude Code plugin installed (marketplace federbenjamin/herdr-desk, plugin herdr-desk@herdr-desk).") {
+		t.Errorf("output does not confirm the plugin install:\n%s", out)
+	}
+	for _, want := range []string{
+		"setup output",
+		"claude plugin marketplace add federbenjamin/herdr-desk output",
+		"claude plugin install herdr-desk@herdr-desk output",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output does not pass through %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestFetchOrBuildContinuesToClaudePluginAfterSetupFails(t *testing.T) {
+	r := newRig(t)
+	r.release(t)
+	r.addDesk(t)
+	r.addClaude(t)
+	r.env = append(r.env, "DESK_EXIT=31")
+
+	out := r.run(t)
+
+	if got, want := r.commandLog(t), "herdr-desk setup --profile claude-code\nclaude plugin marketplace add federbenjamin/herdr-desk\nclaude plugin install herdr-desk@herdr-desk\n"; got != want {
+		t.Errorf("commands = %q, want plugin installation after the failed setup", got)
+	}
+	if !strings.Contains(out, "herdr-desk: setup did not finish (exit 31; see above). After fixing it, run: herdr-desk setup --profile claude-code") {
+		t.Errorf("output does not give the failed setup recovery command:\n%s", out)
+	}
+}
+
+func TestFetchOrBuildStopsClaudePluginAfterMarketplaceFailure(t *testing.T) {
+	r := newRig(t)
+	r.release(t)
+	r.addDesk(t)
+	r.addClaude(t)
+	r.env = append(r.env, "CLAUDE_MARKETPLACE_EXIT=41")
+
+	out := r.run(t)
+
+	if got, want := r.commandLog(t), "herdr-desk setup --profile claude-code\nclaude plugin marketplace add federbenjamin/herdr-desk\n"; got != want {
+		t.Errorf("commands = %q, want the failed marketplace command to stop the plugin install", got)
+	}
+	if !strings.Contains(out, "herdr-desk: Claude Code plugin not installed (claude plugin marketplace add exited 41; see above). Inside Claude Code: /plugin marketplace add federbenjamin/herdr-desk, then /plugin install herdr-desk@herdr-desk") {
+		t.Errorf("output does not explain the failed marketplace step:\n%s", out)
+	}
+}
+
+func TestFetchOrBuildReportsPluginInstallFailureWithoutFailingTheBuild(t *testing.T) {
+	r := newRig(t)
+	r.release(t)
+	r.addDesk(t)
+	r.addClaude(t)
+	r.env = append(r.env, "CLAUDE_INSTALL_EXIT=42")
+
+	out := r.run(t)
+
+	if got, want := r.commandLog(t), "herdr-desk setup --profile claude-code\nclaude plugin marketplace add federbenjamin/herdr-desk\nclaude plugin install herdr-desk@herdr-desk\n"; got != want {
+		t.Errorf("commands = %q, want each Claude step once", got)
+	}
+	if !strings.Contains(out, "herdr-desk: Claude Code plugin not installed (claude plugin install exited 42; see above). Inside Claude Code: /plugin marketplace add federbenjamin/herdr-desk, then /plugin install herdr-desk@herdr-desk") {
+		t.Errorf("output does not explain the failed plugin install step:\n%s", out)
 	}
 }

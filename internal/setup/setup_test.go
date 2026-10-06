@@ -14,6 +14,7 @@ import (
 	"github.com/federbenjamin/herdr-desk"
 	"github.com/federbenjamin/herdr-desk/internal/config"
 	"github.com/federbenjamin/herdr-desk/internal/setup"
+	"github.com/federbenjamin/herdr-desk/internal/sidebar"
 	"github.com/federbenjamin/herdr-desk/internal/testutil"
 )
 
@@ -183,7 +184,7 @@ func TestRunFindsHerdrConfigThroughHomeFallback(t *testing.T) {
 	}
 }
 
-func TestRunAddsHerdrNotificationOnlyWhenHerdrConfigExists(t *testing.T) {
+func TestRunLeavesNotificationUnsetWhenHerdrIsUnavailable(t *testing.T) {
 	p, getenv := setupPaths(t)
 	if err := setup.Run(context.Background(), setup.Options{Paths: p, Getenv: getenv, Out: new(bytes.Buffer)}); err != nil {
 		t.Fatalf("Run(without herdr config) error = %v", err)
@@ -264,6 +265,162 @@ command = "other.open"
 	}
 	if !strings.Contains(conflictOut.String(), "herdr: prefix+t skipped, another binding holds it") {
 		t.Errorf("conflicting-key report = %q; want prefix+t skipped", conflictOut.String())
+	}
+}
+
+func TestRunUsesHERDRConfigPathForANewHerdrConfig(t *testing.T) {
+	p, getenv := setupPaths(t)
+	testutil.FakeHerdr(t)
+	herdrConfig := filepath.Join(t.TempDir(), "custom", "herdr.toml")
+
+	if err := setup.Run(context.Background(), setup.Options{
+		Paths: p,
+		Getenv: func(name string) string {
+			if name == "HERDR_CONFIG_PATH" {
+				return herdrConfig
+			}
+			return getenv(name)
+		},
+		Out: new(bytes.Buffer),
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if _, err := os.Stat(herdrConfig); err != nil {
+		t.Fatalf("Run() did not create HERDR_CONFIG_PATH %q: %v", herdrConfig, err)
+	}
+	defaultConfig := filepath.Join(getenv("XDG_CONFIG_HOME"), "herdr", "config.toml")
+	if _, err := os.Stat(defaultConfig); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("Run() wrote default herdr config %q: %v", defaultConfig, err)
+	}
+}
+
+func TestRunCreatesMissingHerdrConfigWithKeysAndSidebar(t *testing.T) {
+	p, getenv := setupPaths(t)
+	testutil.FakeHerdr(t)
+	herdrConfig := filepath.Join(getenv("XDG_CONFIG_HOME"), "herdr", "config.toml")
+
+	var out bytes.Buffer
+	if err := setup.Run(context.Background(), setup.Options{Paths: p, Getenv: getenv, Out: &out}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	keys, _, _ := setup.WriteHerdrKeys("", false)
+	wantConfig, _ := sidebar.WriteHerdrSidebar(keys)
+	gotConfig, err := os.ReadFile(herdrConfig)
+	if err != nil {
+		t.Fatalf("read created herdr config: %v", err)
+	}
+	if string(gotConfig) != wantConfig {
+		t.Errorf("created herdr config = %q; want %q", gotConfig, wantConfig)
+	}
+	info, err := os.Stat(herdrConfig)
+	if err != nil {
+		t.Fatalf("stat created herdr config: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Errorf("created herdr config mode = %04o; want 0600", got)
+	}
+	dirInfo, err := os.Stat(filepath.Dir(herdrConfig))
+	if err != nil {
+		t.Fatalf("stat created herdr config folder: %v", err)
+	}
+	if got := dirInfo.Mode().Perm(); got != 0o755 {
+		t.Errorf("created herdr config folder mode = %04o; want 0755", got)
+	}
+	for _, line := range []string{
+		"herdr: " + herdrConfig + " created (herdr had no config file; it holds only herdr-desk's keys and sidebar row)",
+		"herdr: prefix+t bound",
+		"herdr: prefix+a bound",
+		"herdr: sidebar row $desk written",
+	} {
+		if got := strings.Count(out.String(), line); got != 1 {
+			t.Errorf("Run() report count for %q = %d; want 1\n%s", line, got, out.String())
+		}
+	}
+	if backups, err := filepath.Glob(herdrConfig + ".herdr-desk-bak-*"); err != nil || len(backups) != 0 {
+		t.Errorf("created herdr config backups = %#v, %v; want none", backups, err)
+	}
+	got, err := config.Load(p.ConfigFile())
+	if err != nil {
+		t.Fatalf("load desk config: %v", err)
+	}
+	wantNotify := []string{"herdr", "notification", "show", "{title}", "--body", "{body}"}
+	if !reflect.DeepEqual(got.Notify.Command, wantNotify) {
+		t.Errorf("notification argv = %#v; want %#v", got.Notify.Command, wantNotify)
+	}
+}
+
+func TestRunReportsNoHerdrAndLeavesAMissingConfigAbsent(t *testing.T) {
+	p, getenv := setupPaths(t)
+	herdrConfig := filepath.Join(getenv("XDG_CONFIG_HOME"), "herdr", "config.toml")
+	var out bytes.Buffer
+
+	if err := setup.Run(context.Background(), setup.Options{Paths: p, Getenv: getenv, Out: &out}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if _, err := os.Stat(herdrConfig); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("Run() created a config without herdr: stat error = %v; want not exist", err)
+	}
+	line := "herdr: no herdr found and no config file; keys and sidebar row not written"
+	if got := strings.Count(out.String(), line); got != 1 {
+		t.Errorf("Run() report count for %q = %d; want 1\n%s", line, got, out.String())
+	}
+	got, err := config.Load(p.ConfigFile())
+	if err != nil {
+		t.Fatalf("load desk config: %v", err)
+	}
+	if len(got.Notify.Command) != 0 {
+		t.Errorf("notification argv = %#v; want unset without herdr", got.Notify.Command)
+	}
+}
+
+func TestRunNoHerdrDoesNotCreateAMissingConfigEvenWhenHerdrIsAvailable(t *testing.T) {
+	p, getenv := setupPaths(t)
+	testutil.FakeHerdr(t)
+	herdrConfig := filepath.Join(getenv("XDG_CONFIG_HOME"), "herdr", "config.toml")
+	var out bytes.Buffer
+
+	if err := setup.Run(context.Background(), setup.Options{Paths: p, Getenv: getenv, NoHerdr: true, Out: &out}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if _, err := os.Stat(herdrConfig); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("Run(NoHerdr) created a config: stat error = %v; want not exist", err)
+	}
+	line := "herdr: left alone (--no-herdr)"
+	if got := strings.Count(out.String(), line); got != 1 {
+		t.Errorf("Run(NoHerdr) report count for %q = %d; want 1\n%s", line, got, out.String())
+	}
+}
+
+func TestRunSecondMissingHerdrConfigSetupLeavesItUnchangedWithoutBackup(t *testing.T) {
+	p, getenv := setupPaths(t)
+	testutil.FakeHerdr(t)
+	herdrConfig := filepath.Join(getenv("XDG_CONFIG_HOME"), "herdr", "config.toml")
+	if err := setup.Run(context.Background(), setup.Options{Paths: p, Getenv: getenv, Out: new(bytes.Buffer)}); err != nil {
+		t.Fatalf("first Run() error = %v", err)
+	}
+	before, err := os.ReadFile(herdrConfig)
+	if err != nil {
+		t.Fatalf("read first created herdr config: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := setup.Run(context.Background(), setup.Options{Paths: p, Getenv: getenv, Out: &out}); err != nil {
+		t.Fatalf("second Run() error = %v", err)
+	}
+	after, err := os.ReadFile(herdrConfig)
+	if err != nil {
+		t.Fatalf("read second herdr config: %v", err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Errorf("second Run() changed created herdr config\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+	line := "herdr: " + herdrConfig + " unchanged"
+	if got := strings.Count(out.String(), line); got != 1 {
+		t.Errorf("second Run() report count for %q = %d; want 1\n%s", line, got, out.String())
+	}
+	if backups, err := filepath.Glob(herdrConfig + ".herdr-desk-bak-*"); err != nil || len(backups) != 0 {
+		t.Errorf("second Run() made backups %#v, %v; want none", backups, err)
 	}
 }
 
