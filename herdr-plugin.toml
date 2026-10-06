@@ -10,7 +10,9 @@ platforms = ["linux", "macos"]
 # Installs a checksum-verified release binary for this version and platform, else builds from
 # source with Go. It puts `herdr-desk` on your PATH (~/.local/bin) when none is there, then runs
 # `herdr-desk setup` and, with `claude` on PATH, installs the Claude Code plugin. A step after the
-# binary is placed that does not finish is reported, and the install still succeeds.
+# binary is placed that does not finish is reported, and the install still succeeds. herdr shows this
+# command's output only when it fails, so that report is also kept in herdr-desk's state folder
+# (~/.local/state/herdr-desk/install.log by default).
 [[build]]
 platforms = ["linux", "macos"]
 command = ["/bin/sh", "scripts/fetch-or-build.sh"]

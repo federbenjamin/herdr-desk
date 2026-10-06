@@ -61,12 +61,12 @@ func Run(ctx context.Context, o Options) error {
 	if err != nil {
 		return err
 	}
-	herdrFile := ""
+	herdrFile, notFound := "", ""
 	if !o.NoHerdr {
 		herdrFile = herdrConfigPath(getenv)
 		if _, err := os.Stat(herdrFile); errors.Is(err, fs.ErrNotExist) {
 			if _, err := herdr.Find(); err != nil {
-				herdrFile = ""
+				herdrFile, notFound = "", err.Error()
 			}
 		} else if err != nil {
 			return fmt.Errorf("herdr's config: %w", err)
@@ -107,7 +107,7 @@ func Run(ctx context.Context, o Options) error {
 		fmt.Fprintln(out, "herdr: left alone (--no-herdr)")
 		return nil
 	case herdrFile == "":
-		fmt.Fprintln(out, "herdr: no herdr found and no config file; keys and sidebar row not written")
+		fmt.Fprintf(out, "herdr: no herdr found (%s) and no config file; keys and sidebar row not written. Once herdr is found, run: herdr-desk setup\n", notFound)
 		return nil
 	}
 	return writeHerdr(herdrFile, o.Force, out)

@@ -8,22 +8,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 build
 
 V=9.9.9
-OS=$(uname -s | tr '[:upper:]' '[:lower:]')
-case "$(uname -m)" in
-  arm64 | aarch64) ARCH=arm64 ;;
-  x86_64 | amd64) ARCH=amd64 ;;
-  *) fail "unmapped arch $(uname -m)" ;;
-esac
-ASSET="herdr-desk_${V}_${OS}_${ARCH}.tar.gz"
-REL="$E2E/rel/v$V"
-mkdir -p "$REL"
-tar -czf "$REL/$ASSET" -C "$BIN" herdr-desk
-(cd "$REL" && shasum -a 256 "$ASSET" >checksums.txt)
-
-# herdr counts as found through DESK_HERDR: an executable file that is never run.
-STUB_HERDR="$E2E/stub-herdr"
-printf '#!/bin/sh\nexit 0\n' >"$STUB_HERDR"
-chmod +x "$STUB_HERDR"
+release_fixture "$V"
+STUB_HERDR=$(stub_herdr)
 
 CLAUDE_LOG="$E2E/fake-claude.log"
 mkdir -p "$E2E/fakebin"
@@ -36,8 +22,8 @@ chmod +x "$E2E/fakebin/claude"
 
 # Every folder that holds a herdr-desk is dropped, so the script must install one; NO_CLAUDE_PATH also drops every
 # folder that holds a claude, the machine's real one included.
-CLEAN_PATH=$(tr ':' '\n' <<<"$PATH" | while read -r d; do [ -x "$d/herdr-desk" ] || printf '%s\n' "$d"; done | paste -sd: -)
-NO_CLAUDE_PATH=$(tr ':' '\n' <<<"$CLEAN_PATH" | while read -r d; do [ -x "$d/claude" ] || printf '%s\n' "$d"; done | paste -sd: -)
+CLEAN_PATH=$(path_without "$PATH" herdr-desk)
+NO_CLAUDE_PATH=$(path_without "$PATH" herdr-desk claude)
 
 # install <machine> <PATH> [extra env...]: run the install script as a person on that machine.
 install() {
@@ -99,5 +85,10 @@ ok "no claude: no profile, pointer printed"
 install t "$E2E/fakebin:$CLEAN_PATH" FAKE_CLAUDE_EXIT=1
 out_has "herdr-desk: Claude Code plugin not installed (claude plugin marketplace add exited 1; see above). $SLASH"
 out_lacks "Claude Code plugin installed"
+# herdr shows a build command's output only when it fails, so the report must also be in the install log.
+LOG="$E2E/t/state/herdr-desk/install.log"
+[ "$(mode "$LOG")" = 600 ] || fail "the install log's mode is $(mode "$LOG")"
+grep -qF "herdr-desk: Claude Code plugin not installed (claude plugin marketplace add exited 1; see above). $SLASH" "$LOG" ||
+  fail "the install log does not report the failed claude step: $(cat "$LOG")"
 ok "a failing claude is reported, install exits 0"
 pass

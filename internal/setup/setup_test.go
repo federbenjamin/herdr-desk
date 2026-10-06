@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -361,7 +362,7 @@ func TestRunReportsNoHerdrAndLeavesAMissingConfigAbsent(t *testing.T) {
 	if _, err := os.Stat(herdrConfig); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("Run() created a config without herdr: stat error = %v; want not exist", err)
 	}
-	line := "herdr: no herdr found and no config file; keys and sidebar row not written"
+	line := `herdr: no herdr found (DESK_HERDR "/nonexistent/desk-tests-never-run-the-real-herdr": stat /nonexistent/desk-tests-never-run-the-real-herdr: no such file or directory) and no config file; keys and sidebar row not written. Once herdr is found, run: herdr-desk setup`
 	if got := strings.Count(out.String(), line); got != 1 {
 		t.Errorf("Run() report count for %q = %d; want 1\n%s", line, got, out.String())
 	}
@@ -372,6 +373,103 @@ func TestRunReportsNoHerdrAndLeavesAMissingConfigAbsent(t *testing.T) {
 	if len(got.Notify.Command) != 0 {
 		t.Errorf("notification argv = %#v; want unset without herdr", got.Notify.Command)
 	}
+}
+
+func TestRunNamesWhyHerdrWasNotFound(t *testing.T) {
+	notExec := filepath.Join(t.TempDir(), "herdr")
+	if err := os.WriteFile(notExec, []byte("#!/bin/sh\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	vcs, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("setup needs git for the scratch root")
+	}
+	vcsOnly := t.TempDir()
+	if err := os.Symlink(vcs, filepath.Join(vcsOnly, filepath.Base(vcs))); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, deskHerdr, path, reason string
+	}{
+		{"relative DESK_HERDR", "herdr", "", `DESK_HERDR "herdr" is not an absolute path`},
+		{"DESK_HERDR not executable", notExec, "", `DESK_HERDR "` + notExec + `" is not an executable file`},
+		{"no herdr on PATH", "", vcsOnly, `exec: "herdr": executable file not found in $PATH`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, getenv := setupPaths(t)
+			t.Setenv("DESK_HERDR", tc.deskHerdr)
+			if tc.path != "" {
+				t.Setenv("PATH", tc.path)
+			}
+			herdrConfig := filepath.Join(getenv("XDG_CONFIG_HOME"), "herdr", "config.toml")
+			var out bytes.Buffer
+			if err := setup.Run(context.Background(), setup.Options{Paths: p, Getenv: getenv, Out: &out}); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			line := "herdr: no herdr found (" + tc.reason + ") and no config file; keys and sidebar row not written. Once herdr is found, run: herdr-desk setup\n"
+			if got := strings.Count(out.String(), line); got != 1 {
+				t.Errorf("Run() report count for %q = %d; want 1\n%s", line, got, out.String())
+			}
+			if _, err := os.Stat(herdrConfig); !errors.Is(err, fs.ErrNotExist) {
+				t.Errorf("Run() created a config without herdr: stat error = %v; want not exist", err)
+			}
+		})
+	}
+}
+
+func TestRunWritesAnExistingHERDRConfigPathFile(t *testing.T) {
+	p, getenv := setupPaths(t)
+	herdrConfig := filepath.Join(t.TempDir(), "custom", "herdr.toml")
+	if err := os.MkdirAll(filepath.Dir(herdrConfig), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	const original = "onboarding = false\n"
+	if err := os.WriteFile(herdrConfig, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	if err := setup.Run(context.Background(), setup.Options{
+		Paths: p,
+		Getenv: func(name string) string {
+			if name == "HERDR_CONFIG_PATH" {
+				return herdrConfig
+			}
+			return getenv(name)
+		},
+		Out: &out,
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	got := readText(t, herdrConfig)
+	for _, fence := range []string{"# >>> herdr-desk keys", "# >>> herdr-desk sidebar"} {
+		if !strings.Contains(got, fence) {
+			t.Errorf("HERDR_CONFIG_PATH file lacks %q:\n%s", fence, got)
+		}
+	}
+	backups, err := filepath.Glob(herdrConfig + ".herdr-desk-bak-*")
+	if err != nil || len(backups) != 1 {
+		t.Fatalf("backups beside HERDR_CONFIG_PATH = %#v, %v; want one", backups, err)
+	}
+	if b := readText(t, backups[0]); b != original {
+		t.Errorf("backup = %q; want %q", b, original)
+	}
+	if !strings.Contains(out.String(), "herdr: backed up to "+backups[0]) {
+		t.Errorf("Run() report does not name the backup %s:\n%s", backups[0], out.String())
+	}
+	defaultDir := filepath.Join(getenv("XDG_CONFIG_HOME"), "herdr")
+	if _, err := os.Stat(defaultDir); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("Run() wrote the XDG herdr folder %q: %v", defaultDir, err)
+	}
+}
+
+func readText(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }
 
 func TestRunNoHerdrDoesNotCreateAMissingConfigEvenWhenHerdrIsAvailable(t *testing.T) {

@@ -31,7 +31,8 @@ herdr plugin install federbenjamin/herdr-desk
 ```
 
 That is the whole install. After herdr shows its preview and you confirm, its build step
-(`scripts/fetch-or-build.sh`) does the rest and prints a line for each thing it wrote or skipped:
+(`scripts/fetch-or-build.sh`) does the rest, with a line in its report (below) for each thing it wrote or
+skipped:
 
 - **The binary.** It downloads the release for your platform, checks its SHA-256 against `checksums.txt`,
   and builds from source with Go when no release matches. When no `herdr-desk` is on your PATH it copies
@@ -43,14 +44,19 @@ That is the whole install. After herdr shows its preview and you confirm, its bu
   (capture) where they are free and adds herdr-desk's sidebar row (see
   [The sidebar row](docs/runner.md#the-sidebar-row)), each in one marked block, copying the file to
   `config.toml.herdr-desk-bak-<time>` first. When herdr has no `config.toml` yet, it creates one holding only
-  those two blocks. It never binds `ctrl+d`.
+  those two blocks; when it cannot find herdr either, it writes nothing there, says why, and says to run
+  `herdr-desk setup` once herdr is found. It never binds `ctrl+d`.
 - **Claude Code.** When `claude` is on your PATH, setup uses the `claude-code` profile, which fills `[agent]`
   so runs and the coordinator start Claude Code, and the step installs the Claude Code plugin
   (`claude plugin marketplace add federbenjamin/herdr-desk`, then `claude plugin install herdr-desk@herdr-desk`).
   With no `claude`, it says so and points to [herdr with another agent](#herdr-with-another-agent).
 
-A step that did not finish is printed with its reason, and the install still succeeds; once it is fixed,
-run `herdr-desk setup` again (with `--profile claude-code` for Claude Code). `herdr-desk setup --force`
+herdr shows a build step's output only when the step fails, and a step that did not finish does not fail
+the install, so the build step also writes its report to `~/.local/state/herdr-desk/install.log`
+(`$XDG_STATE_HOME/herdr-desk/install.log` when that is set); each install replaces it. A step that did not
+finish is reported there with its reason. Once the cause is fixed, `herdr-desk setup` re-runs setup (add
+`--profile claude-code` for Claude Code), and `claude plugin marketplace add federbenjamin/herdr-desk`, then
+`claude plugin install herdr-desk@herdr-desk`, re-runs the Claude Code plugin step. `herdr-desk setup --force`
 replaces another program's binding of `prefix+t` or `prefix+a`. The board's popup is a second entry, the
 action `open-popup`, and has no default key.
 
@@ -81,9 +87,9 @@ task `blocked` with a note naming the pane.
 ### herdr with another agent
 
 Install the plugin as above. With no `claude` on your PATH, the install runs `herdr-desk setup` with no
-profile and prints a pointer here. The profile is what teaches herdr-desk to start your agent, so set the
-`[agent]` values in `~/.config/herdr-desk/config.toml` yourself (with `claude` on your PATH the install filled
-them for Claude Code; replace them):
+profile and its report (`install.log`, above) points here. The profile is what teaches herdr-desk to start
+your agent, so set the `[agent]` values in `~/.config/herdr-desk/config.toml` yourself (with `claude` on
+your PATH the install filled them for Claude Code; replace them):
 
 ```toml
 [agent]

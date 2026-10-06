@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,6 +13,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/federbenjamin/herdr-desk/internal/config"
 )
 
 const (
@@ -54,6 +57,7 @@ if IFS= read -r _; then
 fi
 echo "herdr-desk $*" >>"$COMMAND_LOG"
 echo "setup output"
+echo "setup stderr" >&2
 exit "${DESK_EXIT:-0}"
 `
 
@@ -417,5 +421,139 @@ func TestFetchOrBuildReportsPluginInstallFailureWithoutFailingTheBuild(t *testin
 	}
 	if !strings.Contains(out, "herdr-desk: Claude Code plugin not installed (claude plugin install exited 42; see above). Inside Claude Code: /plugin marketplace add federbenjamin/herdr-desk, then /plugin install herdr-desk@herdr-desk") {
 		t.Errorf("output does not explain the failed plugin install step:\n%s", out)
+	}
+	if strings.Contains(out, "Claude Code plugin installed") {
+		t.Errorf("output says the plugin was installed after its install step failed:\n%s", out)
+	}
+}
+
+// installLog is where the script keeps its report for the rig's env: <state>/install.log, the state folder being the
+// one herdr-desk itself resolves.
+func (r *rig) installLog() string {
+	env := map[string]string{}
+	for _, kv := range r.env {
+		k, v, _ := strings.Cut(kv, "=")
+		env[k] = v
+	}
+	return filepath.Join(config.ResolvePaths(func(k string) string { return env[k] }).StateDir, "install.log")
+}
+
+func TestFetchOrBuildKeepsItsReportInTheInstallLog(t *testing.T) {
+	r := newRig(t)
+	r.release(t)
+	r.addDesk(t)
+	r.addClaude(t)
+	r.env = append(r.env, "DESK_EXIT=31", "CLAUDE_INSTALL_EXIT=42")
+
+	out := r.run(t)
+
+	log := readFile(t, r.installLog())
+	inOrder := []string{
+		"herdr-desk: claude found at ",
+		"setup output",
+		"herdr-desk: setup did not finish (exit 31; see above). After fixing it, run: herdr-desk setup --profile claude-code",
+		"claude plugin install herdr-desk@herdr-desk output",
+		"herdr-desk: Claude Code plugin not installed (claude plugin install exited 42; see above).",
+	}
+	at := 0
+	for _, want := range inOrder {
+		i := strings.Index(log[at:], want)
+		if i < 0 {
+			t.Fatalf("the install log lacks %q after byte %d:\n%s", want, at, log)
+		}
+		at += i + len(want)
+	}
+	if !strings.Contains(log, "setup stderr") {
+		t.Errorf("the install log lacks setup's stderr:\n%s", log)
+	}
+	if !strings.Contains(out, log) {
+		t.Errorf("the output does not hold the install log's report\noutput:\n%s\nlog:\n%s", out, log)
+	}
+	info, err := os.Stat(r.installLog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Errorf("install log mode = %04o, want 0600", got)
+	}
+}
+
+func TestFetchOrBuildInstallLogHoldsOnlyTheLatestInstall(t *testing.T) {
+	r := newRig(t)
+	r.release(t)
+	r.addDesk(t)
+	r.addClaude(t)
+	state := filepath.Join(r.dir, "xdg-state")
+	r.env = append(r.env, "XDG_STATE_HOME="+state, "CLAUDE_MARKETPLACE_EXIT=41")
+	r.run(t)
+	if log := filepath.Join(state, "herdr-desk", "install.log"); r.installLog() != log {
+		t.Fatalf("the rig's install log is %s, want %s under XDG_STATE_HOME", r.installLog(), log)
+	}
+	if !strings.Contains(readFile(t, r.installLog()), "not installed") {
+		t.Fatalf("the first install's log does not report the failed step:\n%s", readFile(t, r.installLog()))
+	}
+
+	r.env = append(r.env, "CLAUDE_MARKETPLACE_EXIT=0")
+	r.run(t)
+
+	log := readFile(t, r.installLog())
+	if strings.Contains(log, "not installed") || !strings.Contains(log, "Claude Code plugin installed") {
+		t.Errorf("the install log does not hold just the latest install:\n%s", log)
+	}
+}
+
+func TestFetchOrBuildReportsWithoutAnInstallLogWhenItCannotWriteOne(t *testing.T) {
+	r := newRig(t)
+	r.release(t)
+	r.addDesk(t)
+	r.addClaude(t)
+	blocker := filepath.Join(r.dir, "state-is-a-file")
+	if err := os.WriteFile(blocker, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r.env = append(r.env, "XDG_STATE_HOME="+blocker, "CLAUDE_INSTALL_EXIT=42")
+
+	out := r.run(t)
+
+	for _, want := range []string{"setup output", "herdr-desk: Claude Code plugin not installed (claude plugin install exited 42; see above)."} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q with no install log:\n%s", want, out)
+		}
+	}
+}
+
+func TestFetchOrBuildInstallsThePluginTheMarketplaceFileNames(t *testing.T) {
+	var market struct {
+		Name    string `json:"name"`
+		Plugins []struct {
+			Name string `json:"name"`
+		} `json:"plugins"`
+	}
+	if err := json.Unmarshal([]byte(readFile(t, filepath.Join("..", ".claude-plugin", "marketplace.json"))), &market); err != nil {
+		t.Fatal(err)
+	}
+	if market.Name == "" || len(market.Plugins) != 1 || market.Plugins[0].Name == "" {
+		t.Fatalf("marketplace.json names no single plugin: %+v", market)
+	}
+	id := market.Plugins[0].Name + "@" + market.Name
+
+	r := newRig(t)
+	r.release(t)
+	r.addDesk(t)
+	r.addClaude(t)
+	out := r.run(t)
+	if !strings.Contains(r.commandLog(t), "claude plugin install "+id+"\n") {
+		t.Errorf("the script did not install %s, the plugin marketplace.json names:\n%s", id, r.commandLog(t))
+	}
+	if !strings.Contains(out, "plugin "+id+").") {
+		t.Errorf("the success line does not name %s:\n%s", id, out)
+	}
+
+	r = newRig(t)
+	r.release(t)
+	r.addDesk(t)
+	out = r.run(t)
+	if !strings.Contains(out, "/plugin install "+id) {
+		t.Errorf("the slash-command pointer does not name %s:\n%s", id, out)
 	}
 }

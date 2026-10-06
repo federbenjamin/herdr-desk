@@ -30,7 +30,8 @@ pass() { say "E2E PASS"; }
 ok() { say "ok: $*"; }
 
 # machine_env <machine>: set MACHINE_ENV to the env argv a person's command on that machine runs under: no agent
-# session or run, no HERDR_CONFIG_PATH (setup would write that file), and the machine's four folders. on, term_start, and the event hook's command build from it.
+# session or run, no HERDR_CONFIG_PATH (setup would write that file), and the machine's four folders. on,
+# term_start, and the event hook's command build from it.
 machine_env() {
   local m=$1
   MACHINE_ENV=(env -u DESK_SESSION -u DESK_RUN -u DESK_HOOKS -u CLAUDE_CODE_SESSION_ID -u HERDR_CONFIG_PATH
@@ -201,6 +202,45 @@ build() {
   mkdir -p "$BIN"
   (cd "$REPO" && CGO_ENABLED=0 go build -o "$BIN/herdr-desk" ./cmd/herdr-desk) || fail "go build ./cmd/herdr-desk"
   export PATH="$BIN:$PATH"
+}
+
+# release_fixture <version>: a release of this build's herdr-desk for this machine, as the install script downloads
+# it: the archive and its checksums.txt in $E2E/rel/v<version>. Sets REL to that folder and ASSET to the archive's name.
+release_fixture() {
+  local v=$1 os arch
+  os=$(uname -s | tr '[:upper:]' '[:lower:]')
+  case "$(uname -m)" in
+    arm64 | aarch64) arch=arm64 ;;
+    x86_64 | amd64) arch=amd64 ;;
+    *) fail "unmapped arch $(uname -m)" ;;
+  esac
+  ASSET="herdr-desk_${v}_${os}_${arch}.tar.gz"
+  REL="$E2E/rel/v$v"
+  mkdir -p "$REL"
+  tar -czf "$REL/$ASSET" -C "$BIN" herdr-desk
+  (cd "$REL" && shasum -a 256 "$ASSET" >checksums.txt)
+}
+
+# path_without <path> <name...>: print the path with every folder dropped that holds an executable of any of the
+# names.
+path_without() {
+  local path=$1 d n keep
+  shift
+  tr ':' '\n' <<<"$path" | while read -r d; do
+    keep=1
+    for n in "$@"; do
+      if [ -x "$d/$n" ]; then keep=""; fi
+    done
+    if [ -n "$keep" ]; then printf '%s\n' "$d"; fi
+  done | paste -sd: -
+}
+
+# stub_herdr: write an executable file that is never run and print its path. Set as DESK_HERDR, herdr counts as found.
+stub_herdr() {
+  local f="$E2E/stub-herdr"
+  printf '#!/bin/sh\nexit 0\n' >"$f"
+  chmod +x "$f"
+  printf '%s\n' "$f"
 }
 
 # run <want-exit> <command...>: run it, print it with its output and exit code, and fail on any

@@ -111,6 +111,8 @@ a timer, so a row shows when a run started, not how long it has run, and the car
 
 `herdr-desk setup` writes the herdr config block that shows the token, in a fenced block, backing the file
 up first as it does for keys. When herdr is found and has no config file, setup creates one holding only
-herdr-desk's keys and sidebar blocks (`HERDR_CONFIG_PATH`, when set, names the file). When your herdr config already has its own `[ui.sidebar.agents]` table, setup
-leaves it alone and prints the row to add by hand. A herdr config that does not parse as TOML is left alone too,
-and setup says so.
+herdr-desk's keys and sidebar blocks (`HERDR_CONFIG_PATH`, when set, names the file). When your herdr config
+already has its own `[ui.sidebar.agents]` table, setup leaves that table alone and prints the row to add by
+hand. A herdr config that does not parse as TOML gets no sidebar block, and setup says so with the parse
+error and the row to add. It still gets the keys block where the keys are free (setup places that block by
+text, not by parsing), after the backup.

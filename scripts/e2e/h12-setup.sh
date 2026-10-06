@@ -87,14 +87,13 @@ say "no ctrl+d ok"
 
 run 0 on bare herdr-desk setup
 [ ! -e "$E2E/bare/config/herdr" ] || fail "setup created a herdr config with no herdr found"
-out_has "herdr: no herdr found and no config file; keys and sidebar row not written"
+out_has "herdr: no herdr found (DESK_HERDR \"$DESK_HERDR\": "
+out_has "and no config file; keys and sidebar row not written. Once herdr is found, run: herdr-desk setup"
 say "no herdr config, no herdr: left alone ok"
 
-# herdr counts as found through DESK_HERDR: an executable file that is never run.
-printf '#!/bin/sh\nexit 0\n' >"$E2E/stub-herdr"
-chmod +x "$E2E/stub-herdr"
+STUB_HERDR=$(stub_herdr)
 NEW="$E2E/n/config/herdr/config.toml"
-run 0 on n env DESK_HERDR="$E2E/stub-herdr" herdr-desk setup
+run 0 on n env DESK_HERDR="$STUB_HERDR" herdr-desk setup
 [ -f "$NEW" ] || fail "setup did not create herdr's config with herdr found"
 [ "$(mode "$NEW")" = 600 ] || fail "the created herdr config's mode is $(mode "$NEW")"
 for fence in '# >>> herdr-desk keys' '# <<< herdr-desk keys' '# >>> herdr-desk sidebar' '# <<< herdr-desk sidebar'; do
@@ -105,7 +104,7 @@ out_has "herdr: $NEW created"
 say "no herdr config, herdr found: created ok"
 
 cp "$NEW" "$E2E/new.before"
-run 0 on n env DESK_HERDR="$E2E/stub-herdr" herdr-desk setup
+run 0 on n env DESK_HERDR="$STUB_HERDR" herdr-desk setup
 out_has "herdr: $NEW unchanged"
 cmp -s "$NEW" "$E2E/new.before" || fail "a second setup changed the created herdr config"
 if ls "$NEW".herdr-desk-bak-* >/dev/null 2>&1; then fail "a backup was written for the created herdr config"; fi
