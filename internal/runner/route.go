@@ -56,7 +56,7 @@ func Resolve(t model.Task, given store.RunRoute, roots []config.Root, models []s
 	}
 	if out.Isolation == "" {
 		out.Isolation = "in-place"
-		if isWorkTree(context.Background(), out.Root) {
+		if ok, _ := isWorkTree(context.Background(), out.Root); ok {
 			out.Isolation = "worktree"
 		}
 	}

@@ -302,15 +302,23 @@ func (r *Runner) repairStarted(ctx context.Context) {
 
 // startedBy reports whether the newest status write in history is the one that started the run.
 func startedBy(history []model.Event, run int64) bool {
+	i, st, ok := newestStatusWrite(history)
+	return ok && history[i].Run == run && st == model.StatusStarted
+}
+
+// newestStatusWrite returns the index and status of the newest event in history that writes a status: a set event
+// whose patch has one, or a task event, whose payload carries its status under the same key. ok is false, with i
+// -1, when no event does.
+func newestStatusWrite(history []model.Event) (i int, st model.Status, ok bool) {
 	for i := len(history) - 1; i >= 0; i-- {
 		e := history[i]
 		var p model.Patch
 		if (e.Kind != model.KindSet && e.Kind != model.KindTask) || json.Unmarshal(e.Data, &p) != nil || p.Status == nil {
 			continue
 		}
-		return e.Run == run && *p.Status == model.StatusStarted
+		return i, *p.Status, true
 	}
-	return false
+	return -1, "", false
 }
 
 // fail sets the run failed while it is in state from, with msg as its reason, then notes msg on its task and sets

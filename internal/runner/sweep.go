@@ -4,12 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/federbenjamin/herdr-desk/internal/gitcmd"
 	"github.com/federbenjamin/herdr-desk/internal/model"
@@ -62,8 +63,10 @@ func (r *Runner) sweepRunFiles(ctx context.Context) {
 
 // sweepWorktrees removes the worktree of each done task, archived or not, whose isolation is worktree and whose
 // newest run is not live, with `git worktree remove` and no --force. A tree git refuses to remove (dirty,
-// locked, or holding submodules) stays, with one runner note on the task per time it was set done. A missing
-// folder, or one git does not own as a work tree, is left alone. The task's branch is kept.
+// locked, or holding submodules) stays, with one runner note on the task per time it was set done, whatever git's
+// reason on later ticks. A missing folder, or one git says is not a work tree of its own, is left alone; a folder
+// that cannot be read, or that git cannot answer for, is logged on every tick and noted nowhere. The task's branch
+// is kept.
 func (r *Runner) sweepWorktrees(ctx context.Context) {
 	done := []model.Status{model.StatusDone}
 	var tasks []model.Task
@@ -80,7 +83,15 @@ func (r *Runner) sweepWorktrees(ctx context.Context) {
 			continue
 		}
 		dir := worktreeDir(t.Root, t.Number)
-		if _, err := os.Stat(dir); err != nil {
+		ours, err := isWorkTree(ctx, dir)
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			r.logErr("T%d: worktree %s left alone, it could not be checked", t.Number, dir, err)
+			continue
+		}
+		if !ours {
 			continue
 		}
 		run, ok, err := r.o.Store.CurrentRun(ctx, t.Number)
@@ -89,9 +100,6 @@ func (r *Runner) sweepWorktrees(ctx context.Context) {
 			continue
 		}
 		if ok && model.RunLive(run.State) {
-			continue
-		}
-		if !isWorkTree(ctx, dir) {
 			continue
 		}
 		if _, err := gitcmd.Run(ctx, t.Root, gitTimeout, "worktree", "remove", dir); err != nil {
@@ -105,41 +113,39 @@ func (r *Runner) sweepWorktrees(ctx context.Context) {
 	}
 }
 
-// noteKeptWorktree notes on task that git would not remove its worktree dir, unless the same note was written
-// since the task was last set done.
+// keptWorktreeNote is the start of the note that says git would not remove dir; git's reason and what to do follow.
+func keptWorktreeNote(dir string) string {
+	return "worktree " + dir + " was not removed: "
+}
+
+// noteKeptWorktree notes on task that git would not remove its worktree dir, unless a runner note on keeping dir
+// was written since the task's newest status write, its write to done: git's reason may change between ticks.
 func (r *Runner) noteKeptWorktree(ctx context.Context, task int, dir string, gitErr error) {
-	why := gitErr.Error()
-	var ge *gitcmd.Error
-	if errors.As(gitErr, &ge) && ge.Stderr != "" {
-		why = ge.Stderr
-	}
-	text := fmt.Sprintf("worktree %s was not removed: %s; remove it by hand once its changes are safe", dir, clip(why))
 	d, err := r.o.Store.GetTask(ctx, task)
 	if err != nil {
 		r.logErr("T%d: read the task", task, err)
 		return
 	}
-	if notedSinceDone(d.History, text) {
+	if keptNoted(d.History, dir) {
 		return
 	}
-	r.note(ctx, store.Actor{}, task, []string{model.TagRunner}, text)
+	why := gitErr.Error()
+	var ge *gitcmd.Error
+	if errors.As(gitErr, &ge) && ge.Stderr != "" {
+		why = ge.Stderr
+	}
+	r.note(ctx, store.Actor{}, task, []string{model.TagRunner},
+		keptWorktreeNote(dir)+clip(why)+"; remove it by hand once its changes are safe")
 }
 
-// notedSinceDone reports whether history holds a note reading text after its newest status write to done.
-func notedSinceDone(history []model.Event, text string) bool {
-	for i := len(history) - 1; i >= 0; i-- {
-		e := history[i]
-		switch e.Kind {
-		case model.KindNote:
-			var n model.NoteData
-			if json.Unmarshal(e.Data, &n) == nil && n.Text == text {
-				return true
-			}
-		case model.KindSet, model.KindTask:
-			var p model.Patch
-			if json.Unmarshal(e.Data, &p) == nil && p.Status != nil && *p.Status == model.StatusDone {
-				return false
-			}
+// keptNoted reports whether history holds a runner note on keeping dir after its newest status write.
+func keptNoted(history []model.Event, dir string) bool {
+	i, _, _ := newestStatusWrite(history)
+	for _, e := range history[i+1:] {
+		var n model.NoteData
+		if e.Kind == model.KindNote && slices.Contains(e.Tags, model.TagRunner) && json.Unmarshal(e.Data, &n) == nil &&
+			strings.HasPrefix(n.Text, keptWorktreeNote(dir)) {
+			return true
 		}
 	}
 	return false

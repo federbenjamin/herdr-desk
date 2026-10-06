@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -164,7 +165,7 @@ func (r *Runner) workdir(ctx context.Context, t model.Task, run model.Run) (stri
 		return root, nil
 	}
 	dir := worktreeDir(root, t.Number)
-	if isWorkTree(ctx, dir) {
+	if ok, _ := isWorkTree(ctx, dir); ok {
 		return dir, nil
 	}
 	branch := fmt.Sprintf("desk/T%d", t.Number)
@@ -187,18 +188,32 @@ func worktreeDir(root string, task int) string {
 	return filepath.Join(filepath.Dir(root), filepath.Base(root)+"-T"+strconv.Itoa(task))
 }
 
-// isWorkTree reports whether dir is the top of a git work tree.
-func isWorkTree(ctx context.Context, dir string) bool {
+// isWorkTree reports whether dir is the top of a git work tree. A missing dir, a dir git says is in no repository,
+// and a dir inside a work tree it is not the top of are false with no error; a dir that could not be read, or that
+// git could not answer for, is the error.
+func isWorkTree(ctx context.Context, dir string) (bool, error) {
 	if _, err := os.Stat(dir); err != nil {
-		return false
+		if errors.Is(err, fs.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
 	}
 	top, err := gitcmd.Run(ctx, dir, gitTimeout, "rev-parse", "--show-toplevel")
-	if err != nil {
-		return false
+	if gitcmd.IsNotRepo(err) {
+		return false, nil
 	}
-	a, errA := filepath.EvalSymlinks(top)
-	b, errB := filepath.EvalSymlinks(dir)
-	return errA == nil && errB == nil && a == b
+	if err != nil {
+		return false, err
+	}
+	a, err := filepath.EvalSymlinks(top)
+	if err != nil {
+		return false, err
+	}
+	b, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return false, err
+	}
+	return a == b, nil
 }
 
 // newUUID returns a random version 4 UUID.
