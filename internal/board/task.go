@@ -447,6 +447,13 @@ func (s State) setText(ev model.Event, p model.Patch) string {
 		parts = append(parts, "model "+*p.Model)
 	}
 	switch {
+	case p.FirstMessage == nil:
+	case *p.FirstMessage == "":
+		parts = append(parts, "first_message cleared")
+	default:
+		parts = append(parts, "first_message "+*p.FirstMessage)
+	}
+	switch {
 	case p.Archived == nil:
 	case *p.Archived:
 		parts = append(parts, "archived")

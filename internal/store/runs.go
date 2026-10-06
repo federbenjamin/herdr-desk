@@ -234,6 +234,7 @@ type RunCaps struct {
 func (s *Store) StartRun(ctx context.Context, task int, route RunRoute, caps RunCaps) (model.Run, error) {
 	var run, live model.Run
 	insert := write{
+		scan: []string{route.FirstMessage},
 		prepare: func(tx *sql.Tx) (int, any, error) {
 			cur, err := readTask(ctx, tx, task)
 			if err != nil {

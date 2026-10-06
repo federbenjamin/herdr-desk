@@ -46,8 +46,9 @@ const (
 const maxBody = 1 << 20
 
 // WireVersion is the version of RPCRequest and RPCResponse this binary speaks. A home answers only a request of its
-// own version: a client and its home run the same herdr-desk.
-const WireVersion = 1
+// own version: a client and its home run the same herdr-desk. A change to a method's params or result that the other
+// version would decode into something else bumps it: version 2 answers tasks.steps with StepResult, not a Task.
+const WireVersion = 2
 
 // RPCRequest is one call: the wire version, a method, and its params.
 type RPCRequest struct {

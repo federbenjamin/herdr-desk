@@ -31,7 +31,7 @@ func rpcOnce(t *testing.T, m *testutil.Machine, stdin string) (commandResult, ap
 
 func TestRPCAnswersAStatusRequestWithOneJSONLineOnTheHome(t *testing.T) {
 	home := testutil.StartHome(t, testutil.HomeOptions{})
-	r, resp := rpcOnce(t, home.Machine, `{"version":1,"method":"status","params":null}`)
+	r, resp := rpcOnce(t, home.Machine, `{"version":2,"method":"status","params":null}`)
 	if r.exit != 0 || r.stderr != "" {
 		t.Fatalf("rpc status = (%d, %q, %q); want exit 0 and a quiet stderr", r.exit, r.stdout, r.stderr)
 	}
@@ -50,7 +50,7 @@ func TestRPCExitsZeroWheneverItWroteAResponseEvenAnErrorOne(t *testing.T) {
 	for _, tc := range []struct {
 		name, stdin string
 	}{
-		{"an unknown method", `{"version":1,"method":"no.such.method","params":null}`},
+		{"an unknown method", `{"version":2,"method":"no.such.method","params":null}`},
 		{"stdin that is not JSON", `not json`},
 		{"empty stdin", ``},
 	} {
@@ -68,7 +68,7 @@ func TestRPCExitsZeroWheneverItWroteAResponseEvenAnErrorOne(t *testing.T) {
 
 func TestRPCOnAClientExitsTwoNamingTheHomeAndWritesNoResponse(t *testing.T) {
 	client := testutil.NewClientMachine(t, testutil.StartHome(t, testutil.HomeOptions{}))
-	r := runDeskWithEnv(t, client, t.TempDir(), []string{"rpc"}, `{"version":1,"method":"status","params":null}`, nil)
+	r := runDeskWithEnv(t, client, t.TempDir(), []string{"rpc"}, `{"version":2,"method":"status","params":null}`, nil)
 	want := "herdr-desk rpc: this machine is a client of home; rpc runs on the home"
 	if r.exit != 2 || r.stdout != "" || !strings.Contains(r.stderr, want) {
 		t.Fatalf("rpc on a client = (%d, %q, %q); want exit 2, empty stdout, stderr containing %q", r.exit, r.stdout, r.stderr, want)
@@ -77,7 +77,7 @@ func TestRPCOnAClientExitsTwoNamingTheHomeAndWritesNoResponse(t *testing.T) {
 
 func TestRPCTakesNoArguments(t *testing.T) {
 	home := testutil.StartHome(t, testutil.HomeOptions{})
-	r := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"rpc", "status"}, `{"version":1,"method":"status"}`, nil)
+	r := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"rpc", "status"}, `{"version":2,"method":"status"}`, nil)
 	if r.exit != 2 || r.stdout != "" {
 		t.Fatalf("rpc status = (%d, %q, %q); want exit 2", r.exit, r.stdout, r.stderr)
 	}

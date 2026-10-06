@@ -34,13 +34,11 @@ func FirstMessage(d store.TaskDetail, handBack bool) string {
 		}
 		head = append(head, strings.Join(lines, "\n"))
 	}
-	var tail []string
 	end := "\n"
 	if handBack {
 		back := fmt.Sprintf("When the work is finished, hand the task back: run `herdr-desk set T%[1]d review --ref <a file or PR that shows the work>`. "+
 			"Add `--merged` when that PR is merged. If you cannot finish, record what you need with `herdr-desk note --task T%[1]d \"<what you need>\"`, "+
 			"then run `herdr-desk set T%[1]d blocked`. Finish with review or blocked.", t.Number)
-		tail = []string{back}
 		end = "\n\n" + back + "\n"
 	}
 
@@ -60,7 +58,7 @@ func FirstMessage(d store.TaskDetail, handBack bool) string {
 			}
 			parts = append(parts, strings.Join(append(lines, kept...), "\n"))
 		}
-		return strings.Join(append(parts, tail...), "\n\n") + "\n"
+		return strings.Join(parts, "\n\n") + end
 	}
 	msg := build(0)
 	if len(msg) > maxMessage {
@@ -149,6 +147,7 @@ func patchFields(p model.Patch) []string {
 		{"model", p.Model != nil},
 		{"first_message", p.FirstMessage != nil},
 		{"archived", p.Archived != nil},
+		{"merged", p.Merged},
 	} {
 		if f.set {
 			names = append(names, f.name)

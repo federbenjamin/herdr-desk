@@ -90,3 +90,37 @@ func TestW5ResolveRejectsInvalidFirstMessageAtEveryTier(t *testing.T) {
 		})
 	}
 }
+
+// A run's first message is secret-scanned before its start writes anything, from whichever tier it resolved: a
+// refused start leaves no run, no event, and the task as it was.
+func TestStartRefusesAFirstMessageHoldingASecretAndWritesNothing(t *testing.T) {
+	secret := "/go AKIA1234567890ABCDEF {" + model.TaskFile + "}"
+	for _, tt := range []struct {
+		name  string
+		given string
+		root  string
+	}{
+		{name: "the flag", given: secret},
+		{name: "the root", root: secret},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFixture(t, "", "self")
+			f.config.Roots[0].FirstMessage = tt.root
+			task := f.armRoute("scan the template", f.root, "self")
+			before := len(f.task(task.Number).History)
+
+			_, err := f.runner().Start(f.ctx, store.Actor{}, task.Number, store.RunRoute{Root: f.root, FirstMessage: tt.given})
+
+			if r, ok := model.AsRefusal(err); !ok || r.Code != model.CodeSecretDetected {
+				t.Fatalf("Start() error = %v, want secret-detected", err)
+			}
+			if runs := f.runs(); len(runs) != 0 {
+				t.Fatalf("runs after the refused start = %#v, want none", runs)
+			}
+			if d := f.task(task.Number); len(d.History) != before || d.Task.Status != model.StatusReady {
+				t.Fatalf("T%d after the refused start: %d events (want %d), status %s (want ready)",
+					task.Number, len(d.History), before, d.Task.Status)
+			}
+		})
+	}
+}
