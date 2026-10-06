@@ -9,8 +9,7 @@ build
 use_fake_herdr
 APP="$WORK/app"
 mkdir -p "$APP"
-add_root "$APP" self "any number of runs may share it"
-RC_ROOTS+="first_message = '/go {task_file}'"$'\n\n'
+add_root "$APP" self "any number of runs may share it" "first_message = '/go {task_file}'"
 RC_CAP=2
 runner_up home
 ticker_up home
@@ -28,7 +27,6 @@ run 0 on home herdr-desk run start T2 --root "$APP"
 wait_run 2 running
 wait_file "$RUNS/run-2.md"
 
-gone() { [ ! -e "$1" ]; }
 wait_long 90 "run-1.md to be removed" gone "$RUNS/run-1.md"
 ok "run 1's file gone $(elapsed "$ENDED") s after it ended (under 90)"
 [ -s "$RUNS/run-2.md" ] || fail "run 2 is $(run_field 2 state) and its file $RUNS/run-2.md is gone"

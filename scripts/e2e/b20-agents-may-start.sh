@@ -11,8 +11,7 @@ CLOSED="$WORK/closed"
 OPEN="$WORK/open"
 mkdir -p "$CLOSED" "$OPEN"
 add_root "$CLOSED" self "agents may not start runs here"
-add_root "$OPEN" self "agents may start runs here"
-RC_ROOTS+="agents_may_start = true"$'\n\n'
+add_root "$OPEN" self "agents may start runs here" "agents_may_start = true"
 RC_CAP=3
 runner_up home
 

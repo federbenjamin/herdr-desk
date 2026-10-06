@@ -10,8 +10,7 @@ build
 use_fake_herdr
 PROJ="$WORK/proj"
 mkdir -p "$PROJ"
-add_root "$PROJ" self "a root with a template"
-RC_ROOTS+='first_message = "/root {task_file}"'$'\n\n'
+add_root "$PROJ" self "a root with a template" 'first_message = "/root {task_file}"'
 RC_CAP=3
 runner_up home
 RUNS="$E2E/home/state/herdr-desk/runs"

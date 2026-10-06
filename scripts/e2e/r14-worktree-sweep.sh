@@ -9,14 +9,12 @@ build
 use_fake_herdr
 APP="$WORK/app"
 make_repo "$APP"
-add_root "$APP" worktree "a git repository"
-RC_ROOTS+="first_message = '/go {task_file}'"$'\n\n'
+add_root "$APP" worktree "a git repository" "first_message = '/go {task_file}'"
 RC_CAP=2
 runner_up home
 ticker_up home
 RUNS="$E2E/home/state/herdr-desk/runs"
 
-gone() { [ ! -e "$1" ]; }
 kept_notes() { task_notes 2 | grep -c "was not removed"; }
 
 # start_back <task number>: add the task, start it on APP, and wait until its worker hands it back.
@@ -43,11 +41,11 @@ wait_note 2 "worktree $WORK/app-T2 was not removed: "
 [ -f "$WORK/app-T2/untracked.txt" ] || fail "T2's untracked file is gone"
 ok "dirty worktree kept with a note"
 
-# One more tick: T4's run file and its clean worktree both go in it. T4 sorts after T2, so the tick has swept T2 too.
+# One more tick: the first tick after T4 is done removes T4's clean worktree. T4 sorts after T2, so that tick has swept
+# T2 too. A tick between T4's run ending and its done write removes only run-4.md, so the wait spans a whole tick.
 start_back 4
 run 0 on home herdr-desk set T4 "done"
-wait_long 90 "run-4.md to be removed" gone "$RUNS/run-4.md"
-wait_long 15 "T4's worktree to be removed" gone "$WORK/app-T4"
+wait_long 90 "T4's worktree to be removed" gone "$WORK/app-T4"
 [ -f "$WORK/app-T2/untracked.txt" ] || fail "T2's worktree is gone after another tick"
 [ "$(kept_notes)" = 1 ] || fail "T2 has $(kept_notes) notes holding 'was not removed': $(task_notes 2)"
 ok "one note after another tick"
