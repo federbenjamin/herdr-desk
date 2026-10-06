@@ -32,8 +32,14 @@ func TestRootAgentsMayStartLoadsSavesOnlyTrueAndKeepsTheWarning(t *testing.T) {
 		t.Fatalf("read saved config: %v", err)
 	}
 	text := string(saved)
-	if got := strings.Count(text, "agents_may_start = true"); got != 1 {
-		t.Errorf("saved agents_may_start entries = %d, want one true entry:\n%s", got, text)
+	trueEntries := 0
+	for _, line := range strings.Split(text, "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "#") && strings.TrimSpace(line) == "agents_may_start = true" {
+			trueEntries++
+		}
+	}
+	if trueEntries != 1 {
+		t.Errorf("saved agents_may_start entries = %d, want one true entry:\n%s", trueEntries, text)
 	}
 	if strings.Contains(text, "agents_may_start = false") {
 		t.Errorf("saved config writes the false opt-in:\n%s", text)
