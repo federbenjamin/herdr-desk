@@ -53,11 +53,22 @@ type Runner struct {
 	OnMerged      string `toml:"on_merged"` // "review" | "done"
 }
 
-// Root: written by `herdr-desk roots`; read by run start's route.
+// Root: written by `herdr-desk roots`; read by run start's route. FirstMessage is written by hand and read by the
+// worker: when set, it is the worker's {message}, with {task_file} replaced by the path of a file that holds the first
+// message the worker would otherwise get.
 type Root struct {
-	Path      string `toml:"path"`
-	About     string `toml:"about"`
-	Isolation string `toml:"isolation"` // "" | self | worktree | in-place
+	Path         string `toml:"path"`
+	About        string `toml:"about"`
+	Isolation    string `toml:"isolation"` // "" | self | worktree | in-place
+	FirstMessage string `toml:"first_message,omitempty"`
+}
+
+// taskFile is the one placeholder of a root's first_message.
+const taskFile = "task_file"
+
+// Message is the root's first_message with {task_file} replaced by path, each placeholder in one pass.
+func (r Root) Message(path string) string {
+	return Expand([]string{r.FirstMessage}, map[string]string{taskFile: path})[0]
 }
 
 // Agent: Worker, Coordinator, and Models are written by a profile and read by the runner. SessionEnv is read by
@@ -237,10 +248,10 @@ func LockHeld(path string) (bool, error) {
 	return false, unix.Flock(int(f.Fd()), unix.LOCK_UN)
 }
 
-// Validate checks on_merged, start_runs, that the runner's three limits are at least 1, each root's isolation, and
-// that client.home can be an ssh target: it is one argv element of the [client] command, so it may not start with
-// "-", hold whitespace or a control character, or be over 255 bytes. An empty on_merged reads as "review", an empty
-// start_runs as "propose".
+// Validate checks on_merged, start_runs, that the runner's three limits are at least 1, each root's isolation, that a
+// root's first_message is empty or holds {task_file}, and that client.home can be an ssh target: it is one argv
+// element of the [client] command, so it may not start with "-", hold whitespace or a control character, or be over
+// 255 bytes. An empty on_merged reads as "review", an empty start_runs as "propose".
 func (c Config) Validate() error {
 	if _, ok := model.OnMergedStatus(c.Runner.OnMerged); !ok {
 		return fmt.Errorf("runner.on_merged must be \"review\" or \"done\", not %q", c.Runner.OnMerged)
@@ -268,6 +279,9 @@ func (c Config) Validate() error {
 		}
 		if !model.ValidIsolation(r.Isolation) {
 			return fmt.Errorf("roots %s: isolation must be self, worktree, or in-place, not %q", r.Path, r.Isolation)
+		}
+		if r.FirstMessage != "" && !strings.Contains(r.FirstMessage, "{"+taskFile+"}") {
+			return fmt.Errorf("roots %s: first_message must hold {%s}, the path of the task's file, or the worker gets no task", r.Path, taskFile)
 		}
 	}
 	if err := checkSSHTarget(c.Client.Home); err != nil {

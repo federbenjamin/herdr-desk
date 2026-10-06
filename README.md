@@ -325,6 +325,7 @@ start_runs = "propose" # propose | auto
 path = "~/code/example"
 about = "the app; runs its own build pipeline"
 isolation = "self"     # self | worktree | in-place; unset = worktree in a git work tree, else in-place
+first_message = "/build {task_file}" # optional; the worker's first message; see "The spawn"
 
 [agent]           # written by a profile; see the install section
 worker = []
@@ -361,7 +362,8 @@ A root named `scratch` (`$XDG_DATA_HOME/herdr-desk/scratch`, a git repo) is alwa
 no project has a root to run in.
 
 State lives in `$XDG_STATE_HOME/herdr-desk` (`ticker.lock`, `ticker.json`, `herdr-desk.log`, `backup.lock`,
-the outbox, the runner's pause file, session views, and on a client the ssh control socket);
+the outbox, the runner's pause file, session views, each run's first-message file under `runs/`, and on a
+client the ssh control socket);
 the store is one SQLite file under `$XDG_DATA_HOME/herdr-desk`; the offline snapshot is under
 `$XDG_CACHE_HOME/herdr-desk`.
 
@@ -433,11 +435,15 @@ labelled `desk T<n>` without taking focus, with `DESK_TASK`, `DESK_SESSION`, `DE
 four XDG variables of the home's folders, so the `herdr-desk` in the pane uses the same store. The pane runs
 `exec <the herdr-desk binary> worker`. `herdr-desk worker` builds the worker's first message from the task
 (title, notes, steps, history, and how to hand back) and replaces itself with the `[agent] worker` command:
-`{model}` is the run's model, `{session}` its session id, `{message}` the first message. No task text ever
-reaches a shell. A note records the workspace and pane, and `[notify] command` runs once per spawn. A worker
-finishes with `review` or `blocked` (`herdr-desk set T<n> review` or `blocked`), which ends its run. Every
-write it makes carries its run id, and a write from a run that is not the task's newest is refused with
-`stale-run`.
+`{model}` is the run's model, `{session}` its session id, `{message}` the first message. A root whose work
+runs through its own command sets `first_message`, a template that must hold `{task_file}`: the worker then
+writes the first message to `runs/run-<id>.md` in the state folder (0600) and `{message}` is the template with
+`{task_file}` replaced by that file's path, so `first_message = "/build {task_file}"` starts the agent on
+`/build` with the task's file. A file it cannot write blocks the task, as a worker command that cannot start
+does. No task text ever reaches a shell. A note records the workspace and pane, and `[notify] command` runs
+once per spawn. A worker finishes with `review` or `blocked` (`herdr-desk set T<n> review` or `blocked`),
+which ends its run. Every write it makes carries its run id, and a write from a run that is not the task's
+newest is refused with `stale-run`.
 
 ### Tracking
 

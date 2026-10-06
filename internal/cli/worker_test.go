@@ -115,19 +115,96 @@ func TestWorkerExpandsOneMessageArgumentAndExecutesTheResolvedProgram(t *testing
 	if strings.Count(strings.Join(gotArgv, "\x00"), message) != 1 || !strings.Contains(message, "title {session} --flag") {
 		t.Fatalf("worker message was split or re-expanded: argv=%#v; message=%q", gotArgv, message)
 	}
+	if _, err := os.Stat(home.Paths.RunMessage(run.ID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("worker wrote %s for a root with no first_message: stat error = %v", home.Paths.RunMessage(run.ID), err)
+	}
+}
+
+// setFirstMessage sets first_message on the configured root at path.
+func setFirstMessage(t *testing.T, home *testutil.Home, path, template string) {
+	t.Helper()
+	cfg, err := config.Load(home.Paths.ConfigFile())
+	if err != nil {
+		t.Fatalf("load home config: %v", err)
+	}
+	for i := range cfg.Roots {
+		if cfg.Roots[i].Path == path {
+			cfg.Roots[i].FirstMessage = template
+		}
+	}
+	if err := cfg.Save(home.Paths.ConfigFile()); err != nil {
+		t.Fatalf("save home config: %v", err)
+	}
+}
+
+func TestWorkerSendsTheRootsFirstMessageNamingAFileThatHoldsTheTask(t *testing.T) {
+	bin := t.TempDir()
+	stub := filepath.Join(bin, "worker-stub")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatalf("write worker stub: %v", err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	workerTemplate := []string{"worker-stub", "--model={model}", "{message}"}
+	home, root := runnerHome(t, workerTemplate)
+	setFirstMessage(t, home, root, "/build {task_file}")
+	task, run := startLiveRun(t, home, root, "title {task_file} --flag")
+	detail, err := home.Client().GetTask(context.Background(), task)
+	if err != nil {
+		t.Fatalf("get worker task: %v", err)
+	}
+	file := home.Paths.RunMessage(run.ID)
+	var gotArgv []string
+	result := runDeskWithExec(t, home.Machine, []string{"worker"}, map[string]string{
+		"DESK_RUN":     fmt.Sprint(run.ID),
+		"DESK_TASK":    fmt.Sprintf("T%d", task),
+		"DESK_SESSION": run.Session,
+	}, func(_ string, argv []string) error {
+		gotArgv = append([]string(nil), argv...)
+		return nil
+	})
+	requireSuccess(t, result)
+	if want := []string{"worker-stub", "--model=" + run.Model, "/build " + file}; !reflect.DeepEqual(gotArgv, want) {
+		t.Fatalf("Exec argv = %#v, want %#v", gotArgv, want)
+	}
+	got, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatalf("read the run's first message: %v", err)
+	}
+	if want := worker.FirstMessage(detail); string(got) != want {
+		t.Fatalf("%s holds %q, want worker.FirstMessage %q", file, got, want)
+	}
+	for path, want := range map[string]os.FileMode{file: 0o600, filepath.Dir(file): 0o700} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("stat %s: %v", path, err)
+		}
+		if info.Mode().Perm() != want {
+			t.Errorf("%s mode = %04o, want %04o", path, info.Mode().Perm(), want)
+		}
+	}
 }
 
 func TestWorkerBlocksTheTaskWhenItsTemplateCannotStart(t *testing.T) {
 	for _, test := range []struct {
-		name   string
-		worker []string
-		want   string
+		name    string
+		worker  []string
+		prepare func(t *testing.T, home *testutil.Home, root string)
+		want    string
 	}{
 		{name: "empty template", worker: nil, want: "worker: cannot start"},
 		{name: "missing executable", worker: []string{"not-on-path"}, want: `worker: cannot start not-on-path: exec: "not-on-path": executable file not found in $PATH`},
+		{name: "first message cannot be written", worker: []string{"sh"}, prepare: func(t *testing.T, home *testutil.Home, root string) {
+			setFirstMessage(t, home, root, "/build {task_file}")
+			if err := os.WriteFile(filepath.Dir(home.Paths.RunMessage(1)), nil, 0o600); err != nil {
+				t.Fatalf("put a file where the runs folder goes: %v", err)
+			}
+		}, want: "worker: cannot write the first message of run"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			home, root := runnerHome(t, test.worker)
+			if test.prepare != nil {
+				test.prepare(t, home, root)
+			}
 			task, run := startLiveRun(t, home, root, "cannot start worker")
 			called := false
 			result := runDeskWithExec(t, home.Machine, []string{"worker"}, map[string]string{

@@ -89,6 +89,30 @@ func TestSaveAndLoadPreserveAgentModelsAndTheCoordinator(t *testing.T) {
 	}
 }
 
+func TestSaveAndLoadPreserveARootsFirstMessageAndItRendersTheTaskFile(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.toml")
+	want := config.Default()
+	want.Roots = []config.Root{{Path: "/code/app", FirstMessage: "/build {task_file} {model}"}, {Path: "/code/other"}}
+	if err := want.Save(path); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load(saved config) error = %v", err)
+	}
+	if !reflect.DeepEqual(got.Roots, want.Roots) {
+		t.Fatalf("Load(saved config).Roots = %#v; want %#v", got.Roots, want.Roots)
+	}
+	if b, _ := os.ReadFile(path); strings.Count(string(b), "first_message") != 1 {
+		t.Errorf("saved config = %q; want first_message written only for the root that sets it", b)
+	}
+	if msg := got.Roots[0].Message("/state/runs/run-{task_file}.md"); msg != "/build /state/runs/run-{task_file}.md {model}" {
+		t.Errorf("Message() = %q; want {task_file} replaced once and other placeholders left as written", msg)
+	}
+}
+
 func TestValidateRefusesEachBadRunnerValueByKey(t *testing.T) {
 	t.Parallel()
 
@@ -100,6 +124,7 @@ func TestValidateRefusesEachBadRunnerValueByKey(t *testing.T) {
 		{"runner.max_runs_per_day", func(c *config.Config) { c.Runner.MaxRunsPerDay = 0 }},
 		{"runner.max_run_minutes", func(c *config.Config) { c.Runner.MaxRunMinutes = 0 }},
 		{"coordinator.start_runs", func(c *config.Config) { c.Coordinator.StartRuns = "always" }},
+		{"first_message", func(c *config.Config) { c.Roots = []config.Root{{Path: "/code/app", FirstMessage: "/build {task}"}} }},
 	} {
 		t.Run(test.key, func(t *testing.T) {
 			c := config.Default()
