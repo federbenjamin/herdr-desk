@@ -179,11 +179,11 @@ func (c *Client) SetTask(ctx context.Context, a store.Actor, number int, p model
 	return t, err
 }
 
-// Step changes a task's steps.
-func (c *Client) Step(ctx context.Context, a store.Actor, number int, op model.StepOp) (model.Task, error) {
-	var t model.Task
-	err := c.call(ctx, MethodTasksSteps, stepsRequest{Actor: a, Number: number, Op: op}, &t)
-	return t, err
+// Step changes a task's steps; changed is true when the op wrote an event.
+func (c *Client) Step(ctx context.Context, a store.Actor, number int, op model.StepOp) (model.Task, bool, error) {
+	var r StepResult
+	err := c.call(ctx, MethodTasksSteps, stepsRequest{Actor: a, Number: number, Op: op}, &r)
+	return r.Task, r.Changed, err
 }
 
 // Append sends one journal event. queued=true means the home did not answer, and the event is in the outbox, stamped

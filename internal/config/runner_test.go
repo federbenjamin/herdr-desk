@@ -108,8 +108,8 @@ func TestSaveAndLoadPreserveARootsFirstMessageAndItRendersTheTaskFile(t *testing
 	if b, _ := os.ReadFile(path); strings.Count(string(b), "first_message") != 1 {
 		t.Errorf("saved config = %q; want first_message written only for the root that sets it", b)
 	}
-	if msg := got.Roots[0].Message("/state/runs/run-{task_file}.md"); msg != "/build /state/runs/run-{task_file}.md {model}" {
-		t.Errorf("Message() = %q; want {task_file} replaced once and other placeholders left as written", msg)
+	if msg := config.TaskFileMessage(got.Roots[0].FirstMessage, "/state/runs/run-{task_file}.md"); msg != "/build /state/runs/run-{task_file}.md {model}" {
+		t.Errorf("TaskFileMessage() = %q; want {task_file} replaced once and other placeholders left as written", msg)
 	}
 }
 

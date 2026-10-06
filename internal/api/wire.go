@@ -163,6 +163,12 @@ type TaskList struct {
 	SnapshotTS *time.Time   `json:"snapshot_ts"` // set only when Offline
 }
 
+// StepResult is what tasks.steps returns: the task after the op, and whether the op wrote an event.
+type StepResult struct {
+	Task    model.Task `json:"task"`
+	Changed bool       `json:"changed"`
+}
+
 // The request bodies of the methods whose body is not an existing type.
 type (
 	getRequest struct {

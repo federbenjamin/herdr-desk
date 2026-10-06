@@ -48,36 +48,38 @@ type Step struct {
 
 // Task is a task's current state.
 type Task struct {
-	Number    int       `json:"number"`
-	Title     string    `json:"title"`
-	Notes     string    `json:"notes"`
-	Status    Status    `json:"status"`
-	Project   string    `json:"project"`
-	Thread    string    `json:"thread"`
-	Archived  bool      `json:"archived"`
-	Root      string    `json:"root"`
-	Isolation string    `json:"isolation"`
-	Model     string    `json:"model"`
-	CreatedTS time.Time `json:"created_ts"`
-	UpdatedTS time.Time `json:"updated_ts"`
-	Steps     []Step    `json:"steps"`
+	Number       int       `json:"number"`
+	Title        string    `json:"title"`
+	Notes        string    `json:"notes"`
+	Status       Status    `json:"status"`
+	Project      string    `json:"project"`
+	Thread       string    `json:"thread"`
+	Archived     bool      `json:"archived"`
+	Root         string    `json:"root"`
+	Isolation    string    `json:"isolation"`
+	Model        string    `json:"model"`
+	FirstMessage string    `json:"first_message"`
+	CreatedTS    time.Time `json:"created_ts"`
+	UpdatedTS    time.Time `json:"updated_ts"`
+	Steps        []Step    `json:"steps"`
 }
 
 // Run is one runner attempt at a task.
 type Run struct {
-	ID        int64     `json:"id"`
-	Task      int       `json:"task"`
-	State     string    `json:"state"`
-	Root      string    `json:"root"`
-	Isolation string    `json:"isolation"`
-	Model     string    `json:"model"`
-	Reason    string    `json:"reason"`
-	Session   string    `json:"session"`
-	Workspace string    `json:"workspace"`
-	Pane      string    `json:"pane"`
-	StartedTS time.Time `json:"started_ts"`
-	EndedTS   time.Time `json:"ended_ts"`
-	LeftOpen  bool      `json:"left_open"` // its pane is owed a close (a kill or a spawn could not close it, or a start ended the run idle); the ticker closes it again
+	ID           int64     `json:"id"`
+	Task         int       `json:"task"`
+	State        string    `json:"state"`
+	Root         string    `json:"root"`
+	Isolation    string    `json:"isolation"`
+	Model        string    `json:"model"`
+	FirstMessage string    `json:"first_message"`
+	Reason       string    `json:"reason"`
+	Session      string    `json:"session"`
+	Workspace    string    `json:"workspace"`
+	Pane         string    `json:"pane"`
+	StartedTS    time.Time `json:"started_ts"`
+	EndedTS      time.Time `json:"ended_ts"`
+	LeftOpen     bool      `json:"left_open"` // its pane is owed a close (a kill or a spawn could not close it, or a start ended the run idle); the ticker closes it again
 }
 
 // The run states. A run in the first four is live. A starting or running run takes one of the runner's cap slots;
@@ -165,6 +167,23 @@ var sessionIDRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
 func ValidSessionID(s string) bool {
 	return s != "." && s != ".." && sessionIDRe.MatchString(s)
 }
+
+var stepIDRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
+
+// ValidStepID reports whether id can name a step a caller picks: ^[A-Za-z0-9._-]{1,64}$.
+func ValidStepID(id string) bool { return stepIDRe.MatchString(id) }
+
+var generatedStepIDRe = regexp.MustCompile(`^s[0-9]+$`)
+
+// GeneratedStepID reports whether id has the shape of the ids the store generates, ^s[0-9]+$; a caller's id may not.
+func GeneratedStepID(id string) bool { return generatedStepIDRe.MatchString(id) }
+
+// TaskFile is the one placeholder of a first_message, written {task_file}: the path of the file that holds the task.
+const TaskFile = "task_file"
+
+// ValidFirstMessage reports whether s can be a first_message: "" (none) or a template holding {task_file}.
+// config.Validate, the store, and Resolve all check a first_message with it.
+func ValidFirstMessage(s string) bool { return s == "" || strings.Contains(s, "{"+TaskFile+"}") }
 
 var isolations = []string{"", "self", "worktree", "in-place"}
 

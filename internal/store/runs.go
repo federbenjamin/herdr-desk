@@ -16,7 +16,7 @@ import (
 var ErrRunLive = errors.New("the task already has a live run")
 
 // runCols leaves out exit: the column has no writer, since herdr owns the pane and herdr-desk never sees a worker exit.
-const runCols = `id, task, state, root, isolation, model, reason, session, workspace, pane, started_ts, ended_ts, left_open`
+const runCols = `id, task, state, root, isolation, model, first_message, reason, session, workspace, pane, started_ts, ended_ts, left_open`
 
 // liveRunStates is model.LiveRunStates as an SQL list.
 var liveRunStates = sqlList(model.LiveRunStates())
@@ -35,7 +35,7 @@ func scanRun(row interface{ Scan(...any) error }) (model.Run, error) {
 	var r model.Run
 	var started string
 	var ended sql.NullString
-	err := row.Scan(&r.ID, &r.Task, &r.State, &r.Root, &r.Isolation, &r.Model, &r.Reason, &r.Session,
+	err := row.Scan(&r.ID, &r.Task, &r.State, &r.Root, &r.Isolation, &r.Model, &r.FirstMessage, &r.Reason, &r.Session,
 		&r.Workspace, &r.Pane, &started, &ended, &r.LeftOpen)
 	if err != nil {
 		return r, err
@@ -81,10 +81,22 @@ func (s *Store) LiveRuns(ctx context.Context) ([]model.Run, error) {
 
 // LiveRunOnPane returns the newest live run whose pane is pane; ok is false when there is none.
 func (s *Store) LiveRunOnPane(ctx context.Context, pane string) (run model.Run, ok bool, err error) {
-	if pane == "" {
+	return s.newestLiveRun(ctx, "pane", pane)
+}
+
+// LiveRunOfSession returns the newest live run whose session is session; ok is false when there is none or session
+// is "".
+func (s *Store) LiveRunOfSession(ctx context.Context, session string) (run model.Run, ok bool, err error) {
+	return s.newestLiveRun(ctx, "session", session)
+}
+
+// newestLiveRun returns the newest live run whose column col is value; an empty value matches none. col is one of
+// the callers' constants, never input.
+func (s *Store) newestLiveRun(ctx context.Context, col, value string) (model.Run, bool, error) {
+	if value == "" {
 		return model.Run{}, false, nil
 	}
-	runs, err := readRuns(ctx, s.db, `WHERE pane = ? AND state IN `+liveRunStates, pane)
+	runs, err := readRuns(ctx, s.db, `WHERE `+col+` = ? AND state IN `+liveRunStates, value)
 	if err != nil || len(runs) == 0 {
 		return model.Run{}, false, err
 	}
@@ -198,9 +210,10 @@ func updateRun(ctx context.Context, q execer, id int64, from string, u RunUpdate
 // RunRoute is where and how a task runs: runs.start's params, Resolve's input and output, and what StartRun
 // records. An empty field means not given.
 type RunRoute struct {
-	Root      string `json:"root,omitempty"`
-	Isolation string `json:"isolation,omitempty"`
-	Model     string `json:"model,omitempty"`
+	Root         string `json:"root,omitempty"`
+	Isolation    string `json:"isolation,omitempty"`
+	Model        string `json:"model,omitempty"`
+	FirstMessage string `json:"first_message,omitempty"`
 }
 
 // RunCaps are the limits StartRun checks inside its transaction.
@@ -210,8 +223,10 @@ type RunCaps struct {
 	Since  time.Time // the start of the day PerDay counts, local midnight
 }
 
-// StartRun creates the task's run on the route and sets the task started with the route, in one transaction of two
-// writes: the run insert, then the task's set event, which carries the run's id and no session. The run is starting
+// StartRun creates the task's run on the route and sets the task started with the route's root, isolation, and model,
+// in one transaction of two writes: the run insert, then the task's set event, which carries the run's id and no
+// session. The route's FirstMessage is recorded on the run only, so a root's template never becomes the task's
+// and the tiers keep their order on every later start. The run is starting
 // when slotOpen allows it under caps.Slots, else waiting. The task must exist, be neither archived nor done, and have
 // no starting, waiting, or running run (ErrRunLive, with that run). Then, while caps.PerDay runs started at or after
 // caps.Since, the start is refused cap-reached and writes nothing. An idle run of the task is ended in the same
@@ -268,8 +283,9 @@ func (s *Store) StartRun(ctx context.Context, task int, route RunRoute, caps Run
 			} else if open {
 				state = model.RunStarting
 			}
-			res, err := tx.ExecContext(ctx, `INSERT INTO runs(task, state, root, isolation, model, started_ts) VALUES(?, ?, ?, ?, ?, ?)`,
-				task, state, route.Root, route.Isolation, route.Model, formatTS(ts))
+			res, err := tx.ExecContext(ctx,
+				`INSERT INTO runs(task, state, root, isolation, model, first_message, started_ts) VALUES(?, ?, ?, ?, ?, ?, ?)`,
+				task, state, route.Root, route.Isolation, route.Model, route.FirstMessage, formatTS(ts))
 			if err != nil {
 				return 0, nil, err
 			}

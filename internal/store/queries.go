@@ -73,13 +73,13 @@ type TaskDetail struct {
 	History []model.Event `json:"history"` // every event of this task, oldest first
 }
 
-const taskCols = `number, title, notes, status, project, thread, archived, root, isolation, model, created_ts, updated_ts`
+const taskCols = `number, title, notes, status, project, thread, archived, root, isolation, model, first_message, created_ts, updated_ts`
 
 func scanTask(row interface{ Scan(...any) error }) (model.Task, error) {
 	var t model.Task
 	var status, created, updated string
 	err := row.Scan(&t.Number, &t.Title, &t.Notes, &status, &t.Project, &t.Thread, &t.Archived, &t.Root,
-		&t.Isolation, &t.Model, &created, &updated)
+		&t.Isolation, &t.Model, &t.FirstMessage, &created, &updated)
 	if err != nil {
 		return t, err
 	}

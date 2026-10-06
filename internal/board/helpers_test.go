@@ -214,18 +214,18 @@ func (h *fakeHome) SetTask(_ context.Context, a store.Actor, number int, p model
 	return model.Task{Number: number}, nil
 }
 
-func (h *fakeHome) Step(_ context.Context, a store.Actor, number int, op model.StepOp) (model.Task, error) {
+func (h *fakeHome) Step(_ context.Context, a store.Actor, number int, op model.StepOp) (model.Task, bool, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if err := h.script("Step"); err != nil {
-		return model.Task{}, err
+		return model.Task{}, false, err
 	}
 	h.stepActors = append(h.stepActors, a)
 	h.stepOps = append(h.stepOps, op)
 	if h.step != nil {
-		return model.Task{}, h.step
+		return model.Task{}, false, h.step
 	}
-	return model.Task{Number: number}, nil
+	return model.Task{Number: number}, true, nil
 }
 
 func (h *fakeHome) Append(_ context.Context, r api.AppendRequest) (model.Event, bool, error) {

@@ -52,9 +52,9 @@ func TestOpenCreatesPrivateWALDatabaseWithExpectedSchema(t *testing.T) {
 		t.Errorf("tables = %v, want the six store tables", got)
 	}
 	assertColumns(t, db, "events", []string{"id", "ts", "session", "who", "kind", "task", "data", "tags", "run", "v"})
-	assertColumns(t, db, "tasks", []string{"number", "title", "notes", "status", "project", "thread", "archived", "root", "isolation", "model", "created_ts", "updated_ts"})
+	assertColumns(t, db, "tasks", []string{"number", "title", "notes", "status", "project", "thread", "archived", "root", "isolation", "model", "created_ts", "updated_ts", "first_message"})
 	assertColumns(t, db, "steps", []string{"task", "short_id", "text", "done", "pos"})
-	assertColumns(t, db, "runs", []string{"id", "task", "state", "root", "isolation", "model", "reason", "session", "workspace", "pane", "started_ts", "ended_ts", "exit", "left_open"})
+	assertColumns(t, db, "runs", []string{"id", "task", "state", "root", "isolation", "model", "reason", "session", "workspace", "pane", "started_ts", "ended_ts", "exit", "left_open", "first_message"})
 	assertColumns(t, db, "sessions", []string{"id", "continues"})
 	if got := pragmaInt(t, db, "user_version"); got < 1 {
 		t.Errorf("user_version = %d, want a numbered migration version", got)
@@ -338,7 +338,7 @@ func TestTaskWritesRejectBadInputsAsRefusals(t *testing.T) {
 		{
 			name: "using an unknown step operation",
 			call: func() error {
-				_, err := st.Step(ctx, store.Actor{}, created.Number, model.StepOp{Op: "move", Text: "invalid"})
+				_, _, err := st.Step(ctx, store.Actor{}, created.Number, model.StepOp{Op: "move", Text: "invalid"})
 				return err
 			},
 		},
@@ -364,28 +364,28 @@ func TestStepChangesAreMaterializedAndLogged(t *testing.T) {
 	st := newStore(t)
 	ctx := context.Background()
 	created := mustAdd(t, st, "steps", model.StatusOpen, "")
-	withStep, err := st.Step(ctx, store.Actor{}, created.Number, model.StepOp{Op: "add", Text: "write tests"})
+	withStep, _, err := st.Step(ctx, store.Actor{}, created.Number, model.StepOp{Op: "add", Text: "write tests"})
 	if err != nil {
 		t.Fatalf("Step(add) error = %v", err)
 	}
 	if got := withStep.Steps; !reflect.DeepEqual(got, []model.Step{{ShortID: "s1", Text: "write tests"}}) {
 		t.Errorf("steps after add = %#v, want s1", got)
 	}
-	toggled, err := st.Step(ctx, store.Actor{}, created.Number, model.StepOp{Op: "toggle", ShortID: "s1"})
+	toggled, _, err := st.Step(ctx, store.Actor{}, created.Number, model.StepOp{Op: "toggle", ShortID: "s1"})
 	if err != nil {
 		t.Fatalf("Step(toggle) error = %v", err)
 	}
 	if !toggled.Steps[0].Done {
 		t.Errorf("step after toggle = %#v, want Done true", toggled.Steps[0])
 	}
-	renamed, err := st.Step(ctx, store.Actor{}, created.Number, model.StepOp{Op: "rename", ShortID: "s1", Text: "verify tests"})
+	renamed, _, err := st.Step(ctx, store.Actor{}, created.Number, model.StepOp{Op: "rename", ShortID: "s1", Text: "verify tests"})
 	if err != nil {
 		t.Fatalf("Step(rename) error = %v", err)
 	}
 	if got := renamed.Steps[0].Text; got != "verify tests" {
 		t.Errorf("step text after rename = %q, want %q", got, "verify tests")
 	}
-	removed, err := st.Step(ctx, store.Actor{}, created.Number, model.StepOp{Op: "remove", ShortID: "s1"})
+	removed, _, err := st.Step(ctx, store.Actor{}, created.Number, model.StepOp{Op: "remove", ShortID: "s1"})
 	if err != nil {
 		t.Fatalf("Step(remove) error = %v", err)
 	}
@@ -413,14 +413,14 @@ func TestStepIDsAreNeverReusedAfterRemoval(t *testing.T) {
 	st := newStore(t)
 	ctx := context.Background()
 	created := mustAdd(t, st, "step ids", model.StatusOpen, "")
-	first, err := st.Step(ctx, store.Actor{}, created.Number, model.StepOp{Op: "add", Text: "first"})
+	first, _, err := st.Step(ctx, store.Actor{}, created.Number, model.StepOp{Op: "add", Text: "first"})
 	if err != nil {
 		t.Fatalf("first Step(add) error = %v", err)
 	}
-	if _, err := st.Step(ctx, store.Actor{}, created.Number, model.StepOp{Op: "remove", ShortID: first.Steps[0].ShortID}); err != nil {
+	if _, _, err := st.Step(ctx, store.Actor{}, created.Number, model.StepOp{Op: "remove", ShortID: first.Steps[0].ShortID}); err != nil {
 		t.Fatalf("Step(remove) error = %v", err)
 	}
-	second, err := st.Step(ctx, store.Actor{}, created.Number, model.StepOp{Op: "add", Text: "second"})
+	second, _, err := st.Step(ctx, store.Actor{}, created.Number, model.StepOp{Op: "add", Text: "second"})
 	if err != nil {
 		t.Fatalf("second Step(add) error = %v", err)
 	}
@@ -434,10 +434,10 @@ func TestStepRejectsUnknownTaskAndStep(t *testing.T) {
 
 	st := newStore(t)
 	ctx := context.Background()
-	_, err := st.Step(ctx, store.Actor{}, 99, model.StepOp{Op: "add", Text: "missing task"})
+	_, _, err := st.Step(ctx, store.Actor{}, 99, model.StepOp{Op: "add", Text: "missing task"})
 	assertRefusalCode(t, err, model.CodeUnknownTask)
 	created := mustAdd(t, st, "known task", model.StatusOpen, "")
-	_, err = st.Step(ctx, store.Actor{}, created.Number, model.StepOp{Op: "toggle", ShortID: "s404"})
+	_, _, err = st.Step(ctx, store.Actor{}, created.Number, model.StepOp{Op: "toggle", ShortID: "s404"})
 	assertRefusalCode(t, err, model.CodeUnknownStep)
 }
 
@@ -560,7 +560,7 @@ func TestGetTaskIncludesOrderedHistoryAndRejectsUnknownTask(t *testing.T) {
 	if _, err := st.SetTask(ctx, store.Actor{}, created.Number, model.Patch{Status: &ready}); err != nil {
 		t.Fatalf("SetTask() error = %v", err)
 	}
-	if _, err := st.Step(ctx, store.Actor{}, created.Number, model.StepOp{Op: "add", Text: "one"}); err != nil {
+	if _, _, err := st.Step(ctx, store.Actor{}, created.Number, model.StepOp{Op: "add", Text: "one"}); err != nil {
 		t.Fatalf("Step() error = %v", err)
 	}
 
