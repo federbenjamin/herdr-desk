@@ -6,9 +6,12 @@
 # (no release, download error, checksum mismatch, unmapped platform) it builds from source with
 # Go instead, with the version set to <version>+src. It also copies the binary to
 # $DESK_INSTALL_DIR when no `herdr-desk` is on PATH, or when the one there is the copy it made before.
+# Then it runs `herdr-desk setup`, with the claude-code profile when `claude` is on PATH, and with
+# `claude` on PATH installs the Claude Code plugin. A step after the binary is placed that does not
+# finish is reported, and the script still exits 0.
 #
 # Overrides, for tests: DESK_REPO_ROOT, DESK_VERSION, DESK_BASE_URL (the folder holding
-# v<version>/), DESK_OUT, DESK_INSTALL_DIR, DESK_GO.
+# v<version>/), DESK_OUT, DESK_INSTALL_DIR, DESK_GO. `claude` and `herdr-desk` are found on PATH only.
 set -u
 
 repo="federbenjamin/herdr-desk"
@@ -62,6 +65,53 @@ install_from_path() {
   esac
 }
 
+# claude_plugin <claude path or empty> installs the Claude Code plugin through claude's own CLI. Each
+# step reads /dev/null, so a prompt fails instead of hanging an install that has no terminal.
+claude_plugin() {
+  slash="Inside Claude Code: /plugin marketplace add $repo, then /plugin install herdr-desk@herdr-desk"
+  if [ -z "$1" ]; then
+    echo "herdr-desk: no claude on PATH, so the Claude Code plugin was not installed. $slash"
+    return 0
+  fi
+  for step in "marketplace add" "install"; do
+    rc=0
+    if [ "$step" = install ]; then
+      "$1" plugin install herdr-desk@herdr-desk </dev/null || rc=$?
+    else
+      "$1" plugin marketplace add "$repo" </dev/null || rc=$?
+    fi
+    if [ "$rc" -ne 0 ]; then
+      echo "herdr-desk: Claude Code plugin not installed (claude plugin $step exited $rc; see above). $slash"
+      return 0
+    fi
+  done
+  echo "herdr-desk: Claude Code plugin installed (marketplace $repo, plugin herdr-desk@herdr-desk)."
+}
+
+# finish places the binary, runs setup with the herdr-desk the plugin's commands will run (the one on
+# PATH, else the copy just placed), installs the Claude Code plugin, and exits 0: herdr aborts the
+# whole plugin install on a failed build command, and a step that did not finish can be re-run.
+finish() {
+  install_from_path
+  desk=$(command -v herdr-desk 2>/dev/null || true)
+  if [ -z "$desk" ]; then desk="$install_dir/herdr-desk"; fi
+  claude=$(command -v claude 2>/dev/null || true)
+  if [ -n "$claude" ]; then
+    echo "herdr-desk: claude found at $claude; setup uses the claude-code profile."
+    set -- setup --profile claude-code
+  else
+    echo "herdr-desk: no claude on PATH; setup uses no profile. To start another agent, set [agent] in the herdr-desk config named below (README: herdr with another agent)."
+    set -- setup
+  fi
+  rc=0
+  "$desk" "$@" </dev/null || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "herdr-desk: setup did not finish (exit $rc; see above). After fixing it, run: herdr-desk $*"
+  fi
+  claude_plugin "$claude"
+  exit 0
+}
+
 build_from_source() {
   if ! have "$go_cmd"; then
     echo "herdr-desk: no release to install and no go found ($go_cmd). Install Go from https://go.dev/dl, then run: herdr plugin install $repo" >&2
@@ -75,8 +125,7 @@ build_from_source() {
     exit 1
   fi
   echo "herdr-desk: built from source at $out."
-  install_from_path
-  exit 0
+  finish
 }
 
 fallback() {
@@ -133,5 +182,4 @@ mkdir -p "$(dirname "$out")" || fallback "could not create $(dirname "$out")"
 mv -f "$tmpdir/herdr-desk" "$out" || fallback "could not place the binary at $out"
 
 echo "herdr-desk: installed prebuilt v$version ($os/$arch), checksum verified."
-install_from_path
-exit 0
+finish
