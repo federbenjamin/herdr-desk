@@ -32,7 +32,6 @@ type Herdr interface {
 	Pane(ctx context.Context, id string) (herdr.Pane, bool, error)
 	Processes(ctx context.Context, pane string) (herdr.Processes, error)
 	ClosePane(ctx context.Context, pane string) error
-	FocusPane(ctx context.Context, workspace, pane string) error
 	ReportToken(ctx context.Context, pane, source, name, value string) error
 }
 

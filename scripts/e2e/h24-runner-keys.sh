@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# H27: S starts a run, and a live run shows in IN MOTION and the header; k, P, f, and o make their calls.
+# H27: S starts a run, and a live run shows in IN MOTION and the header; k, P, and o make their calls.
 # The board runs the home's runner itself (every command opens the store), with a herdr that logs each call and answers
 # the ones a run needs through the fake herdr, so S, runs.kill, and runner.pause are the real ones: the kill leaves the
-# task blocked, and the pause shows in the header. The wrapper also logs the calls f and o make.
+# task blocked, and the pause shows in the header. The wrapper also logs the call o makes.
 # shellcheck source=scripts/e2e/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 # shellcheck source=scripts/e2e/runner-lib.sh
@@ -37,15 +37,6 @@ term_wait board "in-place · sonnet"
 ok "the row shows the run's isolation and model"
 term_wait board "runner ● on · 1/1 · home"
 ok "the header counts 1 live run"
-PANE=$(run_field 1 pane)
-WS=$(run_field 1 workspace)
-
-# f needs a live run, so it goes before the kill.
-term_keys board f
-wait_for "herdr workspace focus" grep -q "^workspace focus $WS$" "$HERDR_LOG"
-wait_for "herdr pane zoom on" grep -q "^pane zoom $PANE --on$" "$HERDR_LOG"
-wait_for "herdr pane zoom off" grep -q "^pane zoom $PANE --off$" "$HERDR_LOG"
-ok "f ran herdr workspace focus and pane zoom"
 
 term_keys board k
 term_wait board "kill T1's run? y/n"

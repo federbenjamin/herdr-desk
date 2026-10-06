@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# H40: `herdr-desk coordinator` twice gives one workspace; the agent in its pane gets --session-id and the skill as
+# H40: `herdr-desk coordinator` twice gives one workspace and the second only reports it, with no focus call; the agent in its pane gets --session-id and the skill as
 # --append-system-prompt; an agent session's `coordinator` is not-allowed and opens nothing.
 # shellcheck source=scripts/e2e/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -20,13 +20,12 @@ out_has "coordinator opened"
 ok "one workspace labelled desk coordinator"
 
 run 0 on home herdr-desk coordinator
-out_has "coordinator focused"
+out_has "coordinator open"
 [ "$(coordinator_workspaces)" = 1 ] || fail "the second call made $(coordinator_workspaces) workspaces"
-WS=$(sqlite3 "$DB" "SELECT workspace FROM coordinator")
-PANE=$(sqlite3 "$DB" "SELECT pane FROM coordinator")
-grep -E "workspace focus $WS\$" "$CALLS" >/dev/null || fail "the second call did not focus workspace $WS"
-grep -E "pane zoom $PANE --on\$" "$CALLS" >/dev/null || fail "the second call did not zoom pane $PANE"
-ok "the second call focused it"
+# A script's herdr focus moves every attached herdr window, so the second call must not focus anything.
+FOCUS_CALLS=$(cut -f2- "$CALLS" | grep -E '^(workspace focus|pane zoom) ' || true)
+[ -z "$FOCUS_CALLS" ] || fail "the second call asked herdr to focus: $FOCUS_CALLS"
+ok "the second call reported the open coordinator and focused nothing"
 
 wait_file "$STUB/coordinator.argv"
 SESSION=$(sqlite3 "$DB" "SELECT session FROM coordinator")

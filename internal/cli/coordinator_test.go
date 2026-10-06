@@ -115,7 +115,7 @@ func TestCoordinatorOpensAWorkspaceRecordsItAndTypesCoordinatorRun(t *testing.T)
 	}
 }
 
-func TestCoordinatorFocusesTheLivePaneAndRecordsNothingNew(t *testing.T) {
+func TestCoordinatorReportsTheLivePaneAndRecordsNothingNew(t *testing.T) {
 	home, dir := coordinatorHome(t, config.Default())
 	// A pane the fake herdr never ran a command in stays open, so the coordinator recorded for it is live.
 	created, err := (&herdr.Client{Bin: os.Getenv("DESK_HERDR")}).CreateWorkspace(context.Background(), t.TempDir(), "desk coordinator", nil)
@@ -127,27 +127,22 @@ func TestCoordinatorFocusesTheLivePaneAndRecordsNothingNew(t *testing.T) {
 
 	result := runHomeDesk(t, home, "coordinator")
 	requireSuccess(t, result)
-	if want := "coordinator focused: workspace " + created.Workspace + ", pane " + created.Pane + "\n"; result.stdout != want {
+	if want := "coordinator open: workspace " + created.Workspace + ", pane " + created.Pane + "\n"; result.stdout != want {
 		t.Fatalf("coordinator stdout = %q, want %q", result.stdout, want)
 	}
 
 	calls := fakeCalls(t, dir)
-	wantFocus := []string{
-		"workspace focus " + created.Workspace,
-		"pane zoom " + created.Pane + " --on",
-		"pane zoom " + created.Pane + " --off",
-	}
-	if got := calls[len(calls)-3:]; !reflect.DeepEqual(got, wantFocus) {
-		t.Fatalf("last herdr calls = %q, want the three focus commands %q", got, wantFocus)
+	if focus := append(callsStarting(calls, "workspace focus"), callsStarting(calls, "pane zoom")...); len(focus) != 0 {
+		t.Fatalf("herdr focus calls = %q, want none: a script's focus moves every attached herdr window", focus)
 	}
 	if n := len(callsStarting(calls, "workspace create")); n != 1 {
-		t.Fatalf("workspace create ran %d times, want only the test's own: focusing opens nothing", n)
+		t.Fatalf("workspace create ran %d times, want only the test's own: reporting opens nothing", n)
 	}
 	if len(callsStarting(calls, "pane run")) != 0 {
-		t.Fatalf("a command was typed into a pane while focusing: %q", calls)
+		t.Fatalf("a command was typed into a pane while reporting: %q", calls)
 	}
 	if got, _ := storedCoordinator(t, home); got.Session != live.Session || got.Pane != live.Pane {
-		t.Fatalf("recorded coordinator = %+v after focusing, want it unchanged (%+v)", got, live)
+		t.Fatalf("recorded coordinator = %+v after reporting, want it unchanged (%+v)", got, live)
 	}
 }
 
