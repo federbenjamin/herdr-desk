@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"encoding/json"
 	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 
@@ -163,6 +165,19 @@ func (a *app) printContext(d deskContext) {
 		if e.Task != 0 {
 			task = "T" + strconv.Itoa(e.Task)
 		}
-		a.say("  e%d  %s  %s  %s  %s  %s", e.ID, e.TS.UTC().Format(timeFormat), task, e.Who, e.Kind, e.Data)
+		a.say("  e%d  %s  %s  %s  %s  %s", e.ID, e.TS.UTC().Format(timeFormat), task, e.Who, e.Kind, changeData(e.Data))
 	}
+}
+
+// maxChangeData is the longest event payload a changes line prints whole; a longer one is cut, so a notes save
+// does not put the whole notes in front of the coordinator every turn.
+const maxChangeData = 200
+
+func changeData(data json.RawMessage) string {
+	s := string(data)
+	if utf8.RuneCountInString(s) <= maxChangeData {
+		return s
+	}
+	cut := []rune(s)[:maxChangeData]
+	return string(cut) + "… (" + strconv.Itoa(utf8.RuneCountInString(s)-maxChangeData) + " more; herdr-desk show has it all)"
 }
