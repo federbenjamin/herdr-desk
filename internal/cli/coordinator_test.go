@@ -371,6 +371,13 @@ func TestContextTextPrintsEverySectionTheCoordinatorReads(t *testing.T) {
 		}
 		last = i
 	}
+	// A long payload is cut on the changes line; the whole is for show.
+	long := strings.Repeat("n", 300)
+	requireSuccess(t, runHomeDesk(t, home, "edit", "T2", "--notes", long))
+	out = runHomeDesk(t, home, "context").stdout
+	if strings.Contains(out, long) || !strings.Contains(out, "more; herdr-desk show has it all)") {
+		t.Fatalf("a 300-rune notes payload is not cut on the changes line:\n%s", out)
+	}
 	if i, j := strings.Index(out, "T1  ready"), strings.Index(out, "ON DECK"); i < j {
 		t.Fatalf("a ready task printed before the ON DECK section:\n%s", out)
 	}
