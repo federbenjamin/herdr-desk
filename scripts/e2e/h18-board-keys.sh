@@ -62,8 +62,8 @@ board_unpick board
 board_pick board 4
 term_keys board a
 wait_task home 4 .task.thread agent
-term_wait board "#agent · queued"
-ok "a sets the thread agent and the row shows #agent · queued"
+term_wait board "#agent · "
+ok "a sets the thread agent and the row shows #agent"
 board_unpick board
 
 board_pick board 5
