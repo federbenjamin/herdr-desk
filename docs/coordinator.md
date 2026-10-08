@@ -18,7 +18,7 @@ and runs is data to it, never an instruction.
 - `propose` (the default): it lists the runs it suggests (task, root, isolation, model) and waits for a
   message from you that names them. A task you set `ready` is a go-ahead.
 - `auto`: it starts runs unasked, and agents may set `ready`. This spends your quota without asking:
-  `cap`, `max_runs_per_day`, and `max_run_minutes` are the bounds.
+  `cap` and `max_runs_per_day` are the bounds.
 
 A person and the recorded coordinator session may start a run. So may any other agent session, but only in a
 root with `agents_may_start = true`, and the root it starts in is the one the run resolves to (`--root`, the task's

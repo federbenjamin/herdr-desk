@@ -122,7 +122,6 @@ func TestValidateRefusesEachBadRunnerValueByKey(t *testing.T) {
 	}{
 		{"runner.cap", func(c *config.Config) { c.Runner.Cap = 0 }},
 		{"runner.max_runs_per_day", func(c *config.Config) { c.Runner.MaxRunsPerDay = 0 }},
-		{"runner.max_run_minutes", func(c *config.Config) { c.Runner.MaxRunMinutes = 0 }},
 		{"coordinator.start_runs", func(c *config.Config) { c.Coordinator.StartRuns = "always" }},
 		{"first_message", func(c *config.Config) { c.Roots = []config.Root{{Path: "/code/app", FirstMessage: "/build {task}"}} }},
 	} {

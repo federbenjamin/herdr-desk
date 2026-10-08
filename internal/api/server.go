@@ -196,7 +196,6 @@ func (s *Server) status(ctx context.Context) (Status, error) {
 		RunnerCap:     c.Runner.Cap,
 		StartRuns:     c.Coordinator.StartRuns,
 		MaxRunsPerDay: c.Runner.MaxRunsPerDay,
-		MaxRunMinutes: c.Runner.MaxRunMinutes,
 		Today:         today,
 		Roots:         roots,
 		Models:        append([]string{}, c.Agent.Models...),

@@ -91,7 +91,7 @@ const (
 	RunIdle     = "idle"     // its agent stopped without handing back
 	RunEnded    = "ended"    // its task was handed back or set done
 	RunFailed   = "failed"   // the spawn failed or the run was left starting
-	RunKilled   = "killed"   // killed by a person or by the time limit
+	RunKilled   = "killed"   // killed by a person
 )
 
 // LiveRunStates are the states of a live run: starting, waiting, running, idle.
