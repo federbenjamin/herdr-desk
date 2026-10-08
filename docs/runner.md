@@ -35,8 +35,8 @@ stopped without handing back; it holds its in-place root and does not count towa
 that resumes can put the desk one over `cap` until a run ends. A run left `starting` for over a minute is
 failed. `herdr-desk runner` shows one of `off` (`runner.enabled` is false), `paused`, `no-herdr`, and `on`.
 The state gates only starting runs, so a run that was live when the runner was switched off is still
-handed back, checked by the ticker, and stopped at `max_run_minutes`. `runner pause`, `resume`, and `runs kill`
-are a person's acts.
+handed back and checked by the ticker. No limit stops a run by time: `cap` and `max_runs_per_day` bound the cost.
+`runner pause`, `resume`, and `runs kill` are a person's acts.
 
 **The spawn.** `worktree` isolation uses `<parent of root>/<root>-T<n>` on the branch
 `desk/T<n>-<slug>` (made on the first run, reused after). The runner creates a herdr workspace
@@ -78,20 +78,18 @@ person answers in the pane, and the worker, still the task's newest run, can the
 ## The ticker's run jobs
 
 Once a minute, and only while a run is live (with none and no pane left open, herdr is not asked), the
-ticker does jobs 1 to 4:
+ticker does jobs 1 to 3:
 
 1. checks every `running` and `idle` run against one `herdr pane list`, with the same table, for an event
    herdr never delivered;
-2. stops a `running` run past `max_run_minutes`, counted from its spawn and not from a wait before it, as
-   `herdr-desk runs kill` does, and blocks the task;
-3. starts the oldest `waiting` run whose root is free and whose slot is open, and fails a run left
+2. starts the oldest `waiting` run whose root is free and whose slot is open, and fails a run left
    `starting` for over a minute;
-4. closes again a pane a kill could not close, and blocks a task left `started` after its newest run ended.
+3. closes again a pane a kill could not close, and blocks a task left `started` after its newest run ended.
 
-Jobs 5 and 6 run on every tick, with or without a live run, and never ask herdr:
+Jobs 4 and 5 run on every tick, with or without a live run, and never ask herdr:
 
-5. removes the first-message file of every run that ended, failed, or was killed (a live run's file stays);
-6. removes the worktree of a done task when it is clean and no run is live (a plain worktree remove, never
+4. removes the first-message file of every run that ended, failed, or was killed (a live run's file stays);
+5. removes the worktree of a done task when it is clean and no run is live (a plain worktree remove, never
    forced, since a dirty tree can hold unpushed work). A dirty one stays, with one note on the task naming it,
    written once per `done`. The branch `desk/T<n>-<slug>` is left as it is.
 

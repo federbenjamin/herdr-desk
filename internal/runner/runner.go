@@ -153,45 +153,18 @@ func (r *Runner) findHerdr() (Herdr, error) {
 	return &herdr.Client{Bin: bin}, nil
 }
 
-// Jobs is the ticker's run jobs, once: reconcile, the deadline, start what waits, fail runs left starting, close
+// Jobs is the ticker's run jobs, once: reconcile, start what waits, fail runs left starting, close
 // the panes left open again, and block tasks left started. With no live run and no pane left open, herdr is not asked.
 // Then two sweeps, which run with or without a live run and never ask herdr: remove the first-message files of
 // final runs, and remove the clean worktrees of done tasks.
 func (r *Runner) Jobs(ctx context.Context) {
 	_ = r.Reconcile(ctx) // Reconcile logs its errors.
-	r.deadline(ctx)
 	r.StartWaiting(ctx)
 	r.failStaleStarting(ctx)
 	r.closeLeftOpen(ctx)
 	r.repairStarted(ctx)
 	r.sweepRunFiles(ctx)
 	r.sweepWorktrees(ctx)
-}
-
-// deadline stops every running run past runner.max_run_minutes. It asks herdr for its panes only when one is.
-func (r *Runner) deadline(ctx context.Context) {
-	live, err := r.o.Store.LiveRuns(ctx)
-	if err != nil {
-		r.logErr("read live runs", err)
-		return
-	}
-	limit := time.Duration(r.o.Config.Runner.MaxRunMinutes) * time.Minute
-	var over []model.Run
-	for _, run := range live {
-		if run.State == model.RunRunning && r.o.Now().Sub(run.StartedTS) > limit {
-			over = append(over, run)
-		}
-	}
-	if len(over) == 0 {
-		return
-	}
-	h, panes, ok := r.panes(ctx)
-	if !ok {
-		return
-	}
-	for _, run := range over {
-		r.stop(ctx, h, run, panes, fmt.Sprintf("stopped after %d minutes (runner.max_run_minutes)", r.o.Config.Runner.MaxRunMinutes))
-	}
 }
 
 // panes finds herdr and lists its panes; false, logged, when either fails.

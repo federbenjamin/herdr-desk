@@ -15,3 +15,6 @@
   still writes nothing there; with no herdr found it says why and to run `herdr-desk setup` once herdr is
   found.
 - `herdr-desk setup` writes to `HERDR_CONFIG_PATH` when it is set, the file herdr itself reads then.
+- The runner no longer stops a run after `[runner] max_run_minutes`: a run waiting on another PR or on you was
+  killed whatever its progress. `cap` and `max_runs_per_day` still bound the cost. A config that still sets
+  `max_run_minutes` loads with the value ignored, and the next `herdr-desk setup` drops it.

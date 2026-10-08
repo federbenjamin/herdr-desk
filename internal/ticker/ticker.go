@@ -116,7 +116,7 @@ func (t *Ticker) loop(ctx context.Context) {
 
 // Tick does the timed jobs once: it reads the config file afresh (one that fails to load is logged and the tick
 // skipped), checks the backup on the first tick and then once an hour, then runs the run jobs. The run jobs run
-// whatever runner.enabled says: it stops new runs, not the deadline, the reconcile, or the repairs of live ones. The
+// whatever runner.enabled says: it stops new runs, not the reconcile or the repairs of live ones. The
 // store is opened only when a job needs it and closed before Tick returns.
 func (t *Ticker) Tick(ctx context.Context) {
 	t.tickMu.Lock()

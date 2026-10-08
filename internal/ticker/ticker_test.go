@@ -216,14 +216,13 @@ func TestStopSignalsASeparateRunningTicker(t *testing.T) {
 	}
 }
 
-// runner.enabled = false stops new runs, not the limits on live ones: a running run past max_run_minutes is stopped
-// by the ticker whatever the switch says.
-func TestTickStopsARunPastItsLimitWithTheRunnerOff(t *testing.T) {
+// runner.enabled = false stops new runs, not the checks of live ones: a running run whose pane closed is ended by the
+// ticker whatever the switch says.
+func TestTickReconcilesALiveRunWithTheRunnerOff(t *testing.T) {
 	testutil.FakeHerdr(t)
 	machine := testutil.NewMachine(t)
 	cfg := config.Default()
 	cfg.Runner.Enabled = false
-	cfg.Runner.MaxRunMinutes = 1
 	if err := cfg.Save(machine.Paths.ConfigFile()); err != nil {
 		t.Fatalf("save config: %v", err)
 	}
@@ -233,7 +232,7 @@ func TestTickStopsARunPastItsLimitWithTheRunnerOff(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	task, err := st.AddTask(ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{Title: "runs too long"}})
+	task, err := st.AddTask(ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{Title: "pane closed"}})
 	if err != nil {
 		t.Fatalf("add task: %v", err)
 	}
@@ -241,9 +240,13 @@ func TestTickStopsARunPastItsLimitWithTheRunnerOff(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start run: %v", err)
 	}
-	created, err := (&herdr.Client{Bin: os.Getenv("DESK_HERDR")}).CreateWorkspace(ctx, t.TempDir(), "desk T1", nil)
+	h := &herdr.Client{Bin: os.Getenv("DESK_HERDR")}
+	created, err := h.CreateWorkspace(ctx, t.TempDir(), "desk T1", nil)
 	if err != nil {
 		t.Fatalf("open the run's pane: %v", err)
+	}
+	if err := h.ClosePane(ctx, created.Pane); err != nil {
+		t.Fatalf("close the run's pane: %v", err)
 	}
 	if ok, err := st.UpdateRun(ctx, run.ID, model.RunStarting, store.RunUpdate{State: model.RunRunning, Session: "s1",
 		Workspace: created.Workspace, Pane: created.Pane}); err != nil || !ok {
@@ -258,14 +261,14 @@ func TestTickStopsARunPastItsLimitWithTheRunnerOff(t *testing.T) {
 		t.Fatalf("Start() error = %v", err)
 	}
 	t.Cleanup(func() { _ = tk.Close() })
-	waitFor(t, "the ticker to stop the run past its limit", func() bool {
+	waitFor(t, "the ticker to end the run whose pane closed", func() bool {
 		ro, err := store.OpenReadOnly(machine.Paths.DB(), store.Options{})
 		if err != nil {
 			return false
 		}
 		defer ro.Close()
 		cur, ok, err := ro.CurrentRun(ctx, task.Number)
-		return err == nil && ok && cur.State == model.RunKilled
+		return err == nil && ok && cur.State == model.RunEnded
 	})
 }
 

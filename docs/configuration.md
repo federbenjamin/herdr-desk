@@ -9,9 +9,8 @@ command = []      # argv template; empty = the default in "Home and clients"
 
 [runner]
 enabled = false
-cap = 1                # each of cap, max_runs_per_day, max_run_minutes is at least 1
+cap = 1                # cap and max_runs_per_day are each at least 1
 max_runs_per_day = 20
-max_run_minutes = 180
 on_merged = "review"   # review | done
 
 [coordinator]

@@ -156,7 +156,7 @@ func TestRunnerStatusAndControlShowLiveCapacityAndRejectAgents(t *testing.T) {
 	}
 }
 
-// With no ticker, max_run_minutes and the checks of live runs wait; runner status and context must say so rather
+// With no ticker, the checks of live runs wait; runner status and context must say so rather
 // than read as all well.
 func TestRunnerStatusAndContextSayWhenNoTickerRuns(t *testing.T) {
 	home, _ := startOnlyHome(t, nil)

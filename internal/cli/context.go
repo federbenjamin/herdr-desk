@@ -23,7 +23,6 @@ type deskContext struct {
 	Cap           int              `json:"cap"`
 	Today         int              `json:"today"` // runs started since local midnight
 	MaxRunsPerDay int              `json:"max_runs_per_day"`
-	MaxRunMinutes int              `json:"max_run_minutes"`
 	Roots         []api.Root       `json:"roots"` // the scratch root last
 	Models        []string         `json:"models"`
 	Board         []contextSection `json:"board"`
@@ -78,7 +77,6 @@ func (a *app) contextCmd() *cobra.Command {
 			Cap:           st.RunnerCap,
 			Today:         st.Today,
 			MaxRunsPerDay: st.MaxRunsPerDay,
-			MaxRunMinutes: st.MaxRunMinutes,
 			Roots:         st.Roots,
 			Models:        st.Models,
 			Runs:          onlyLive(runs),
@@ -115,8 +113,7 @@ func (a *app) contextCmd() *cobra.Command {
 
 func (a *app) printContext(d deskContext) {
 	a.say("start_runs %s", d.StartRuns)
-	a.say("runner %s · cap %d · today %d of max_runs_per_day %d · max_run_minutes %d",
-		d.RunnerState, d.Cap, d.Today, d.MaxRunsPerDay, d.MaxRunMinutes)
+	a.say("runner %s · cap %d · today %d of max_runs_per_day %d", d.RunnerState, d.Cap, d.Today, d.MaxRunsPerDay)
 	if d.NoTicker {
 		a.say("%s", api.NoTickerText)
 	}

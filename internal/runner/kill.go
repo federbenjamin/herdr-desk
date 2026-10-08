@@ -68,15 +68,6 @@ func (r *Runner) Kill(ctx context.Context, a store.Actor, task int) (model.Task,
 	return model.Task{}, fmt.Errorf("T%d's run kept changing state; try again", task)
 }
 
-// stop is the time limit's kill: the run killed, the pane's processes, the pane, the task blocked.
-func (r *Runner) stop(ctx context.Context, h Herdr, run model.Run, panes []herdr.Pane, msg string) {
-	r.handBack(ctx, run, store.HandBack{From: model.RunRunning, To: model.RunKilled, Status: model.StatusBlocked,
-		Tags: []string{model.TagRunner}}, func(ctx context.Context) string {
-		k := r.killPane(ctx, h, run, panes)
-		return strings.Join(append([]string{msg}, k.problems...), "; ")
-	})
-}
-
 // paneKill is what killing a pane did, for a note.
 type paneKill struct {
 	done     string   // "pane P closed", "no pane was open", or "" when the pane did not close

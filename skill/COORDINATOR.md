@@ -39,7 +39,6 @@ A task that already has a live run gets that run back, not a second one. A task 
 
 - At most `cap` runs work at once. An approved task still gets `run start` when `cap` runs are live: its run is `waiting` and starts by itself when a slot frees. Say which runs wait.
 - At most `max_runs_per_day` runs start in a day; past it `run start` is refused `cap-reached`. Then say so to the user and start nothing more today. Do not retry.
-- A run past `max_run_minutes` is stopped.
 - A refusal is printed as `herdr-desk <command>: <code>: <message>`. `not-allowed`, `runner-off`, `runner-paused`, `cap-reached`, and `no-herdr` are final for this turn: tell the user, do not retry. Exit 2 is a usage error: fix the arguments. Exit 3 means the store or the home could not be reached: tell the user.
 
 ## Reading a run's outcome
