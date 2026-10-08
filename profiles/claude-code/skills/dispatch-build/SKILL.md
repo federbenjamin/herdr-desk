@@ -48,7 +48,10 @@ watches the run. It never briefs, builds, or answers for the build what the buil
        `enter`), `herdr agent prompt <pane> "<text>"` for text.
      - **Escalate** the rest (a refused permission, a product decision): one `needs you` line
        naming `T<n>` and the pane, and what it waits on. The desk also marks the task blocked and
-       notifies the user.
+       notifies the user. When the user answers you, pass it on as your own decision, never as
+       theirs: `herdr agent prompt <pane> "From the launching session (<your session id>), my
+       decision, not the user's word: <answer>"`. Never quote it as a user ruling, and never
+       write in the run's session log.
 
      Then watch again, from the session moving on:
      `herdr agent wait <pane> --until working && herdr agent wait <pane> --until blocked`, via
