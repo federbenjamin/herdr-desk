@@ -6,7 +6,8 @@ Turn the runner on with `herdr-desk setup --runner on` (or `[runner] enabled = t
 an executable file, else the runner is `no-herdr`, and PATH is then not searched.
 
 **Starting.** `herdr-desk run start T<n> [--root <r>] [--isolation <i>] [--model <m>] [--first-message <template>]` is the one entry;
-the coordinator, you, and the board's `S` all call it. No loop looks for work. It asks of the task that it
+the coordinator, you, the board's `S`, and `herdr-desk add --start` (for the task it adds) all call it.
+No loop looks for work. It asks of the task that it
 exists, is not archived, is not `done`, and has no `starting`, `waiting`, or `running` run; the task's
 thread and who set `ready` do not matter. Each field resolves from the flag, else the task's own field,
 else a default: the task's project when it is a listed root, else the scratch root; the root's

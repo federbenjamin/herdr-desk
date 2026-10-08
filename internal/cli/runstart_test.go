@@ -217,3 +217,100 @@ func TestRunStartReachesTheHomeFromAClientMachine(t *testing.T) {
 		t.Fatalf("client run start = %q, want a running run", result.stdout)
 	}
 }
+
+// add --start adds the task and starts its run on the route the flags give, printing what add and run start print.
+func TestAddStartAddsTheTaskAndStartsItsRun(t *testing.T) {
+	const first = "Read {task_file} and do it."
+	for _, asJSON := range []bool{false, true} {
+		t.Run(fmt.Sprintf("json %t", asJSON), func(t *testing.T) {
+			home, root := startOnlyHome(t, nil)
+			args := []string{"add", "-t", "started", "-n", "the prompt", "--start",
+				"--root", root, "--isolation", "in-place", "--model", "test-model", "--first-message", first}
+			if !asJSON {
+				result := runHomeDesk(t, home, args...)
+				requireSuccess(t, result)
+				if !regexp.MustCompile(fmt.Sprintf(`^T1\nrun \d+  T1  running  %s  in-place  test-model\n$`, regexp.QuoteMeta(root))).MatchString(result.stdout) {
+					t.Fatalf("add --start stdout = %q, want T1, then the runs line of a running run", result.stdout)
+				}
+				return
+			}
+			result := runHomeDesk(t, home, append(args, "--json")...)
+			requireSuccess(t, result)
+			var out struct {
+				Task model.Task `json:"task"`
+				Run  model.Run  `json:"run"`
+			}
+			if err := json.Unmarshal([]byte(result.stdout), &out); err != nil {
+				t.Fatalf("add --start --json stdout = %q: %v", result.stdout, err)
+			}
+			if out.Task.Number != 1 || out.Task.Notes != "the prompt" || out.Run.Task != 1 || out.Run.State != model.RunRunning ||
+				out.Run.Root != root || out.Run.Isolation != "in-place" || out.Run.Model != "test-model" || out.Run.FirstMessage != first {
+				t.Fatalf("add --start --json = %#v, want task T1 and its running run on the given route", out)
+			}
+		})
+	}
+}
+
+// With no --root, a task whose project is a folder in no git repo and no listed root runs in the scratch root, in-place.
+func TestAddStartOfAProjectUnderNoRootRunsInTheScratchRoot(t *testing.T) {
+	home, _ := startOnlyHome(t, nil)
+	result := runHomeDesk(t, home, "add", "-t", "outside", "-p", t.TempDir(), "--start", "--json")
+	requireSuccess(t, result)
+	var out struct {
+		Run model.Run `json:"run"`
+	}
+	if err := json.Unmarshal([]byte(result.stdout), &out); err != nil {
+		t.Fatalf("stdout = %q: %v", result.stdout, err)
+	}
+	if out.Run.Root != home.Paths.ScratchRoot() || out.Run.Isolation != "in-place" {
+		t.Fatalf("run = %#v, want the scratch root %s, in-place", out.Run, home.Paths.ScratchRoot())
+	}
+}
+
+func TestAddRouteFlagWithoutStartIsAUsageErrorAndAddsNothing(t *testing.T) {
+	home, root := startOnlyHome(t, nil)
+	for _, flag := range [][]string{{"--root", root}, {"--isolation", "in-place"}, {"--model", "test-model"}, {"--first-message", "{task_file}"}} {
+		result := runHomeDesk(t, home, append([]string{"add", "-t", "no start"}, flag...)...)
+		if result.exit != 2 || result.stdout != "" || !strings.Contains(result.stderr, flag[0]+" picks the run's route, so it needs --start") {
+			t.Errorf("add %v = exit %d, stdout %q, stderr %q; want exit 2 naming the flag and --start", flag, result.exit, result.stdout, result.stderr)
+		}
+	}
+	if list := runHomeDesk(t, home, "list", "--all", "--json"); !strings.Contains(list.stdout, `"tasks":[]`) && !strings.Contains(list.stdout, `"tasks": []`) {
+		t.Fatalf("list after refused adds = %q, want no tasks", list.stdout)
+	}
+}
+
+// A start refused after the add keeps the task, exits with the refusal's code, and names the task so the caller can
+// retry with run start. A spawn that fails prints the task and the failed run first, as run start does.
+func TestAddStartWhoseStartIsRefusedKeepsTheTaskAndNamesIt(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*config.Config)
+		args   func(root string) []string
+		extra  map[string]string
+		code   string
+		exit   int
+		stdout string // a regexp
+	}{
+		{"runner off", func(c *config.Config) { c.Runner.Enabled = false }, nil, nil, model.CodeRunnerOff, 1, `^$`},
+		{"an agent session in the scratch root", nil, func(string) []string { return nil }, map[string]string{"DESK_SESSION": "agent-session"}, model.CodeNotAllowed, 1, `^$`},
+		{"an unknown model", nil, func(root string) []string { return []string{"--root", root, "--model", "nope"} }, nil, model.CodeBadInput, 2, `^$`},
+		{"a spawn that fails", nil, func(root string) []string { return []string{"--root", root, "--isolation", "worktree"} }, nil, model.CodeRunFailed, 1, `^T1\nrun \d+  T1  failed  `},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			home, root := startOnlyHome(t, tc.mutate)
+			args := []string{"add", "-t", "refused", "--start", "--root", root}
+			if tc.args != nil {
+				args = append([]string{"add", "-t", "refused", "--start"}, tc.args(root)...)
+			}
+			result := runDeskWithEnv(t, home.Machine, t.TempDir(), args, "", tc.extra)
+			want := "herdr-desk add: " + tc.code + ": T1 was added, but its run did not start: "
+			if result.exit != tc.exit || !strings.HasPrefix(result.stderr, want) || !regexp.MustCompile(tc.stdout).MatchString(result.stdout) {
+				t.Fatalf("add --start = exit %d, stdout %q, stderr %q; want exit %d, stdout matching %q, stderr starting %q",
+					result.exit, result.stdout, result.stderr, tc.exit, tc.stdout, want)
+			}
+			requireSuccess(t, runHomeDesk(t, home, "show", "T1"))
+		})
+	}
+}
