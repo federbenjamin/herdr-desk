@@ -430,28 +430,19 @@ func TestAfterSetStartsAWaitingRunOnceASlotFrees(t *testing.T) {
 	}
 }
 
-func TestJobsStopsARunningRunPastTheTimeLimitAndLeavesYoungerOnesAlone(t *testing.T) {
+// No wall-clock limit: a run waiting on another PR or on a person may run for days.
+func TestJobsLeavesALongRunningRunAlone(t *testing.T) {
 	f := newFixture(t, "", "self")
 	r := f.runner()
-	old := f.armThread("old", "agent")
-	f.startRun(r, old.Number)
-	f.now = f.now.Add(9 * time.Minute)
-	young := f.armThread("young", "agent")
-	f.startRun(r, young.Number)
+	task := f.armThread("long", "agent")
+	f.startRun(r, task.Number)
+	f.now = f.now.Add(72 * time.Hour)
 	r.Jobs(f.ctx)
-	if f.run(old.Number).State != model.RunRunning {
-		t.Fatalf("a run at 9 of 10 minutes was stopped: %#v", f.run(old.Number))
+	if got := f.run(task.Number).State; got != model.RunRunning {
+		t.Fatalf("a run 72 hours old = %q, want still running", got)
 	}
-	f.now = f.now.Add(2 * time.Minute)
-	r.Jobs(f.ctx)
-	if got := f.run(old.Number).State; got == model.RunRunning {
-		t.Fatalf("run past max_run_minutes = %q, want it stopped", got)
-	}
-	if got := f.task(old.Number).Task.Status; got != model.StatusBlocked {
-		t.Fatalf("task of the stopped run = %q, want blocked", got)
-	}
-	if got := f.run(young.Number).State; got != model.RunRunning {
-		t.Fatalf("the younger run = %q, want still running", got)
+	if got := f.task(task.Number).Task.Status; got != model.StatusStarted {
+		t.Fatalf("task of the long run = %q, want started", got)
 	}
 }
 

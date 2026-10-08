@@ -335,7 +335,6 @@ func TestContextTextPrintsEverySectionTheCoordinatorReads(t *testing.T) {
 	cfg := config.Default()
 	cfg.Runner.Cap = 3
 	cfg.Runner.MaxRunsPerDay = 7
-	cfg.Runner.MaxRunMinutes = 45
 	cfg.Coordinator.StartRuns = config.StartRunsAuto
 	cfg.Agent.Models = []string{"model-a", "model-b"}
 	cfg.Roots = []config.Root{{Path: scratch, About: "the main repo", Isolation: "worktree"}}
@@ -349,8 +348,7 @@ func TestContextTextPrintsEverySectionTheCoordinatorReads(t *testing.T) {
 	for _, want := range []string{
 		"start_runs auto",
 		"cap 3",
-		"max_runs_per_day 7",
-		"max_run_minutes 45",
+		"max_runs_per_day 7\n",
 		scratch + "  worktree  the main repo",
 		"models: model-a, model-b",
 		"live runs:\n  -",
@@ -392,7 +390,6 @@ func TestContextJSONIsOneObjectWithTheSameFacts(t *testing.T) {
 	cfg := config.Default()
 	cfg.Runner.Cap = 4
 	cfg.Runner.MaxRunsPerDay = 9
-	cfg.Runner.MaxRunMinutes = 30
 	cfg.Agent.Models = []string{"model-a"}
 	cfg.Roots = []config.Root{{Path: scratch, About: "about text", Isolation: "in-place"}}
 	home := testutil.StartHome(t, testutil.HomeOptions{Config: cfg})
@@ -405,7 +402,6 @@ func TestContextJSONIsOneObjectWithTheSameFacts(t *testing.T) {
 		Cap           int      `json:"cap"`
 		Today         int      `json:"today"`
 		MaxRunsPerDay int      `json:"max_runs_per_day"`
-		MaxRunMinutes int      `json:"max_run_minutes"`
 		Models        []string `json:"models"`
 		Roots         []struct {
 			Path, About, Isolation string
@@ -424,7 +420,7 @@ func TestContextJSONIsOneObjectWithTheSameFacts(t *testing.T) {
 	if dec.More() {
 		t.Fatalf("context --json printed more than one value:\n%s", result.stdout)
 	}
-	if d.StartRuns != "propose" || d.Cap != 4 || d.Today != 0 || d.MaxRunsPerDay != 9 || d.MaxRunMinutes != 30 || !reflect.DeepEqual(d.Models, []string{"model-a"}) {
+	if d.StartRuns != "propose" || d.Cap != 4 || d.Today != 0 || d.MaxRunsPerDay != 9 || !reflect.DeepEqual(d.Models, []string{"model-a"}) {
 		t.Fatalf("context JSON scalars = %+v", d)
 	}
 	if len(d.Roots) < 2 || d.Roots[0].Path != scratch || d.Roots[0].About != "about text" || d.Roots[len(d.Roots)-1].Path != home.Paths.ScratchRoot() {

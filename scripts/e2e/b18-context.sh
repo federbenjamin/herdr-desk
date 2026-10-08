@@ -15,7 +15,6 @@ add_root "$APP" in-place "the web app"
 add_root "$DOCS" self "the written docs"
 RC_CAP=2
 RC_DAY=7
-RC_MINUTES=33
 runner_up home
 
 run 0 on home herdr-desk add -t "needs an answer" --desk
@@ -29,7 +28,7 @@ COORD=$(sqlite3 "$DB" "SELECT session FROM coordinator")
 run 0 on home herdr-desk context
 out_has "start_runs propose"
 ok "start_runs propose"
-out_has "cap 2 · today 1 of max_runs_per_day 7 · max_run_minutes 33"
+out_has "cap 2 · today 1 of max_runs_per_day 7"
 ok "caps and today's count"
 out_has "$APP  in-place  the web app"
 out_has "$DOCS  self  the written docs"

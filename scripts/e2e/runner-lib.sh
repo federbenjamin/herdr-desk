@@ -330,7 +330,7 @@ add_root() {
 }
 
 # runner_config <machine>: write the machine's config from these variables, each with a default:
-#   RC_ENABLED true   RC_CAP 1   RC_DAY 20   RC_MINUTES 180   RC_START propose
+#   RC_ENABLED true   RC_CAP 1   RC_DAY 20   RC_START propose
 #   RC_ROOTS ""       TOML for the roots, built with add_root
 #   RC_MODELS '["sonnet", "opus"]'
 #   RC_NOTIFY herdr | none
@@ -348,7 +348,6 @@ runner_config() {
 enabled = ${RC_ENABLED-true}
 cap = ${RC_CAP-1}
 max_runs_per_day = ${RC_DAY-20}
-max_run_minutes = ${RC_MINUTES-180}
 
 [coordinator]
 start_runs = "${RC_START-propose}"

@@ -45,7 +45,7 @@ func w3LiveData() board.Data {
 	}
 }
 
-// With the runner on and no ticker, nothing stops a run past max_run_minutes: the header must not read as all well.
+// With the runner on and no ticker, nothing checks the live runs: the header must not read as all well.
 func TestViewHeaderSaysWhenNoTickerRunsBehindALiveRunner(t *testing.T) {
 	for _, state := range []string{api.RunnerStateOn, api.RunnerStatePaused} {
 		d := w3LiveData()

@@ -73,7 +73,6 @@ func newFixture(t *testing.T, root, isolation string) *fixture {
 	f.config.Runner.Enabled = true
 	f.config.Runner.Cap = 3
 	f.config.Runner.MaxRunsPerDay = 20
-	f.config.Runner.MaxRunMinutes = 10
 	f.config.Roots = []config.Root{{Path: root, About: "test root", Isolation: isolation}}
 	f.config.Agent.Models = []string{"model-a"}
 	return f

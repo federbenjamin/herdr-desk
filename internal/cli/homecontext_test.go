@@ -18,7 +18,6 @@ func TestContextOnAClientPrintsTheHomesFigures(t *testing.T) {
 	home, root := startOnlyHome(t, func(c *config.Config) {
 		c.Runner.Cap = 2
 		c.Runner.MaxRunsPerDay = 7
-		c.Runner.MaxRunMinutes = 33
 		c.Coordinator.StartRuns = config.StartRunsAuto
 	})
 	task := addTask(t, home, "counted today")
@@ -32,7 +31,6 @@ func TestContextOnAClientPrintsTheHomesFigures(t *testing.T) {
 		Cap           int      `json:"cap"`
 		Today         int      `json:"today"`
 		MaxRunsPerDay int      `json:"max_runs_per_day"`
-		MaxRunMinutes int      `json:"max_run_minutes"`
 		Models        []string `json:"models"`
 		Roots         []struct {
 			Path      string `json:"path"`
@@ -43,7 +41,7 @@ func TestContextOnAClientPrintsTheHomesFigures(t *testing.T) {
 	if err := json.Unmarshal([]byte(result.stdout), &d); err != nil {
 		t.Fatalf("context --json = %q: %v", result.stdout, err)
 	}
-	if d.StartRuns != config.StartRunsAuto || d.Cap != 2 || d.Today != 1 || d.MaxRunsPerDay != 7 || d.MaxRunMinutes != 33 ||
+	if d.StartRuns != config.StartRunsAuto || d.Cap != 2 || d.Today != 1 || d.MaxRunsPerDay != 7 ||
 		!reflect.DeepEqual(d.Models, []string{"test-model"}) {
 		t.Fatalf("client context = %+v, want the home's start_runs, cap, today's one run, limits, and models", d)
 	}
@@ -52,7 +50,7 @@ func TestContextOnAClientPrintsTheHomesFigures(t *testing.T) {
 	}
 	text := runDeskWithEnv(t, client, t.TempDir(), []string{"context"}, "", nil)
 	requireSuccess(t, text)
-	if !strings.Contains(text.stdout, "cap 2 · today 1 of max_runs_per_day 7 · max_run_minutes 33") {
+	if !strings.Contains(text.stdout, "cap 2 · today 1 of max_runs_per_day 7\n") {
 		t.Fatalf("client context text = %q, want the home's figures", text.stdout)
 	}
 }

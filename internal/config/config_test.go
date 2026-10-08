@@ -136,7 +136,7 @@ func TestDefaultStartsRunnerWithPublishedLimits(t *testing.T) {
 	t.Parallel()
 
 	c := config.Default()
-	if c.Runner.Enabled || c.Runner.Cap != 1 || c.Runner.MaxRunsPerDay != 20 || c.Runner.MaxRunMinutes != 180 || c.Runner.OnMerged != "review" {
+	if c.Runner.Enabled || c.Runner.Cap != 1 || c.Runner.MaxRunsPerDay != 20 || c.Runner.OnMerged != "review" {
 		t.Errorf("Default().Runner = %#v; want disabled runner with documented limits", c.Runner)
 	}
 	if c.Coordinator.StartRuns != config.StartRunsPropose {
@@ -184,6 +184,30 @@ func TestLoadMissingFileReturnsDefaultAndRejectsUnknownOrInvalidConfig(t *testin
 
 	if _, err := config.Load(t.TempDir()); err == nil {
 		t.Error("Load(directory) error = nil; want filesystem error")
+	}
+}
+
+// A config written before the run deadline was removed still holds max_run_minutes: it loads, the value is ignored,
+// and the next save drops the key.
+func TestLoadIgnoresTheRemovedMaxRunMinutesAndSaveDropsIt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[runner]\ncap = 2\nmax_run_minutes = 360\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load(config with max_run_minutes) error = %v; want it to load", err)
+	}
+	want := config.Default()
+	want.Runner.Cap = 2
+	if !reflect.DeepEqual(loaded, want) {
+		t.Errorf("Load(config with max_run_minutes) = %#v; want %#v", loaded, want)
+	}
+	if err := loaded.Save(path); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	if b, _ := os.ReadFile(path); strings.Contains(string(b), "max_run_minutes") {
+		t.Errorf("saved config = %q; want max_run_minutes dropped", b)
 	}
 }
 

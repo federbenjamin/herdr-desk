@@ -43,14 +43,15 @@ func DefaultClientCommand() []string {
 	return []string{"ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-o", "ControlMaster=auto", "-o", "ControlPath={control}", "-o", "ControlPersist=60", "{home}", "herdr-desk", "rpc"}
 }
 
-// Runner: Enabled is shown by the board; OnMerged is read by the store. The three limits are written by setup and
+// Runner: Enabled is shown by the board; OnMerged is read by the store. The two limits are written by setup and
 // read by the runner.
 type Runner struct {
 	Enabled       bool   `toml:"enabled"`
 	Cap           int    `toml:"cap"`
 	MaxRunsPerDay int    `toml:"max_runs_per_day"`
-	MaxRunMinutes int    `toml:"max_run_minutes"`
 	OnMerged      string `toml:"on_merged"` // "review" | "done"
+	// Deprecated: the removed run deadline's key, read so an old config still loads; Load clears it, so a save drops it.
+	MaxRunMinutes int `toml:"max_run_minutes,omitempty"`
 }
 
 // Root: written by `herdr-desk roots`; read by run start's route. FirstMessage is written by hand and is the last tier
@@ -106,14 +107,13 @@ type Backup struct {
 	GitRemote string `toml:"git_remote"`
 }
 
-// Default is the config of a fresh herdr-desk: runner off, cap 1, 20 runs a day, 180 minutes, on_merged
-// "review", start_runs "propose".
+// Default is the config of a fresh herdr-desk: runner off, cap 1, 20 runs a day, on_merged "review", start_runs
+// "propose".
 func Default() Config {
 	return Config{
 		Runner: Runner{
 			Cap:           1,
 			MaxRunsPerDay: 20,
-			MaxRunMinutes: 180,
 			OnMerged:      "review",
 		},
 		Coordinator: Coordinator{StartRuns: StartRunsPropose},
@@ -142,6 +142,7 @@ func Load(path string) (Config, error) {
 		}
 		return Config{}, fmt.Errorf("%s: %w", path, err)
 	}
+	c.Runner.MaxRunMinutes = 0
 	if err := c.Validate(); err != nil {
 		return Config{}, fmt.Errorf("%s: %w", path, err)
 	}
@@ -247,7 +248,7 @@ func LockHeld(path string) (bool, error) {
 	return false, unix.Flock(int(f.Fd()), unix.LOCK_UN)
 }
 
-// Validate checks on_merged, start_runs, that the runner's three limits are at least 1, each root's isolation, that a
+// Validate checks on_merged, start_runs, that the runner's two limits are at least 1, each root's isolation, that a
 // root's first_message is empty or holds {task_file}, and that client.home can be an ssh target: it is one argv
 // element of the [client] command, so it may not start with "-", hold whitespace or a control character, or be over
 // 255 bytes. An empty on_merged reads as "review", an empty start_runs as "propose".
@@ -266,7 +267,6 @@ func (c Config) Validate() error {
 	}{
 		{"runner.cap", c.Runner.Cap},
 		{"runner.max_runs_per_day", c.Runner.MaxRunsPerDay},
-		{"runner.max_run_minutes", c.Runner.MaxRunMinutes},
 	} {
 		if l.n < 1 {
 			return fmt.Errorf("%s must be at least 1, not %d", l.key, l.n)

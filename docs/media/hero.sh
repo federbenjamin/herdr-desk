@@ -101,7 +101,6 @@ cat >"$XDG_CONFIG_HOME/herdr-desk/config.toml" <<TOML
 enabled = true
 cap = 3
 max_runs_per_day = 20
-max_run_minutes = 180
 
 [[roots]]
 path = "$work/alpha"
