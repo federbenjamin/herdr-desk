@@ -117,29 +117,45 @@ func (a *app) runCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		r, err := c.StartRun(a.ctx, actor, n, route)
-		if err != nil {
-			return err
-		}
-		if asJSON {
-			err = a.printJSON(r)
-		} else {
+		return a.startRun(c, actor, n, route, func(r model.Run) error {
+			if asJSON {
+				return a.printJSON(r)
+			}
 			a.say("%s", runLine(r))
-		}
-		if err == nil && r.State == model.RunFailed {
-			// The spawn failed in this call: a caller that reads only the exit code must not take it for a start.
-			return &model.Refusal{Code: model.CodeRunFailed, Msg: fmt.Sprintf("run %d failed: %s", r.ID, r.Reason)}
-		}
-		return err
+			return nil
+		})
 	})
-	f := start.Flags()
+	routeFlags(start, &route)
+	start.Flags().BoolVar(&asJSON, "json", false, "print the run as JSON")
+	cmd.AddCommand(start)
+	return cmd
+}
+
+// routeFlags registers on cmd the flags that pick a run's route, filling route, and returns their names. run start
+// and add --start take them.
+func routeFlags(cmd *cobra.Command, route *store.RunRoute) []string {
+	f := cmd.Flags()
 	f.StringVar(&route.Root, "root", "", "the root to run in (default: the task's, else its project's root, else the scratch root)")
 	f.StringVar(&route.Isolation, "isolation", "", "self, worktree, or in-place (default: the task's, else the root's)")
 	f.StringVar(&route.Model, "model", "", "one of [agent] models (default: the task's, else the first)")
 	f.StringVar(&route.FirstMessage, "first-message", "", "the worker's first message, holding {task_file} (default: the task's, else the root's)")
-	f.BoolVar(&asJSON, "json", false, "print the run as JSON")
-	cmd.AddCommand(start)
-	return cmd
+	return []string{"root", "isolation", "model", "first-message"}
+}
+
+// startRun starts task n's run on route and prints the run with report. A run whose spawn failed in this call is
+// printed, then returned as run-failed: a caller that reads only the exit code must not take it for a start.
+func (a *app) startRun(c *api.Client, actor store.Actor, n int, route store.RunRoute, report func(model.Run) error) error {
+	r, err := c.StartRun(a.ctx, actor, n, route)
+	if err != nil {
+		return err
+	}
+	if err := report(r); err != nil {
+		return err
+	}
+	if r.State == model.RunFailed {
+		return &model.Refusal{Code: model.CodeRunFailed, Msg: fmt.Sprintf("run %d failed: %s", r.ID, r.Reason)}
+	}
+	return nil
 }
 
 func (a *app) runnerCmd() *cobra.Command {

@@ -71,16 +71,29 @@ func taskLine(t model.Task) string {
 	return s
 }
 
+// addStarted is what add --start --json prints: the task it added and the run it started.
+type addStarted struct {
+	Task model.Task `json:"task"`
+	Run  model.Run  `json:"run"`
+}
+
 func (a *app) addCmd() *cobra.Command {
 	var title, notes, project, thread, status, branch string
-	var noProject, asJSON bool
+	var noProject, asJSON, start bool
 	var tags []string
+	var route store.RunRoute
 	cmd := &cobra.Command{
 		Use:   "add",
-		Short: "Add a task",
+		Short: "Add a task (--start: and start its run)",
 		Args:  cobra.NoArgs,
 	}
+	var routeNames []string
 	cmd.RunE = a.do(func(cmd *cobra.Command, _ []string) error {
+		for _, name := range routeNames {
+			if cmd.Flags().Changed(name) && !start {
+				return usage("--%s picks the run's route, so it needs --start", name)
+			}
+		}
 		actor, err := a.actor()
 		if err != nil {
 			return err
@@ -111,11 +124,22 @@ func (a *app) addCmd() *cobra.Command {
 			return err
 		}
 		a.refreshSessionView(cmd, c, actor.Session)
-		if asJSON {
-			return a.printJSON(t)
+		if !start {
+			if asJSON {
+				return a.printJSON(t)
+			}
+			a.say("T%d", t.Number)
+			return nil
 		}
-		a.say("T%d", t.Number)
-		return nil
+		err = a.startRun(c, actor, t.Number, route, func(r model.Run) error {
+			if asJSON {
+				return a.printJSON(addStarted{Task: t, Run: r})
+			}
+			a.say("T%d", t.Number)
+			a.say("%s", runLine(r))
+			return nil
+		})
+		return addedNotStarted(t.Number, err)
 	})
 	f := cmd.Flags()
 	f.StringVarP(&title, "title", "t", "", "the title")
@@ -126,9 +150,24 @@ func (a *app) addCmd() *cobra.Command {
 	f.StringVar(&status, "status", "", "the starting status (default open)")
 	f.StringArrayVar(&tags, "tag", nil, "a tag; repeatable")
 	f.StringVar(&branch, "branch", "", "the branch the task belongs to (adds the tag branch:<b>)")
-	f.BoolVar(&asJSON, "json", false, "print the task as JSON")
+	f.BoolVar(&asJSON, "json", false, "print the task as JSON; with --start, {\"task\": …, \"run\": …}")
+	f.BoolVar(&start, "start", false, "start the task's run once it is added, as run start does")
+	routeNames = routeFlags(cmd, &route)
 	cmd.MarkFlagsMutuallyExclusive("project", "desk")
 	return cmd
+}
+
+// addedNotStarted names task n in err, the failure of add --start's run after n was added, so the caller can retry
+// with run start; the refusal keeps its code.
+func addedNotStarted(n int, err error) error {
+	if err == nil {
+		return nil
+	}
+	msg := fmt.Sprintf("T%d was added, but its run did not start", n)
+	if r, ok := model.AsRefusal(err); ok {
+		return &model.Refusal{Code: r.Code, Msg: msg + ": " + r.Msg}
+	}
+	return fmt.Errorf("%s: %w", msg, err)
 }
 
 // listFilter is the filter list's flags name. The project is left to filterProject.
