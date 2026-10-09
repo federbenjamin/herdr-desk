@@ -44,7 +44,7 @@ func TestRootAgentsMayStartLoadsSavesOnlyTrueAndKeepsTheWarning(t *testing.T) {
 	if strings.Contains(text, "agents_may_start = false") {
 		t.Errorf("saved config writes the false opt-in:\n%s", text)
 	}
-	const warning = "WARNING: auto lets the coordinator start runs unasked and agents set tasks ready, which spends your quota; another agent may start a run only in a root with agents_may_start = true"
+	const warning = "WARNING: auto lets the coordinator start runs unasked, which spends your quota; another agent may start a run only in a root with agents_may_start = true"
 	warningAt := strings.Index(text, warning)
 	startRunsAt := strings.Index(text, "start_runs")
 	if warningAt < 0 || startRunsAt < 0 || warningAt > startRunsAt {

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `herdr-desk add` makes a task `ready` unless `--status` says otherwise. The board's add box and `capture`
+  still make it `open`, your own to-do list; `n` on the board sets it `ready` when you want it queued.
+- An agent may set a task `ready` whatever `[coordinator] start_runs` says, and a `ready` task is no longer a
+  go-ahead for the coordinator. `start_runs` only decides whether the coordinator starts runs unasked (`auto`)
+  or lists them and waits (`propose`).
 - The `/dispatch-build` skill is gone from the Claude Code plugin: a `/build` runs in the session that was asked
   for it, with subagents, and is one task line on the desk. The runner and the coordinator stay.
 - `herdr-desk add --start` adds a task and starts its run in one call, taking `run start`'s route flags

@@ -71,10 +71,10 @@ func TestAddStopsWhenGitFailsAndKeepsNoProjectOnlyOutsideARepository(t *testing.
 
 func TestListProjectNarrowsEveryFilterAndResolvesNamesLikeAdd(t *testing.T) {
 	home := testutil.StartHome(t, testutil.HomeOptions{})
-	addTask(t, home, "alpha open", "-p", "/projects/alpha")
+	addTask(t, home, "alpha open", "-p", "/projects/alpha", "--status", "open")
 	addTask(t, home, "beta open", "-p", "/projects/beta")
 	addTask(t, home, "alpha done", "-p", "/projects/alpha", "--status", "done")
-	addTask(t, home, "desk only", "--desk")
+	addTask(t, home, "desk only", "--desk", "--status", "open")
 	addTask(t, home, "gamma done", "-p", "/projects/gamma", "--status", "done")
 
 	result := runHomeDesk(t, home, "list", "--all", "-p", "alpha")
@@ -104,9 +104,9 @@ func TestOfflineListProjectResolvesNamesOverTheWholeSnapshotAndNeverRefusesWhatI
 	cwd := t.TempDir()
 	for _, args := range [][]string{
 		{"add", "-t", "alpha ready", "-p", "/projects/alpha", "--status", "ready"},
-		{"add", "-t", "beta open", "-p", "/projects/beta"},
+		{"add", "-t", "beta open", "-p", "/projects/beta", "--status", "open"},
 		{"add", "-t", "gamma done", "-p", "/projects/gamma", "--status", "done"},
-		{"add", "-t", "delta open", "-p", "/projects/delta"},
+		{"add", "-t", "delta open", "-p", "/projects/delta", "--status", "open"},
 		{"add", "-t", "delta ready", "-p", "/other/delta", "--status", "ready"},
 		{"list"},
 	} {

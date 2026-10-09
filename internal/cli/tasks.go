@@ -147,7 +147,7 @@ func (a *app) addCmd() *cobra.Command {
 	f.StringVarP(&project, "project", "p", "", "an absolute directory, or the bare name of a known project")
 	f.BoolVar(&noProject, "desk", false, "no project")
 	f.StringVar(&thread, "thread", "", "the thread (agent proposes)")
-	f.StringVar(&status, "status", "", "the starting status (default open)")
+	f.StringVar(&status, "status", string(model.StatusReady), "the starting status")
 	f.StringArrayVar(&tags, "tag", nil, "a tag; repeatable")
 	f.StringVar(&branch, "branch", "", "the branch the task belongs to (adds the tag branch:<b>)")
 	f.BoolVar(&asJSON, "json", false, "print the task as JSON; with --start, {\"task\": …, \"run\": …}")

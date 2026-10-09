@@ -18,14 +18,6 @@ type AddTaskInput struct {
 	Tags []string `json:"tags,omitempty"`
 }
 
-// checkArm refuses an agent that asks for ready, unless AutoStart: ready is a person's go-ahead to start a run.
-func (s *Store) checkArm(a Actor, st model.Status) error {
-	if a.Who() == model.WhoAgent && st == model.StatusReady && !s.autoStart {
-		return refuse(model.CodeNotAllowed, "an agent may not set a task ready unless [coordinator] start_runs is auto; a person does")
-	}
-	return nil
-}
-
 func parseStatus(s model.Status) (model.Status, error) {
 	st, ok := model.ParseStatus(string(s))
 	if !ok {
@@ -47,9 +39,6 @@ func (s *Store) AddTask(ctx context.Context, a Actor, in AddTaskInput) (model.Ta
 		return model.Task{}, err
 	}
 	in.Status = st
-	if err := s.checkArm(a, st); err != nil {
-		return model.Task{}, err
-	}
 	var out model.Task
 	_, err = s.append(ctx, a, write{
 		kind: model.KindTask,
@@ -108,12 +97,12 @@ func resolveProject(ctx context.Context, q querier, project string) (string, err
 
 // SetTask patches a task. A patch that changes no field and carries no ref writes no event and returns the
 // task. A patch that sets Notes with NotesWere is refused stale, writing nothing, when the task's notes are no
-// longer NotesWere. An agent may ask for ready only with AutoStart; review with Merged writes the OnMerged status.
+// longer NotesWere. Review with Merged writes the OnMerged status.
 // The notes check, checkRunRules, and the run-ending rule (endRuns) run in the write's transaction. A blocked patch
 // with a Question ends no run, and writes the question as a note in the same transaction (questionNote), even when
 // the task was already blocked.
 func (s *Store) SetTask(ctx context.Context, a Actor, number int, p model.Patch) (model.Task, error) {
-	p, err := s.checkPatch(a, p)
+	p, err := s.checkPatch(p)
 	if err != nil {
 		return model.Task{}, err
 	}
@@ -149,16 +138,13 @@ func questionNote(ctx context.Context, a Actor, task int, question string) write
 }
 
 // checkPatch checks a patch's values before any transaction and maps review with Merged to the OnMerged status.
-func (s *Store) checkPatch(a Actor, p model.Patch) (model.Patch, error) {
+func (s *Store) checkPatch(p model.Patch) (model.Patch, error) {
 	if p.Title != nil && strings.TrimSpace(*p.Title) == "" {
 		return p, refuse(model.CodeEmptyTitle, "a task needs a title")
 	}
 	if p.Status != nil {
 		st, err := parseStatus(*p.Status)
 		if err != nil {
-			return p, err
-		}
-		if err := s.checkArm(a, st); err != nil {
 			return p, err
 		}
 		if st == model.StatusReview && p.Merged {

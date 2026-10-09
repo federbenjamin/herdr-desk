@@ -118,10 +118,10 @@ Every command works with no ticker running; only the timed jobs wait (see
 ## Features
 
 - **Tasks.** `herdr-desk add`, `list`, `show`, `set`, `edit`, `steps`. Statuses are `open`, `ready`,
-  `started`, `blocked`, `review`, and `done`. `ready` means approved, not started: a person sets it,
-  and a run starts only when someone calls `herdr-desk run start`, or adds a task with
-  `herdr-desk add --start`. Agents may propose tasks and set `review`, `blocked`, or `done`; they set
-  `ready` only when `[coordinator] start_runs` is `auto`. An agent
+  `started`, `blocked`, `review`, and `done`. `ready` means queued, not started: `herdr-desk add` makes a
+  task `ready` unless `--status` says otherwise, and a run starts only when someone calls `herdr-desk run start`, or adds a task with
+  `herdr-desk add --start`. The board's add box and `capture` make a task `open`, your own to-do list,
+  and `n` on the board sets it `ready`. Agents add tasks and set any status. An agent
   session other than the coordinator starts a run only in a root with `agents_may_start = true`.
 - **A board.** Bare `herdr-desk` on a terminal is the board, in a herdr pane, a herdr popup, or any
   terminal. It shows what needs you, what is in motion, and what is on deck, and each live run's state.

@@ -88,9 +88,9 @@ const (
 )
 
 // Coordinator: StartRuns is "propose" (the coordinator proposes runs and waits for a go-ahead) or "auto" (it starts
-// them unasked, and an agent may set a task ready). Another agent may start a run only in a root with AgentsMayStart.
+// them unasked). Another agent may start a run only in a root with AgentsMayStart.
 type Coordinator struct {
-	StartRuns string `toml:"start_runs" comment:"WARNING: auto lets the coordinator start runs unasked and agents set tasks ready, which spends your quota; another agent may start a run only in a root with agents_may_start = true"`
+	StartRuns string `toml:"start_runs" comment:"WARNING: auto lets the coordinator start runs unasked, which spends your quota; another agent may start a run only in a root with agents_may_start = true"`
 }
 
 // Notify: written by setup; read by the runner (U2).

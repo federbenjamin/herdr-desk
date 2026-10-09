@@ -26,19 +26,17 @@ import (
 
 // Options configures a Store.
 type Options struct {
-	Scanner   secretscan.Scanner // nil → secretscan.Builtin()
-	Now       func() time.Time   // nil → time.Now
-	AutoStart bool               // [coordinator] start_runs = "auto": an agent may set a task ready
-	OnMerged  model.Status       // "" → model.StatusReview
+	Scanner  secretscan.Scanner // nil → secretscan.Builtin()
+	Now      func() time.Time   // nil → time.Now
+	OnMerged model.Status       // "" → model.StatusReview
 }
 
 // Store is an open desk database.
 type Store struct {
-	db        *sql.DB
-	scan      secretscan.Scanner
-	now       func() time.Time
-	autoStart bool
-	onMerged  model.Status
+	db       *sql.DB
+	scan     secretscan.Scanner
+	now      func() time.Time
+	onMerged model.Status
 }
 
 var (
@@ -65,7 +63,7 @@ func (o Options) withDefaults() (Options, error) {
 }
 
 func newStore(db *sql.DB, o Options) *Store {
-	return &Store{db: db, scan: o.Scanner, now: o.Now, autoStart: o.AutoStart, onMerged: o.OnMerged}
+	return &Store{db: db, scan: o.Scanner, now: o.Now, onMerged: o.OnMerged}
 }
 
 // Open opens the store at path. It creates the parent dir 0700 and the file 0600, uses WAL, and applies

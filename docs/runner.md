@@ -27,8 +27,7 @@ has a `starting`, `waiting`, or `running` run prints that run and exits 0. A tas
 ends that run, closes its pane, and starts a new one; while that pane may still be open (herdr would not close it)
 the new run fails, `run-failed`, and the ticker closes the pane again. Setting the task `done` ends an idle run too,
 and marks the pane of each of its ended runs owed a close: a worker's pane stays open after its hand-back, and the
-ticker closes it before it removes the worktree it sits in. An agent that sets
-`ready` is refused unless `start_runs` is `auto`.
+ticker closes it before it removes the worktree it sits in.
 
 **States.** A run is `starting`, `waiting`, `running`, or `idle` while live, and `ended`, `failed`, or
 `killed` after. `waiting` means the run cannot start now: its `in-place` root is busy (one `in-place`

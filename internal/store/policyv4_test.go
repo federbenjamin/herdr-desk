@@ -9,55 +9,6 @@ import (
 	"github.com/federbenjamin/herdr-desk/internal/store"
 )
 
-func TestAgentReadyNeedsAutoStartButDoneAndAgentThreadRemainAllowed(t *testing.T) {
-	ctx := context.Background()
-	agent := store.Actor{Session: "worker-session"}
-
-	t.Run("ready is refused when auto start is off", func(t *testing.T) {
-		st := openStore(t, store.Options{})
-		task := addOpenTask(t, st)
-		before := eventCount(t, st)
-
-		_, err := st.SetTask(ctx, agent, task.Number, model.Patch{Status: statusPtr(model.StatusReady)})
-		if got := refusalCode(t, err); got != model.CodeNotAllowed {
-			t.Fatalf("agent ready refusal = %q, want %q", got, model.CodeNotAllowed)
-		}
-		if got := eventCount(t, st); got != before {
-			t.Fatalf("events after refused ready = %d, want %d", got, before)
-		}
-	})
-
-	t.Run("auto start lets an agent ready an agent thread", func(t *testing.T) {
-		st := openStore(t, store.Options{AutoStart: true})
-		task := addOpenTask(t, st)
-		thread := "agent"
-
-		updated, err := st.SetTask(ctx, agent, task.Number, model.Patch{
-			Status: statusPtr(model.StatusReady),
-			Thread: &thread,
-		})
-		if err != nil {
-			t.Fatalf("agent ready an agent thread: %v", err)
-		}
-		if updated.Status != model.StatusReady || updated.Thread != thread {
-			t.Fatalf("updated task = %#v, want ready task with thread %q", updated, thread)
-		}
-	})
-
-	t.Run("done does not depend on auto start", func(t *testing.T) {
-		st := openStore(t, store.Options{})
-		task := addOpenTask(t, st)
-
-		updated, err := st.SetTask(ctx, agent, task.Number, model.Patch{Status: statusPtr(model.StatusDone)})
-		if err != nil {
-			t.Fatalf("agent set done: %v", err)
-		}
-		if updated.Status != model.StatusDone {
-			t.Fatalf("status = %q, want %q", updated.Status, model.StatusDone)
-		}
-	})
-}
-
 func TestSetCoordinatorRejectsAgentsAndKeepsCursorAcrossReplacement(t *testing.T) {
 	ctx := context.Background()
 	st := openStore(t, store.Options{})

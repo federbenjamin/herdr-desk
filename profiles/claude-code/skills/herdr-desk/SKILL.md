@@ -10,8 +10,8 @@ description: Use the herdr-desk CLI to read, add, and update the user's tasks, a
 ## What you may do
 
 - Set a task's status to `review` (work is done and waits for the user), `blocked` (you cannot go on without the user), or `done`.
-- Set `ready` only when the desk's `[coordinator] start_runs` is `auto`. Otherwise `ready` is the user's approval, and a refusal `not-allowed` means you tried; stop and report it.
-- Propose new work with `--thread agent`. It lands in the user's inbox. It does not start anything.
+- Set a task `ready` to queue it. `add` makes a task `ready` unless `--status` says otherwise. `ready` starts nothing.
+- Propose new work with `--thread agent`. It lands on the user's board as `ready`. It does not start anything.
 - Never run `herdr-desk runs kill`, `herdr-desk runner pause`, or `herdr-desk runner resume`: killing a run and pausing the runner are the user's acts. A session that owns a live run (a worker) never runs `herdr-desk run start`. Any other session may start a run only in a root whose `agents_may_start` is set; the user and the desk's coordinator start runs anywhere. You cannot read that setting: run `run start` once when you are asked to start a task, and a `not-allowed` refusal means the root does not let agents start runs. It is final: do not try another root or another identity.
 - You may set a task's first message with `herdr-desk set T12 --first-message "<template>"`: the template must hold `{task_file}`, and its run starts on it instead of plain text. Set it on a task you add and start; change another task's only when the user asks.
 - Never edit a task's title or notes to answer a question. Write a note instead. To add a line to a task's notes, use `herdr-desk edit T12 --append-notes "<text>"`; `--notes` replaces them.
@@ -67,4 +67,4 @@ Refusal codes you may see: `unknown-task`, `unknown-project`, `unknown-step`, `u
 - `secret-detected` names the pattern, never the text. Remove the secret and write the call again.
 - `stale-run` is final: a newer run owns the task, so do not write to it again.
 - `stale` means the notes changed after you read them and nothing was written. Read the task again, then add your line with `edit --append-notes` or write a note.
-- `not-allowed` is final. Use `review`, `blocked`, or `done`, or propose with `--thread agent`.
+- `not-allowed` is final: the act is the user's, or the root does not let agents start runs. Do not try another route.

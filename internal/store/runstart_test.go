@@ -93,7 +93,7 @@ func TestStartRunMarksTheIdleRunItEndsLeftOpenWhenItHasAPane(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			now := time.Date(2026, time.October, 4, 12, 0, 0, 0, time.UTC)
-			st := openRunPolicyStore(t, &now, false)
+			st := openRunPolicyStore(t, &now)
 			task, err := st.AddTask(ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{Title: "idle", Status: model.StatusReady}})
 			if err != nil {
 				t.Fatalf("add task: %v", err)
@@ -124,7 +124,7 @@ func TestStartRunMarksTheIdleRunItEndsLeftOpenWhenItHasAPane(t *testing.T) {
 func TestStartRunEndsAnIdleRunAndWaitsWhenTheCapIsFull(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, time.October, 4, 12, 0, 0, 0, time.UTC)
-	st := openRunPolicyStore(t, &now, false)
+	st := openRunPolicyStore(t, &now)
 	first, err := st.AddTask(ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{Title: "first", Status: model.StatusReady}})
 	if err != nil {
 		t.Fatalf("add first task: %v", err)
@@ -177,7 +177,7 @@ func TestStartRunEndsAnIdleRunAndWaitsWhenTheCapIsFull(t *testing.T) {
 func TestClaimWaitingStartsTheOldestRunOnceASlotOpens(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, time.October, 4, 12, 0, 0, 0, time.UTC)
-	st := openRunPolicyStore(t, &now, false)
+	st := openRunPolicyStore(t, &now)
 	var waiting []model.Run
 	for _, title := range []string{"first", "second"} {
 		task, err := st.AddTask(ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{Title: title, Status: model.StatusReady}})
@@ -221,7 +221,7 @@ func TestClaimWaitingStartsTheOldestRunOnceASlotOpens(t *testing.T) {
 func TestUpdateRunFromIdleKeepsTheOriginalStartTime(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, time.October, 4, 12, 0, 0, 0, time.UTC)
-	st := openRunPolicyStore(t, &now, false)
+	st := openRunPolicyStore(t, &now)
 	task, err := st.AddTask(ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{Title: "idle run", Status: model.StatusReady}})
 	if err != nil {
 		t.Fatalf("add task: %v", err)

@@ -19,7 +19,7 @@ func TestOfflineLiveListsUseTheSnapshotAndMarkJSONOffline(t *testing.T) {
 	cwd := t.TempDir()
 
 	for _, args := range [][]string{
-		{"add", "-t", "open task"},
+		{"add", "-t", "open task", "--status", "open"},
 		{"add", "-t", "ready task", "--status", "ready"},
 	} {
 		result := runDesk(t, getenv, cwd, "", args...)

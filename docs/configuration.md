@@ -14,7 +14,7 @@ max_runs_per_day = 20
 on_merged = "review"   # review | done
 
 [coordinator]
-# WARNING: auto lets the coordinator start runs unasked and agents set tasks ready, which spends your quota; another agent may start a run only in a root with agents_may_start = true
+# WARNING: auto lets the coordinator start runs unasked, which spends your quota; another agent may start a run only in a root with agents_may_start = true
 start_runs = "propose" # propose | auto
 
 [[roots]]

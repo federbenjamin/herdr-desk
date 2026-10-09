@@ -16,9 +16,8 @@ import (
 // cannot be opened leaves the runner on the standard logger. Close closes both.
 func Open(p config.Paths, c config.Config) (*Runner, error) {
 	st, err := store.Open(p.DB(), store.Options{
-		Scanner:   secretscan.FromConfig(c.SecretScan.Command),
-		AutoStart: c.Coordinator.StartRuns == config.StartRunsAuto,
-		OnMerged:  model.Status(c.Runner.OnMerged),
+		Scanner:  secretscan.FromConfig(c.SecretScan.Command),
+		OnMerged: model.Status(c.Runner.OnMerged),
 	})
 	if err != nil {
 		return nil, err
