@@ -64,9 +64,8 @@ To undo the install: `claude plugin uninstall herdr-desk@herdr-desk`, `herdr plu
 delete the two `herdr-desk` blocks from herdr's `config.toml` or put its `config.toml.herdr-desk-bak-<time>`
 back.
 
-The Claude Code plugin registers a `SessionStart` hook (`herdr-desk hook start --format claude-code`) and two
-skills: `herdr-desk`, and `/dispatch-build`, which starts a `/build` run (the agent-build plugin) as a desk task
-in its own worktree and watches it. Optional, and only on a machine where `claude` was not on your PATH at install: inside
+The Claude Code plugin registers a `SessionStart` hook (`herdr-desk hook start --format claude-code`) and one
+skill, `herdr-desk`. Optional, and only on a machine where `claude` was not on your PATH at install: inside
 Claude Code, run `/plugin marketplace add federbenjamin/herdr-desk`, then `/plugin install herdr-desk@herdr-desk`.
 `herdr-desk setup` also writes the skill to `~/.claude/skills/herdr-desk/SKILL.md` when you pass
 `--skill-dir ~/.claude/skills`.

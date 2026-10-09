@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The `/dispatch-build` skill is gone from the Claude Code plugin: a `/build` runs in the session that was asked
+  for it, with subagents, and is one task line on the desk. The runner and the coordinator stay.
 - `herdr-desk add --start` adds a task and starts its run in one call, taking `run start`'s route flags
   (`--root`, `--isolation`, `--model`, `--first-message`); `--json` prints `{"task": …, "run": …}`. A start
   that is refused leaves the task and names it in the refusal.
