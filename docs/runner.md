@@ -55,8 +55,11 @@ pipeline hands back; a run with no `first_message` keeps it. The ticker removes 
 failed, or been killed. A file it cannot write blocks the task, as a worker command that cannot start
 does. No task text ever reaches a shell. A note records the workspace and pane, and `[notify] command` runs
 once per spawn. A worker finishes with `review` or `blocked` (`herdr-desk set T<n> review` or `blocked`),
-which ends its run. Every write it makes carries its run id, and a write from a run that is not the task's
-newest is refused with `stale-run`.
+which ends its run. A worker that asks a question and goes on working (a `/build` that parks a unit and builds
+the rest) sets `herdr-desk set T<n> blocked --question <text>` instead: the task is `blocked`, the note names the
+run's pane (`the worker is waiting for an answer in pane <id>: <text>`), and the run stays live, so the
+tracking below returns the task to `started` once an answer is typed in the pane. Every write it makes carries
+its run id, and a write from a run that is not the task's newest is refused with `stale-run`.
 
 ## Tracking
 
@@ -69,10 +72,12 @@ and `DESK_HOOKS=off` exit 0 and write nothing. What the hook does with the pane'
 |---|---|---|
 | gone | `ended` | `review`, unless the worker already handed back |
 | `blocked`, and the session is the run's or the pane has none yet | `idle` | `blocked`, the note names the pane |
-| `idle` or `done`, the session is the run's, the worker has not handed back | `idle` | `review`, with the note "went idle without handing back" |
+| `idle` or `done`, the session is the run's, the worker has not handed back | `idle` | `review`, with the note "went idle without handing back", only from `started`: a task blocked by its question, or one a person moved, keeps its status and gets no note |
 | `working`, and the run is `idle` | `running` | `started` |
 
-A repeated event changes nothing. A worker that stops at a question before it has an agent session, such
+A repeated event changes nothing. A task blocked by its run's question stays `blocked` while the pane works on
+(its run is `running`, so the `working` row does not apply); when the turn ends the run goes `idle`, and the
+first `working` after that, an answer typed in the pane, sets it `started`. A worker that stops at a question before it has an agent session, such
 as the `claude` trust question ([Install](../README.md#with-herdr)), shows as `blocked` with no session: the task stays `blocked` until a
 person answers in the pane, and the worker, still the task's newest run, can then hand it back.
 

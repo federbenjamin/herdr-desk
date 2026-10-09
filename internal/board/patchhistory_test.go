@@ -28,8 +28,8 @@ func TestTaskPageHistoryNamesEveryPatchField(t *testing.T) {
 	for i := range pt.NumField() {
 		field := pt.Field(i)
 		name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
-		if name == "notes_were" {
-			continue // a precondition, never stored in a set event
+		if name == "notes_were" || name == "question" {
+			continue // a precondition or a note's text, never stored in a set event
 		}
 		text, ok := want[name]
 		if !ok {

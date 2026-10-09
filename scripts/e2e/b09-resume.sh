@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # H32: an idle worker sets its task review, resuming returns it to started, a pane that blocks with no session sets the
 # task blocked, and `run start` on an idle run ends it and starts a new one. An idle run is live: done ends it, the
-# worker's own review ends it and frees its in-place root, and a person's blocked leaves a running run alone. Each
+# worker's own review ends it and frees its in-place root, a person's blocked leaves a running run alone, and a
+# worker's blocked with a question keeps its run, stays blocked past the turn's end, and starts on an answer. Each
 # status change is told to the fake herdr, which fires the event hook as herdr does.
 # shellcheck source=scripts/e2e/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -103,4 +104,26 @@ sleep 1
 run_is 5 running || fail "a person's blocked changed run 5 to $(run_field 5 state)"
 task_is 4 blocked || fail "T4 is $(task_field 4 status)"
 ok "a person's blocked on a started task leaves the run running"
+
+# A worker's question blocks its task and keeps its run; the turn's end keeps the task blocked; working starts it.
+run 0 on home herdr-desk add -t "asks in text" --desk
+run 0 on home herdr-desk run start T5 --root "$SELF" --model sonnet
+wait_run 6 running
+SESSION6=$(run_field 6 session)
+PANE6=$(run_field 6 pane)
+wait_long 10 "the sixth worker to report its session" pane_has_session "$SESSION6"
+run 0 as_agent home "$SESSION6" env DESK_RUN=6 herdr-desk set T5 blocked --question "which address?"
+run_is 6 running || fail "the worker's question changed run 6 to $(run_field 6 state)"
+task_is 5 blocked || fail "T5 is $(task_field 5 status)"
+task_has_note 5 "pane $PANE6: which address?" || fail "no note names pane $PANE6 and the question: $(task_notes 5)"
+ok "a worker's question: T5 blocked, note names the pane, run 6 still running"
+report "$PANE6" "done"
+wait_run 6 idle
+task_is 5 blocked || fail "the turn's end moved T5 to $(task_field 5 status)"
+! task_has_note 5 "went idle without handing back" || fail "the turn's end noted went idle: $(task_notes 5)"
+ok "the turn's end: run 6 idle, T5 still blocked, no went-idle note"
+report "$PANE6" working
+wait_run 6 running
+wait_task 5 started
+ok "an answer in the pane: run 6 running, T5 started"
 pass
