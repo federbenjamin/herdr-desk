@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/federbenjamin/herdr-desk/internal/config"
+	"github.com/federbenjamin/herdr-desk/internal/model"
 	"github.com/federbenjamin/herdr-desk/internal/setup"
 	"github.com/federbenjamin/herdr-desk/internal/version"
 )
@@ -31,8 +32,8 @@ func (a *app) clientCmd() *cobra.Command {
 }
 
 func (a *app) rootsCmd() *cobra.Command {
-	var asJSON bool
-	var about, isolation string
+	var asJSON, agentsMayStart bool
+	var about, isolation, firstMessage string
 	list := func(_ *cobra.Command, _ []string) error {
 		c, err := a.config()
 		if err != nil {
@@ -58,6 +59,9 @@ func (a *app) rootsCmd() *cobra.Command {
 				path = filepath.Join(a.env.Cwd, path)
 			}
 			if err := change(cmd, &c, path); err != nil {
+				if _, ok := model.AsRefusal(err); ok {
+					return err
+				}
 				return usage("%v", err)
 			}
 			if err := c.Save(a.paths.ConfigFile()); err != nil {
@@ -84,11 +88,30 @@ func (a *app) rootsCmd() *cobra.Command {
 			if cmd.Flags().Changed("isolation") {
 				r.Isolation = isolation
 			}
+			if cmd.Flags().Changed("first-message") {
+				r.FirstMessage = firstMessage
+			}
+			if cmd.Flags().Changed("agents-may-start") {
+				if agentsMayStart {
+					session, err := a.callerSession()
+					if err != nil {
+						return err
+					}
+					if session != "" {
+						return &model.Refusal{Code: model.CodeNotAllowed,
+							Msg: "an agent may not let agents start runs in a root; a person does"}
+					}
+				}
+				r.AgentsMayStart = agentsMayStart
+			}
 			return c.AddRoot(r)
 		}),
 	}
 	add.Flags().StringVar(&about, "about", "", "what the root holds, for the coordinator")
 	add.Flags().StringVar(&isolation, "isolation", "", "self, worktree, or in-place (unset: worktree for a git top, else in-place)")
+	add.Flags().StringVar(&firstMessage, "first-message", "", "the root's default first message, holding {task_file}; '' clears it")
+	add.Flags().BoolVar(&agentsMayStart, "agents-may-start", false,
+		"let agent sessions other than the coordinator start runs here; =false takes it back (a person's choice: an agent is refused)")
 	remove := &cobra.Command{
 		Use:   "remove <path>",
 		Short: "Remove a root",
