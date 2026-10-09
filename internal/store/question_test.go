@@ -14,7 +14,7 @@ func runningWithPane(t *testing.T, st *store.Store, pane string) (model.Task, mo
 	t.Helper()
 	ctx := context.Background()
 	task := mustAdd(t, st, "asks in text", model.StatusReady, "")
-	run, err := st.StartRun(ctx, task.Number, policyRoute, store.RunCaps{Slots: 1, PerDay: 1000})
+	run, err := st.StartRun(ctx, store.Actor{}, task.Number, policyRoute, store.RunCaps{Slots: 1, PerDay: 1000})
 	if err != nil {
 		t.Fatalf("start run: %v", err)
 	}

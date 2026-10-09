@@ -143,7 +143,7 @@ func TestSetTaskDoneOwesAClosedPaneToEveryEndedRunWithOne(t *testing.T) {
 	ctx := context.Background()
 	st := openStore(t, store.Options{})
 	task := mustAdd(t, st, "done after review", model.StatusReady, "")
-	first, err := st.StartRun(ctx, task.Number, startRoute, store.RunCaps{Slots: 2, PerDay: 1000})
+	first, err := st.StartRun(ctx, store.Actor{}, task.Number, startRoute, store.RunCaps{Slots: 2, PerDay: 1000})
 	if err != nil {
 		t.Fatalf("start run: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestSetTaskDoneOwesAClosedPaneToEveryEndedRunWithOne(t *testing.T) {
 	if _, err := st.SetTask(ctx, store.Actor{Session: "worker", Run: first.ID}, task.Number, model.Patch{Status: &review}); err != nil {
 		t.Fatalf("worker hands back: %v", err)
 	}
-	second, err := st.StartRun(ctx, task.Number, startRoute, store.RunCaps{Slots: 2, PerDay: 1000})
+	second, err := st.StartRun(ctx, store.Actor{}, task.Number, startRoute, store.RunCaps{Slots: 2, PerDay: 1000})
 	if err != nil {
 		t.Fatalf("start second run: %v", err)
 	}
@@ -162,7 +162,7 @@ func TestSetTaskDoneOwesAClosedPaneToEveryEndedRunWithOne(t *testing.T) {
 		t.Fatalf("run the second = (%t, %v)", ok, err)
 	}
 	other := mustAdd(t, st, "another task", model.StatusReady, "")
-	if _, err := st.StartRun(ctx, other.Number, startRoute, store.RunCaps{Slots: 2, PerDay: 1000}); err != nil {
+	if _, err := st.StartRun(ctx, store.Actor{}, other.Number, startRoute, store.RunCaps{Slots: 2, PerDay: 1000}); err != nil {
 		t.Fatalf("start the other task's run: %v", err)
 	}
 
