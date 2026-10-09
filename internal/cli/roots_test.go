@@ -56,3 +56,39 @@ func TestRootsAddRefusesAPathThatIsNotAnExistingDirectory(t *testing.T) {
 		}
 	}
 }
+
+func TestRootsAddSetsFirstMessageAndAgentsMayStartAndOnlyAPersonGrantsAgents(t *testing.T) {
+	home := testutil.StartHome(t, testutil.HomeOptions{})
+	cwd := t.TempDir()
+	root := filepath.Join(cwd, "project")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	agent := map[string]string{"DESK_SESSION": "agent-session"}
+	for _, step := range []struct {
+		args      []string
+		env       map[string]string
+		exit      int
+		wantFirst string
+		wantMay   bool
+	}{
+		{[]string{"roots", "add", root, "--agents-may-start", "--first-message", "/build {task_file}"}, nil, 0, "/build {task_file}", true},
+		{[]string{"roots", "add", root, "--about", "kept"}, nil, 0, "/build {task_file}", true},
+		{[]string{"roots", "add", root, "--agents-may-start=false"}, agent, 0, "/build {task_file}", false},
+		{[]string{"roots", "add", root, "--agents-may-start"}, agent, 1, "/build {task_file}", false},
+		{[]string{"roots", "add", root, "--first-message", "/build"}, nil, 2, "/build {task_file}", false},
+		{[]string{"roots", "add", root, "--first-message", ""}, nil, 0, "", false},
+	} {
+		result := runDeskWithEnv(t, home.Machine, cwd, step.args, "", step.env)
+		if result.exit != step.exit {
+			t.Fatalf("%v exit = %d, stderr = %q; want %d", step.args, result.exit, result.stderr, step.exit)
+		}
+		if step.exit == 1 && !strings.Contains(result.stderr, "not-allowed") {
+			t.Fatalf("%v stderr = %q, want not-allowed", step.args, result.stderr)
+		}
+		cfg, err := config.Load(home.Paths.ConfigFile())
+		if err != nil || len(cfg.Roots) != 1 || cfg.Roots[0].FirstMessage != step.wantFirst || cfg.Roots[0].AgentsMayStart != step.wantMay {
+			t.Fatalf("after %v roots = %#v, %v; want first_message %q and agents_may_start %t", step.args, cfg.Roots, err, step.wantFirst, step.wantMay)
+		}
+	}
+}

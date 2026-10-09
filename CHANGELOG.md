@@ -15,6 +15,9 @@
   herdr shows a build step's output only when it fails, so the report is also written to
   `<XDG_STATE_HOME or ~/.local/state>/herdr-desk/install.log`. `herdr-desk setup` re-runs setup; the two
   `claude plugin` commands re-run the Claude Code plugin step.
+- `herdr-desk roots add` takes `--first-message <template>` and `--agents-may-start[=false]`, so neither key needs
+  a hand edit of `config.toml`. An agent session that passes `--agents-may-start` is refused `not-allowed`: letting
+  agents start runs is a person's choice.
 - `herdr-desk setup` creates herdr's `config.toml` when herdr is found and has none, holding only
   herdr-desk's keys and sidebar row (0600, no backup). With no herdr found, or with `--no-herdr`, it
   still writes nothing there; with no herdr found it says why and to run `herdr-desk setup` once herdr is
