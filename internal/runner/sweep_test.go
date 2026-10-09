@@ -63,7 +63,7 @@ func TestJobsRemovesACleanDoneWorktreeWithoutWritingANote(t *testing.T) {
 	task := f.armRoute("remove clean worktree", root, "worktree")
 	r := f.runner()
 	f.startRun(r, task.Number)
-	worktree := filepath.Join(parent, "repo-T"+strconv.Itoa(task.Number))
+	worktree := filepath.Join(root, ".claude", "worktrees", "T"+strconv.Itoa(task.Number))
 	if _, err := os.Stat(worktree); err != nil {
 		t.Fatalf("worktree before done: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestJobsClosesADoneTasksPaneBeforeItRemovesTheWorktree(t *testing.T) {
 	task := f.armRoute("done with its pane open", root, "worktree")
 	r := f.runner()
 	run := f.startRun(r, task.Number)
-	worktree := filepath.Join(parent, "repo-T"+strconv.Itoa(task.Number))
+	worktree := filepath.Join(root, ".claude", "worktrees", "T"+strconv.Itoa(task.Number))
 
 	review := model.StatusReview
 	if _, err := f.store.SetTask(f.ctx, store.Actor{Session: run.Session, Run: run.ID}, task.Number, model.Patch{Status: &review}); err != nil {
@@ -145,7 +145,7 @@ func TestJobsNotesADirtyWorktreeOnceForEachDoneCycle(t *testing.T) {
 	task := f.armRoute("keep dirty worktree", root, "worktree")
 	r := f.runner()
 	f.startRun(r, task.Number)
-	worktree := filepath.Join(parent, "repo-T"+strconv.Itoa(task.Number))
+	worktree := filepath.Join(root, ".claude", "worktrees", "T"+strconv.Itoa(task.Number))
 	if err := os.WriteFile(filepath.Join(worktree, "tracked.txt"), []byte("changed\n"), 0o600); err != nil {
 		t.Fatalf("dirty worktree: %v", err)
 	}

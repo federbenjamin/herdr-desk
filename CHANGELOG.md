@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- A `worktree` run's tree is now `<root>/.claude/worktrees/T<n>`, inside the root instead of beside it, so roots
+  whose tooling refuses a worktree that is not nested under its main checkout work. A root that does not ignore the
+  folder gets it added to `.git/info/exclude`. A tree already at the old `<root>-T<n>` path keeps being used.
 - `herdr-desk add` makes a task `ready` unless `--status` says otherwise. The board's add box and `capture`
   still make it `open`, your own to-do list; `n` on the board sets it `ready` when you want it queued.
 - An agent may set a task `ready` whatever `[coordinator] start_runs` says, and a `ready` task is no longer a

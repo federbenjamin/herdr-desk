@@ -40,8 +40,13 @@ The state gates only starting runs, so a run that was live when the runner was s
 handed back and checked by the ticker. No limit stops a run by time: `cap` and `max_runs_per_day` bound the cost.
 `runner pause`, `resume`, and `runs kill` are a person's acts.
 
-**The spawn.** `worktree` isolation uses `<parent of root>/<root>-T<n>` on the branch
-`desk/T<n>-<slug>` (made on the first run, reused after). The runner creates a herdr workspace
+**The spawn.** `worktree` isolation uses `<root>/.claude/worktrees/T<n>` on the branch
+`desk/T<n>-<slug>` (made on the first run, reused after). The tree sits inside its root because a root's dev
+tooling can require a linked worktree to be nested under the main checkout; the folder is the one Claude Code
+uses, so a root that ignores that already ignores this. When no ignore rule covers it, the runner adds
+`/.claude/worktrees/` to the root's `.git/info/exclude` (never to a tracked file) before it makes the tree. A tree
+a run made at the old path, `<parent of root>/<root>-T<n>`, is used when the new path has none: a resume adds no
+second tree, and the ticker removes it like any other. The runner creates a herdr workspace
 labelled `desk T<n>` without taking focus, with `DESK_TASK`, `DESK_SESSION`, `DESK_RUN`, and the
 four XDG variables of the home's folders, so the `herdr-desk` in the pane uses the same store. The pane runs
 `exec <the herdr-desk binary> worker`. `herdr-desk worker` builds the worker's first message from the task

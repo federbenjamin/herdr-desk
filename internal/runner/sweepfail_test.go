@@ -32,7 +32,7 @@ func sweepDoneWorktree(t *testing.T, dirty bool) (*fixture, *runner.Runner, mode
 	task := f.armRoute("sweep me", root, "worktree")
 	r := f.runner()
 	f.startRun(r, task.Number)
-	tree := filepath.Join(parent, "repo-T"+strconv.Itoa(task.Number))
+	tree := filepath.Join(root, ".claude", "worktrees", "T"+strconv.Itoa(task.Number))
 	if dirty {
 		if err := os.WriteFile(filepath.Join(tree, "tracked.txt"), []byte("changed\n"), 0o600); err != nil {
 			t.Fatal(err)
@@ -168,8 +168,8 @@ func TestJobsLeavesAPlainFolderAtTheWorktreePathQuietly(t *testing.T) {
 	if _, err := f.store.SetTask(f.ctx, store.Actor{}, task.Number, model.Patch{Status: &done}); err != nil {
 		t.Fatal(err)
 	}
-	plain := filepath.Join(parent, "repo-T"+strconv.Itoa(task.Number))
-	if err := os.Mkdir(plain, 0o700); err != nil {
+	plain := filepath.Join(root, ".claude", "worktrees", "T"+strconv.Itoa(task.Number))
+	if err := os.MkdirAll(plain, 0o700); err != nil {
 		t.Fatal(err)
 	}
 
