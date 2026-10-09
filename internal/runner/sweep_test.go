@@ -87,6 +87,49 @@ func TestJobsRemovesACleanDoneWorktreeWithoutWritingANote(t *testing.T) {
 	}
 }
 
+// A done hand-back leaves the worker's pane open in the worktree: Jobs closes that pane before it removes the tree,
+// and a pane that does not close keeps the tree until a later tick closes it.
+func TestJobsClosesADoneTasksPaneBeforeItRemovesTheWorktree(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "repo")
+	spawnGitRoot(t, root)
+	f := newFixture(t, root, "worktree")
+	task := f.armRoute("done with its pane open", root, "worktree")
+	r := f.runner()
+	run := f.startRun(r, task.Number)
+	worktree := filepath.Join(parent, "repo-T"+strconv.Itoa(task.Number))
+
+	review := model.StatusReview
+	if _, err := f.store.SetTask(f.ctx, store.Actor{Session: run.Session, Run: run.ID}, task.Number, model.Patch{Status: &review}); err != nil {
+		t.Fatalf("worker hands back: %v", err)
+	}
+	done := model.StatusDone
+	if _, err := f.store.SetTask(f.ctx, store.Actor{}, task.Number, model.Patch{Status: &done}); err != nil {
+		t.Fatalf("finish task: %v", err)
+	}
+	if got := f.run(task.Number); got.State != model.RunEnded || !got.LeftOpen {
+		t.Fatalf("run after done = %#v, want ended with its pane owed a close", got)
+	}
+
+	f.herdr.Fail("ClosePane", errors.New("herdr would not close it"))
+	r.Jobs(f.ctx)
+	if _, err := os.Stat(worktree); err != nil {
+		t.Fatalf("worktree after a pane that did not close: %v, want it kept", err)
+	}
+
+	f.herdr.Fail("ClosePane", nil)
+	r.Jobs(f.ctx)
+	if closed := f.herdr.Closed(); len(closed) != 1 || closed[0] != run.Pane {
+		t.Fatalf("closed panes = %q, want the run's pane %s", closed, run.Pane)
+	}
+	if got := f.run(task.Number); got.LeftOpen {
+		t.Fatalf("run after its pane closed = %#v, want no close owed", got)
+	}
+	if _, err := os.Stat(worktree); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("worktree after its pane closed: stat error = %v, want removed", err)
+	}
+}
+
 func TestJobsNotesADirtyWorktreeOnceForEachDoneCycle(t *testing.T) {
 	parent := t.TempDir()
 	root := filepath.Join(parent, "repo")
