@@ -18,7 +18,7 @@ func TestLiveRunOfSessionReturnsTheNewestLiveRunAndFallsBackWhenItEnds(t *testin
 	if err != nil {
 		t.Fatalf("add first task: %v", err)
 	}
-	first, err := st.StartRun(ctx, firstTask.Number, startRoute, store.RunCaps{Slots: 100, PerDay: 1000})
+	first, err := st.StartRun(ctx, store.Actor{}, firstTask.Number, startRoute, store.RunCaps{Slots: 100, PerDay: 1000})
 	if err != nil {
 		t.Fatalf("start first run: %v", err)
 	}
@@ -32,7 +32,7 @@ func TestLiveRunOfSessionReturnsTheNewestLiveRunAndFallsBackWhenItEnds(t *testin
 	if err != nil {
 		t.Fatalf("add newer task: %v", err)
 	}
-	newer, err := st.StartRun(ctx, newerTask.Number, startRoute, store.RunCaps{Slots: 100, PerDay: 1000})
+	newer, err := st.StartRun(ctx, store.Actor{}, newerTask.Number, startRoute, store.RunCaps{Slots: 100, PerDay: 1000})
 	if err != nil {
 		t.Fatalf("start newer run: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestLiveRunOfSessionDoesNotMatchAnEmptySession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add task: %v", err)
 	}
-	if _, err := st.StartRun(ctx, task.Number, startRoute, store.RunCaps{Slots: 100, PerDay: 1000}); err != nil {
+	if _, err := st.StartRun(ctx, store.Actor{}, task.Number, startRoute, store.RunCaps{Slots: 100, PerDay: 1000}); err != nil {
 		t.Fatalf("start run: %v", err)
 	}
 

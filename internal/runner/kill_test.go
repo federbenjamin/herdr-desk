@@ -101,7 +101,7 @@ func TestKillStopsStartingAndWaitingRunsWithoutCallingHerdr(t *testing.T) {
 			f := newFixture(t, "", "in-place")
 			task := f.armRoute("kill me", f.root, "in-place")
 			r := f.runner()
-			run, err := f.store.StartRun(f.ctx, task.Number, store.RunRoute{Root: f.root, Isolation: "in-place", Model: "model-a"}, store.RunCaps{Slots: tc.cap, PerDay: 1000})
+			run, err := f.store.StartRun(f.ctx, store.Actor{}, task.Number, store.RunRoute{Root: f.root, Isolation: "in-place", Model: "model-a"}, store.RunCaps{Slots: tc.cap, PerDay: 1000})
 			if err != nil || run.State != state {
 				t.Fatalf("start %s run = %#v, %v", state, run, err)
 			}

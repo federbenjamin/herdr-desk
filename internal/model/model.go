@@ -35,8 +35,9 @@ type Who string
 
 // The two writers.
 const (
-	WhoUser  Who = "user"
-	WhoAgent Who = "agent"
+	WhoUser   Who = "user"
+	WhoAgent  Who = "agent"
+	WhoRunner Who = "runner" // the runner's own writes: a hand-back, a spawn's note, a ticker job's note
 )
 
 // Step is one checklist item of a task.

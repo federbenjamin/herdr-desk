@@ -241,7 +241,7 @@ func TestConcurrentUpdateRunWritesWaitInsteadOfReturningBusy(t *testing.T) {
 			st.Close()
 			t.Fatalf("add ready task %d: %v", i, err)
 		}
-		run, err := st.StartRun(context.Background(), task.Number, store.RunRoute{}, store.RunCaps{Slots: 100, PerDay: 1000})
+		run, err := st.StartRun(context.Background(), store.Actor{}, task.Number, store.RunRoute{}, store.RunCaps{Slots: 100, PerDay: 1000})
 		if err != nil {
 			st.Close()
 			t.Fatalf("start run for task %d: %v", task.Number, err)

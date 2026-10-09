@@ -183,7 +183,7 @@ func w2AddTask(t *testing.T, st *store.Store, title string) model.Task {
 }
 
 func w2StartRun(ctx context.Context, st *store.Store, task int) (model.Run, error) {
-	return st.StartRun(ctx, task, store.RunRoute{Root: "/work/w2", Isolation: "worktree", Model: "w2-model"}, store.RunCaps{Slots: 100, PerDay: 1000})
+	return st.StartRun(ctx, store.Actor{}, task, store.RunRoute{Root: "/work/w2", Isolation: "worktree", Model: "w2-model"}, store.RunCaps{Slots: 100, PerDay: 1000})
 }
 
 func w2AssertRefusal(t *testing.T, err error, want string) {

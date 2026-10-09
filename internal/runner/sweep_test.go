@@ -16,7 +16,7 @@ import (
 func TestJobsDeletesOnlyFilesForFinalRuns(t *testing.T) {
 	f := newFixture(t, "", "self")
 	finalTask := f.armRoute("final run", f.root, "self")
-	finalRun, err := f.store.StartRun(f.ctx, finalTask.Number, store.RunRoute{Root: f.root, Isolation: "self"}, store.RunCaps{Slots: 1, PerDay: 20})
+	finalRun, err := f.store.StartRun(f.ctx, store.Actor{}, finalTask.Number, store.RunRoute{Root: f.root, Isolation: "self"}, store.RunCaps{Slots: 1, PerDay: 20})
 	if err != nil {
 		t.Fatalf("start final run: %v", err)
 	}
@@ -25,7 +25,7 @@ func TestJobsDeletesOnlyFilesForFinalRuns(t *testing.T) {
 	}
 
 	liveTask := f.armRoute("live run", f.root, "self")
-	liveRun, err := f.store.StartRun(f.ctx, liveTask.Number, store.RunRoute{Root: f.root, Isolation: "self"}, store.RunCaps{Slots: 0, PerDay: 20})
+	liveRun, err := f.store.StartRun(f.ctx, store.Actor{}, liveTask.Number, store.RunRoute{Root: f.root, Isolation: "self"}, store.RunCaps{Slots: 0, PerDay: 20})
 	if err != nil {
 		t.Fatalf("start waiting run: %v", err)
 	}

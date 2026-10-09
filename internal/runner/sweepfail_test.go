@@ -190,7 +190,7 @@ func TestJobsLogsEachRunFileItCannotRemoveAndGoesOn(t *testing.T) {
 	var ids []int64
 	for _, title := range []string{"first", "second"} {
 		task := f.armRoute(title, f.root, "self")
-		run, err := f.store.StartRun(f.ctx, task.Number, store.RunRoute{Root: f.root, Isolation: "self"}, store.RunCaps{Slots: 3, PerDay: 20})
+		run, err := f.store.StartRun(f.ctx, store.Actor{}, task.Number, store.RunRoute{Root: f.root, Isolation: "self"}, store.RunCaps{Slots: 3, PerDay: 20})
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -5,6 +5,8 @@
 - `herdr-desk add --start` adds a task and starts its run in one call, taking `run start`'s route flags
   (`--root`, `--isolation`, `--model`, `--first-message`); `--json` prints `{"task": …, "run": …}`. A start
   that is refused leaves the task and names it in the refusal.
+- History names who made each write: the runner's own writes (a hand-back from herdr's events or the ticker, a
+  spawn's note) are `runner`, not `user`, and `run start` from an agent session records that session as `agent`.
 - `herdr plugin install federbenjamin/herdr-desk` is the whole install: its build step places the binary,
   then runs `herdr-desk setup`, with the `claude-code` profile when `claude` is on PATH, and with `claude`
   on PATH installs the Claude Code plugin (`claude plugin marketplace add federbenjamin/herdr-desk`, then

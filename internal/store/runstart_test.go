@@ -98,14 +98,14 @@ func TestStartRunMarksTheIdleRunItEndsLeftOpenWhenItHasAPane(t *testing.T) {
 			if err != nil {
 				t.Fatalf("add task: %v", err)
 			}
-			idle, err := st.StartRun(ctx, task.Number, policyRoute, store.RunCaps{Slots: 1, PerDay: 1000})
+			idle, err := st.StartRun(ctx, store.Actor{}, task.Number, policyRoute, store.RunCaps{Slots: 1, PerDay: 1000})
 			if err != nil {
 				t.Fatalf("start run: %v", err)
 			}
 			if ok, err := st.UpdateRun(ctx, idle.ID, model.RunStarting, store.RunUpdate{State: model.RunIdle, Workspace: "w1", Pane: tc.pane}); err != nil || !ok {
 				t.Fatalf("idle the run = (%t, %v)", ok, err)
 			}
-			next, err := st.StartRun(ctx, task.Number, policyRoute, store.RunCaps{Slots: 1, PerDay: 1000})
+			next, err := st.StartRun(ctx, store.Actor{}, task.Number, policyRoute, store.RunCaps{Slots: 1, PerDay: 1000})
 			if err != nil {
 				t.Fatalf("start over the idle run: %v", err)
 			}
@@ -129,7 +129,7 @@ func TestStartRunEndsAnIdleRunAndWaitsWhenTheCapIsFull(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add first task: %v", err)
 	}
-	idle, err := st.StartRun(ctx, first.Number, policyRoute, store.RunCaps{Slots: 1, PerDay: 1000})
+	idle, err := st.StartRun(ctx, store.Actor{}, first.Number, policyRoute, store.RunCaps{Slots: 1, PerDay: 1000})
 	if err != nil {
 		t.Fatalf("start first run: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestStartRunEndsAnIdleRunAndWaitsWhenTheCapIsFull(t *testing.T) {
 	}
 
 	now = now.Add(time.Minute)
-	replacement, err := st.StartRun(ctx, first.Number, policyRoute, store.RunCaps{Slots: 1, PerDay: 1000})
+	replacement, err := st.StartRun(ctx, store.Actor{}, first.Number, policyRoute, store.RunCaps{Slots: 1, PerDay: 1000})
 	if err != nil {
 		t.Fatalf("start replacement run: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestStartRunEndsAnIdleRunAndWaitsWhenTheCapIsFull(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add second task: %v", err)
 	}
-	waiting, err := st.StartRun(ctx, second.Number, policyRoute, store.RunCaps{Slots: 1, PerDay: 1000})
+	waiting, err := st.StartRun(ctx, store.Actor{}, second.Number, policyRoute, store.RunCaps{Slots: 1, PerDay: 1000})
 	if err != nil {
 		t.Fatalf("start capped run: %v", err)
 	}
@@ -184,7 +184,7 @@ func TestClaimWaitingStartsTheOldestRunOnceASlotOpens(t *testing.T) {
 		if err != nil {
 			t.Fatalf("add %s task: %v", title, err)
 		}
-		run, err := st.StartRun(ctx, task.Number, policyRoute, store.RunCaps{Slots: 0, PerDay: 1000})
+		run, err := st.StartRun(ctx, store.Actor{}, task.Number, policyRoute, store.RunCaps{Slots: 0, PerDay: 1000})
 		if err != nil {
 			t.Fatalf("start %s run: %v", title, err)
 		}
@@ -226,7 +226,7 @@ func TestUpdateRunFromIdleKeepsTheOriginalStartTime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add task: %v", err)
 	}
-	run, err := st.StartRun(ctx, task.Number, policyRoute, store.RunCaps{Slots: 1, PerDay: 1000})
+	run, err := st.StartRun(ctx, store.Actor{}, task.Number, policyRoute, store.RunCaps{Slots: 1, PerDay: 1000})
 	if err != nil {
 		t.Fatalf("start run: %v", err)
 	}
@@ -255,7 +255,7 @@ func TestHandBackWithALostClaimWritesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add task: %v", err)
 	}
-	run, err := st.StartRun(ctx, task.Number, policyRoute, store.RunCaps{Slots: 1, PerDay: 1000})
+	run, err := st.StartRun(ctx, store.Actor{}, task.Number, policyRoute, store.RunCaps{Slots: 1, PerDay: 1000})
 	if err != nil {
 		t.Fatalf("start run: %v", err)
 	}
@@ -302,7 +302,7 @@ func TestStartRunHoldsTheDayCapAgainstConcurrentProcesses(t *testing.T) {
 	caps := store.RunCaps{Slots: 100, PerDay: 3}
 	for range 2 {
 		task := mustAdd(t, seed, "spent", model.StatusReady, "")
-		if _, err := seed.StartRun(ctx, task.Number, policyRoute, caps); err != nil {
+		if _, err := seed.StartRun(ctx, store.Actor{}, task.Number, policyRoute, caps); err != nil {
 			t.Fatalf("spend the day: %v", err)
 		}
 	}
@@ -321,7 +321,7 @@ func TestStartRunHoldsTheDayCapAgainstConcurrentProcesses(t *testing.T) {
 	for i := range racers {
 		done.Go(func() {
 			gate.Wait()
-			_, errs[i] = stores[i].StartRun(ctx, tasks[i], policyRoute, caps)
+			_, errs[i] = stores[i].StartRun(ctx, store.Actor{}, tasks[i], policyRoute, caps)
 		})
 	}
 	gate.Done()
@@ -367,7 +367,7 @@ func TestHandBackLandsWithAFixedNoteWhenTheScanRefusesItsText(t *testing.T) {
 				return "", nil
 			}})
 			task := mustAdd(t, st, "hand back", model.StatusReady, "")
-			run, err := st.StartRun(ctx, task.Number, policyRoute, store.RunCaps{Slots: 1, PerDay: 1000})
+			run, err := st.StartRun(ctx, store.Actor{}, task.Number, policyRoute, store.RunCaps{Slots: 1, PerDay: 1000})
 			if err != nil {
 				t.Fatalf("start run: %v", err)
 			}
@@ -402,7 +402,7 @@ func TestHandBackWritesItsReasonOnTheRun(t *testing.T) {
 	ctx := context.Background()
 	st := openStore(t, store.Options{})
 	task := mustAdd(t, st, "fails", model.StatusReady, "")
-	run, err := st.StartRun(ctx, task.Number, policyRoute, store.RunCaps{Slots: 1, PerDay: 1000})
+	run, err := st.StartRun(ctx, store.Actor{}, task.Number, policyRoute, store.RunCaps{Slots: 1, PerDay: 1000})
 	if err != nil {
 		t.Fatalf("start run: %v", err)
 	}
@@ -421,7 +421,7 @@ func TestHandBackStatusOnlyWritesNothingOnceTheTaskLeftIfStatus(t *testing.T) {
 	ctx := context.Background()
 	st := openStore(t, store.Options{})
 	task := mustAdd(t, st, "asks a question", model.StatusReady, "")
-	run, err := st.StartRun(ctx, task.Number, policyRoute, store.RunCaps{Slots: 1, PerDay: 1000})
+	run, err := st.StartRun(ctx, store.Actor{}, task.Number, policyRoute, store.RunCaps{Slots: 1, PerDay: 1000})
 	if err != nil {
 		t.Fatalf("start run: %v", err)
 	}

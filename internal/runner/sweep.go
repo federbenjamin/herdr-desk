@@ -109,7 +109,7 @@ func (r *Runner) sweepWorktrees(ctx context.Context) {
 			if ctx.Err() != nil {
 				return
 			}
-			r.noteKeptWorktree(ctx, t.Number, dir, err)
+			r.noteKeptWorktree(ctx, run.ID, t.Number, dir, err)
 			continue
 		}
 		r.o.Logf("herdr-desk runner: T%d: removed worktree %s", t.Number, dir)
@@ -123,7 +123,7 @@ func keptWorktreeNote(dir string) string {
 
 // noteKeptWorktree notes on task that git would not remove its worktree dir, unless a runner note on keeping dir
 // was written since the task's newest status write, its write to done: git's reason may change between ticks.
-func (r *Runner) noteKeptWorktree(ctx context.Context, task int, dir string, gitErr error) {
+func (r *Runner) noteKeptWorktree(ctx context.Context, run int64, task int, dir string, gitErr error) {
 	d, err := r.o.Store.GetTask(ctx, task)
 	if err != nil {
 		r.logErr("T%d: read the task", task, err)
@@ -137,7 +137,7 @@ func (r *Runner) noteKeptWorktree(ctx context.Context, task int, dir string, git
 	if errors.As(gitErr, &ge) && ge.Stderr != "" {
 		why = ge.Stderr
 	}
-	r.note(ctx, store.Actor{}, task, []string{model.TagRunner},
+	r.note(ctx, store.Actor{Run: run}, task, []string{model.TagRunner},
 		keptWorktreeNote(dir)+clip(why)+"; remove it by hand once its changes are safe")
 }
 
