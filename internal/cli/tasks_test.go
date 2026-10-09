@@ -114,6 +114,34 @@ func TestAddWritesTaskFieldsAndHasTextAndJSONShapes(t *testing.T) {
 	}
 }
 
+func TestAddDefaultsToReadyAndAnAgentAddsReadyToo(t *testing.T) {
+	home := testutil.StartHome(t, testutil.HomeOptions{})
+	for _, env := range []map[string]string{nil, {"DESK_SESSION": "agent-session"}} {
+		result := runDesk(t, home.Getenv(env), t.TempDir(), "", "add", "-t", "default status", "--desk", "--json")
+		requireSuccess(t, result)
+		var task model.Task
+		if err := json.Unmarshal([]byte(result.stdout), &task); err != nil {
+			t.Fatalf("decode add JSON: %v; output=%q", err, result.stdout)
+		}
+		if task.Status != model.StatusReady {
+			t.Errorf("add with env %v and no --status gave status %q, want ready", env, task.Status)
+		}
+	}
+}
+
+func TestCaptureDefaultsToOpen(t *testing.T) {
+	home := testutil.StartHome(t, testutil.HomeOptions{})
+	result := runDesk(t, home.Getenv(nil), t.TempDir(), "a captured thought\n", "capture", "--json")
+	requireSuccess(t, result)
+	var task model.Task
+	if err := json.Unmarshal([]byte(result.stdout), &task); err != nil {
+		t.Fatalf("decode capture JSON: %v; output=%q", err, result.stdout)
+	}
+	if task.Status != model.StatusOpen {
+		t.Errorf("captured task status = %q, want open", task.Status)
+	}
+}
+
 func TestTaskCommandsReportStableRefusalCodes(t *testing.T) {
 	home := testutil.StartHome(t, testutil.HomeOptions{})
 	addTask(t, home, "task without steps")
@@ -141,7 +169,7 @@ func TestTaskCommandsReportStableRefusalCodes(t *testing.T) {
 
 func TestListAndShowRenderTheirContractShapes(t *testing.T) {
 	home := testutil.StartHome(t, testutil.HomeOptions{})
-	addTask(t, home, "open task")
+	addTask(t, home, "open task", "--status", "open")
 	addTask(t, home, "ready task", "--status", "ready", "--thread", "agent")
 	addTask(t, home, "done task", "--status", "done")
 
@@ -171,7 +199,7 @@ func TestListAndShowRenderTheirContractShapes(t *testing.T) {
 func TestListFiltersProjectsAndDeskTasksAndShowsTaskDetails(t *testing.T) {
 	home := testutil.StartHome(t, testutil.HomeOptions{})
 	addTask(t, home, "desk task", "--desk")
-	addTask(t, home, "project task", "-p", "/projects/alpha", "-n", "details")
+	addTask(t, home, "project task", "-p", "/projects/alpha", "-n", "details", "--status", "open")
 
 	result := runHomeDesk(t, home, "list", "-p", "alpha")
 	requireSuccess(t, result)
@@ -325,7 +353,7 @@ func TestBareDeskGroupsLiveTasksInBoardOrder(t *testing.T) {
 	addTask(t, home, "blocked", "--status", "blocked")
 	addTask(t, home, "started", "--status", "started")
 	addTask(t, home, "ready", "--status", "ready")
-	addTask(t, home, "open")
+	addTask(t, home, "open", "--status", "open")
 
 	result := runHomeDesk(t, home)
 	requireSuccess(t, result)

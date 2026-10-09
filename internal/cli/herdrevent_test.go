@@ -98,7 +98,7 @@ func TestHerdrEventHookLogsWhyItTrackedNothing(t *testing.T) {
 func TestHerdrEventHookDoesNotCallHerdrForAnUnownedPane(t *testing.T) {
 	home := testutil.StartHome(t, testutil.HomeOptions{})
 	fake := testutil.FakeHerdr(t)
-	task := addTask(t, home, "unowned event pane")
+	task := addTask(t, home, "unowned event pane", "--status", "open")
 
 	result := runDeskWithEnv(t, home.Machine, t.TempDir(), []string{"hook", "herdr-event"}, "", map[string]string{
 		"HERDR_PLUGIN_EVENT_JSON": `{"data":{"pane_id":"p-unowned"}}`,

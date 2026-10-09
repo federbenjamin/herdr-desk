@@ -461,7 +461,7 @@ func (s *Store) HandBack(ctx context.Context, run model.Run, hb HandBack) (model
 		ws = append(ws, note)
 	}
 	if hb.Status != "" {
-		p, err := s.checkPatch(a, model.Patch{Status: &hb.Status})
+		p, err := s.checkPatch(model.Patch{Status: &hb.Status})
 		if err != nil {
 			return model.Task{}, false, err
 		}

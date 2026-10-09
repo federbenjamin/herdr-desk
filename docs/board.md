@@ -28,7 +28,7 @@ Board page keys:
 |---|---|
 | `↓` `j` · `↑` · `g` · `G` | next row · previous row · first · last (`k` is kill, not up) |
 | `enter` | open the task's page |
-| `+` | add a task: one line, `#thread` and `@project` as in `herdr-desk capture`; a refused line stays in the box with its error. Until the home answers an `enter`, the line takes no keys, and `esc` closes the box once it answers |
+| `+` | add an `open` task, your own to-do list (`n` sets it `ready`): one line, `#thread` and `@project` as in `herdr-desk capture`; a refused line stays in the box with its error. Until the home answers an `enter`, the line takes no keys, and `esc` closes the box once it answers |
 | `n` | set `ready`; on a blocked task it asks `answer:`, appends your answer as a note, then sets `ready` (an empty answer sets `ready` alone); when the note cannot be written the prompt opens again with your answer |
 | `S` | start a run of the task, as `herdr-desk run start` with no flags does; a refusal shows on the status line |
 | `s` · `b` · `r` | set `started` · `blocked` · `review` |

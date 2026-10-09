@@ -301,116 +301,25 @@ func sqlOpenSQLite(path string) (*sql.DB, error) {
 	return sql.Open("sqlite", fmt.Sprintf("file:%s", path))
 }
 
-func TestAgentCannotSetOrAddReadyWithoutAutoStart(t *testing.T) {
+func TestAgentMayAddAndSetReadyAndDone(t *testing.T) {
 	ctx := context.Background()
-	cases := []struct {
-		name      string
-		status    model.Status
-		needsTask bool
-		write     func(*store.Store, model.Status, int) error
-	}{
-		{
-			name:   "adds ready",
-			status: model.StatusReady,
-			write: func(st *store.Store, status model.Status, _ int) error {
-				_, err := st.AddTask(ctx, store.Actor{Session: "agent"}, store.AddTaskInput{
-					TaskData: model.TaskData{Title: "agent task", Status: status},
-				})
-				return err
-			},
-		},
-		{
-			name:      "sets ready",
-			status:    model.StatusReady,
-			needsTask: true,
-			write: func(st *store.Store, status model.Status, number int) error {
-				_, err := st.SetTask(ctx, store.Actor{Session: "agent"}, number, model.Patch{Status: statusPtr(status)})
-				return err
-			},
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
+	agent := store.Actor{Session: "agent"}
+	for _, status := range []model.Status{model.StatusReady, model.StatusDone} {
+		t.Run("adds "+string(status), func(t *testing.T) {
 			st := openStore(t, store.Options{})
-			var number int
-			if tc.needsTask {
-				number = addOpenTask(t, st).Number
-			}
-			before := eventCount(t, st)
-			beforeTasks := allTasks(t, st)
-			err := tc.write(st, tc.status, number)
-			if got := refusalCode(t, err); got != model.CodeNotAllowed {
-				t.Fatalf("refusal code = %q, want %q", got, model.CodeNotAllowed)
-			}
-			if got := eventCount(t, st); got != before {
-				t.Fatalf("event count after refused write = %d, want %d", got, before)
-			}
-			if got := allTasks(t, st); !reflect.DeepEqual(got, beforeTasks) {
-				t.Fatalf("tasks after refused write = %#v, want %#v", got, beforeTasks)
+			task, err := st.AddTask(ctx, agent, store.AddTaskInput{TaskData: model.TaskData{Title: "agent task", Status: status}})
+			if err != nil || task.Status != status {
+				t.Fatalf("agent add %s = %q, %v; want %s, nil", status, task.Status, err, status)
 			}
 		})
-	}
-}
-
-func TestAutoStartPermitsAgentReadyAndAnyAgentMaySetDone(t *testing.T) {
-	ctx := context.Background()
-	cases := []struct {
-		name   string
-		status model.Status
-		write  func(*store.Store, model.Status) (model.Task, error)
-	}{
-		{
-			name:   "adds ready",
-			status: model.StatusReady,
-			write: func(st *store.Store, status model.Status) (model.Task, error) {
-				return st.AddTask(ctx, store.Actor{Session: "agent"}, store.AddTaskInput{
-					TaskData: model.TaskData{Title: "agent task", Status: status},
-				})
-			},
-		},
-		{
-			name:   "sets ready",
-			status: model.StatusReady,
-			write: func(st *store.Store, status model.Status) (model.Task, error) {
-				task := addOpenTask(t, st)
-				return st.SetTask(ctx, store.Actor{Session: "agent"}, task.Number, model.Patch{Status: statusPtr(status)})
-			},
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			st := openStore(t, store.Options{AutoStart: true})
-			task, err := tc.write(st, tc.status)
-			if err != nil {
-				t.Fatalf("agent write: %v", err)
-			}
-			if task.Status != model.StatusReady {
-				t.Fatalf("status = %q, want %q", task.Status, model.StatusReady)
+		t.Run("sets "+string(status), func(t *testing.T) {
+			st := openStore(t, store.Options{})
+			task := addOpenTask(t, st)
+			task, err := st.SetTask(ctx, agent, task.Number, model.Patch{Status: statusPtr(status)})
+			if err != nil || task.Status != status {
+				t.Fatalf("agent set %s = %q, %v; want %s, nil", status, task.Status, err, status)
 			}
 		})
-	}
-
-	for _, autoStart := range []bool{false, true} {
-		for _, operation := range []string{"add", "set"} {
-			t.Run(fmt.Sprintf("%ss done, auto start %t", operation, autoStart), func(t *testing.T) {
-				st := openStore(t, store.Options{AutoStart: autoStart})
-				var task model.Task
-				var err error
-				switch operation {
-				case "add":
-					task, err = st.AddTask(ctx, store.Actor{Session: "agent"}, store.AddTaskInput{
-						TaskData: model.TaskData{Title: "agent task", Status: model.StatusDone},
-					})
-				case "set":
-					task = addOpenTask(t, st)
-					task, err = st.SetTask(ctx, store.Actor{Session: "agent"}, task.Number, model.Patch{Status: statusPtr(model.StatusDone)})
-				}
-				if err != nil || task.Status != model.StatusDone {
-					t.Fatalf("agent %s done = %q, %v; want done, nil", operation, task.Status, err)
-				}
-			})
-		}
 	}
 }
 

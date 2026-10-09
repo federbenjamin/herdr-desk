@@ -309,14 +309,13 @@ func TestCoordinatorSkillStatesEachRuleThePlanLists(t *testing.T) {
 		{"propose mode", "`propose`"},
 		{"propose lists task, root, isolation, and model", "task, root, isolation, model"},
 		{"propose waits for a message that names the runs", "names or plainly approves"},
-		{"a ready task is a go-ahead", "`ready` is a go-ahead"},
+		{"a ready task is not a go-ahead", "`ready` is not a go-ahead"},
 		{"the cap is stated, not worked around", "say so"},
 		{"at cap, approved work still queues as waiting", "still gets `run start` when `cap` runs are live"},
 		{"a failed spawn exits 1 and is reported", "exits 1 with `run-failed: run <id> failed: <reason>`"},
 		{"how to start a run", "herdr-desk run start"},
 		{"how to add a task", "herdr-desk add"},
 		{"auto mode", "`auto`"},
-		{"auto lets it set ready", "set a task `ready`"},
 		{"never answer a worker's prompt", "never answer a worker"},
 		{"never answer a folder-trust question", "folder-trust"},
 	} {
@@ -340,7 +339,7 @@ func TestContextTextPrintsEverySectionTheCoordinatorReads(t *testing.T) {
 	cfg.Roots = []config.Root{{Path: scratch, About: "the main repo", Isolation: "worktree"}}
 	home := testutil.StartHome(t, testutil.HomeOptions{Config: cfg})
 	addTask(t, home, "needs a go", "--status", "ready")
-	addTask(t, home, "just open")
+	addTask(t, home, "just open", "--status", "open")
 
 	result := runHomeDesk(t, home, "context")
 	requireSuccess(t, result)

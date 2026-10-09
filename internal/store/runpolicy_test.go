@@ -14,7 +14,7 @@ import (
 func TestStartRunCreatesAStartingRunAndStartsTheTask(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, time.October, 4, 12, 0, 0, 0, time.UTC)
-	st := openRunPolicyStore(t, &now, false)
+	st := openRunPolicyStore(t, &now)
 	task, err := st.AddTask(ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{
 		Title: "ready task", Status: model.StatusReady,
 	}})
@@ -48,7 +48,7 @@ func TestStartRunCreatesAStartingRunAndStartsTheTask(t *testing.T) {
 func TestStartRunAsksNoArmingAndAnswersALiveRunWithIt(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, time.October, 4, 12, 0, 0, 0, time.UTC)
-	st := openRunPolicyStore(t, &now, false)
+	st := openRunPolicyStore(t, &now)
 	task, err := st.AddTask(ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{Title: "open task"}})
 	if err != nil {
 		t.Fatalf("add open task: %v", err)
@@ -67,7 +67,7 @@ func TestStartRunAsksNoArmingAndAnswersALiveRunWithIt(t *testing.T) {
 func TestUpdateRunChangesOnlyItsExpectedStateAndKeepsZeroFields(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, time.October, 4, 12, 0, 0, 0, time.UTC)
-	st := openRunPolicyStore(t, &now, false)
+	st := openRunPolicyStore(t, &now)
 	task, run := startRunPolicy(t, st, "update run")
 
 	now = now.Add(time.Minute)
@@ -122,7 +122,7 @@ func TestUpdateRunTerminalStatesRecordTheStoreClock(t *testing.T) {
 		t.Run(terminal, func(t *testing.T) {
 			ctx := context.Background()
 			now := time.Date(2026, time.October, 4, 12, 0, 0, 0, time.UTC)
-			st := openRunPolicyStore(t, &now, false)
+			st := openRunPolicyStore(t, &now)
 			task, run := startRunPolicy(t, st, terminal+" run")
 
 			now = now.Add(7 * time.Minute)
@@ -153,7 +153,7 @@ func TestUpdateRunTerminalStatesRecordTheStoreClock(t *testing.T) {
 func TestUpdateRunToRunningRestartsTheRunClock(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, time.October, 4, 12, 0, 0, 0, time.UTC)
-	st := openRunPolicyStore(t, &now, false)
+	st := openRunPolicyStore(t, &now)
 	task, run := startRunPolicy(t, st, "waits, then runs")
 
 	now = now.Add(3 * time.Hour)
@@ -206,7 +206,7 @@ func TestRunMethodsReturnTheStoreErrorOnceClosed(t *testing.T) {
 func TestLiveRunsReturnsOnlyLiveStatesInIDOrder(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, time.October, 4, 12, 0, 0, 0, time.UTC)
-	st := openRunPolicyStore(t, &now, false)
+	st := openRunPolicyStore(t, &now)
 
 	_, starting := startRunPolicy(t, st, "starting")
 	_, waiting := startRunPolicy(t, st, "waiting")
@@ -255,7 +255,7 @@ func TestLiveRunsReturnsOnlyLiveStatesInIDOrder(t *testing.T) {
 func TestRunsSinceCountsStartsAtOrAfterTheBoundary(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, time.October, 4, 12, 0, 0, 0, time.UTC)
-	st := openRunPolicyStore(t, &now, false)
+	st := openRunPolicyStore(t, &now)
 	startRunPolicy(t, st, "before boundary")
 
 	boundary := now.Add(time.Hour)
@@ -276,7 +276,7 @@ func TestRunsSinceCountsStartsAtOrAfterTheBoundary(t *testing.T) {
 func TestSetTaskRejectsAStatusFromAnOlderRunWithoutWritingAnEvent(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, time.October, 4, 12, 0, 0, 0, time.UTC)
-	st := openRunPolicyStore(t, &now, false)
+	st := openRunPolicyStore(t, &now)
 	task, oldRun := startRunPolicy(t, st, "stale run")
 	if _, err := st.UpdateRun(ctx, oldRun.ID, model.RunStarting, store.RunUpdate{State: model.RunEnded}); err != nil {
 		t.Fatalf("end the old run: %v", err)
@@ -327,7 +327,7 @@ func TestSetTaskRejectsAStatusFromAnOlderRunWithoutWritingAnEvent(t *testing.T) 
 func TestSetTaskTreatsAZeroRunAsNeverStale(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, time.October, 4, 12, 0, 0, 0, time.UTC)
-	st := openRunPolicyStore(t, &now, false)
+	st := openRunPolicyStore(t, &now)
 	task, first := startRunPolicy(t, st, "zero run")
 	if _, err := st.UpdateRun(ctx, first.ID, model.RunStarting, store.RunUpdate{State: model.RunEnded}); err != nil {
 		t.Fatalf("end the first run: %v", err)
@@ -362,7 +362,7 @@ func TestSetTaskEndsALiveRunOnlyByTheRunEndingRule(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			now := time.Date(2026, time.October, 4, 12, 0, 0, 0, time.UTC)
-			st := openRunPolicyStore(t, &now, false)
+			st := openRunPolicyStore(t, &now)
 			task, run := startRunPolicy(t, st, tc.name)
 			now = now.Add(time.Minute)
 			if _, err := st.SetTask(ctx, tc.actor(run), task.Number, model.Patch{Status: &tc.status}); err != nil {
@@ -384,7 +384,7 @@ func TestSetTaskEndsALiveRunOnlyByTheRunEndingRule(t *testing.T) {
 	t.Run("unchanged started status leaves the live run alone", func(t *testing.T) {
 		ctx := context.Background()
 		now := time.Date(2026, time.October, 4, 12, 0, 0, 0, time.UTC)
-		st := openRunPolicyStore(t, &now, false)
+		st := openRunPolicyStore(t, &now)
 		task, _ := startRunPolicy(t, st, "unchanged started")
 		started := model.StatusStarted
 		title := "still started"
@@ -414,7 +414,7 @@ func TestSetTaskLetsAnyoneSetTheAgentThread(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			now := time.Date(2026, time.October, 4, 12, 0, 0, 0, time.UTC)
-			st := openRunPolicyStore(t, &now, false)
+			st := openRunPolicyStore(t, &now)
 			task, err := st.AddTask(ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{Title: tc.name, Status: tc.status}})
 			if err != nil {
 				t.Fatalf("add task: %v", err)
@@ -431,12 +431,11 @@ func TestSetTaskLetsAnyoneSetTheAgentThread(t *testing.T) {
 // policyRoute is the route every run of these tests takes.
 var policyRoute = store.RunRoute{Root: "/work/desk", Isolation: "worktree", Model: "model-a"}
 
-func openRunPolicyStore(t *testing.T, now *time.Time, autoStart bool) *store.Store {
+func openRunPolicyStore(t *testing.T, now *time.Time) *store.Store {
 	t.Helper()
 	machine := testutil.NewMachine(t)
 	st, err := store.Open(machine.Paths.DB(), store.Options{
-		Now:       func() time.Time { return *now },
-		AutoStart: autoStart,
+		Now: func() time.Time { return *now },
 	})
 	if err != nil {
 		t.Fatalf("open store: %v", err)

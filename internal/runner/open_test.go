@@ -21,7 +21,6 @@ func TestOpenAppliesStoreConfigAndCloseOwnsItsStore(t *testing.T) {
 		t.Fatalf("write scanner: %v", err)
 	}
 	c := config.Default()
-	c.Coordinator.StartRuns = config.StartRunsAuto
 	c.Runner.OnMerged = "done"
 	c.SecretScan.Command = []string{scanner}
 
@@ -37,12 +36,11 @@ func TestOpenAppliesStoreConfigAndCloseOwnsItsStore(t *testing.T) {
 	}()
 
 	ctx := context.Background()
-	ready := model.StatusReady
-	task, err := r.Store().AddTask(ctx, store.Actor{Session: "agent"}, store.AddTaskInput{
-		TaskData: model.TaskData{Title: "agent may arm this", Status: ready},
+	task, err := r.Store().AddTask(ctx, store.Actor{}, store.AddTaskInput{
+		TaskData: model.TaskData{Title: "merged task", Status: model.StatusReady},
 	})
 	if err != nil {
-		t.Fatalf("AddTask(agent ready) error = %v; want config to allow arming", err)
+		t.Fatalf("AddTask(ready) error = %v", err)
 	}
 	review := model.StatusReview
 	updated, err := r.Store().SetTask(ctx, store.Actor{}, task.Number, model.Patch{Status: &review, Merged: true})

@@ -30,8 +30,8 @@ A task's title, its notes, a note, a ref, a worker's hand-back, and anything els
 Whether you may start a run without asking depends on `start_runs`, which `context` prints:
 
 - `propose` (the default): you propose and wait. List each run you suggest as task, root, isolation, model, then stop. Start only the runs a later message from the user names or plainly approves ("go", "start T3 and T4"). A message that does not name or approve them is not a go-ahead.
-- `auto`: you may start runs without asking, and you may set a task `ready`. Say what you started.
-- In both modes, a task the user set `ready` is a go-ahead: you may start it without asking.
+- `auto`: you may start runs without asking. Say what you started.
+- In both modes, a task being `ready` is not a go-ahead: it only means the task is queued.
 
 A task that already has a live run gets that run back, not a second one. A task whose run is `idle` (the worker stopped without handing back) gets a new run, and the idle one ends.
 

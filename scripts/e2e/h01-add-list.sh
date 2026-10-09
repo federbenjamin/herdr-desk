@@ -11,7 +11,7 @@ run 0 on home herdr-desk add -t "first task" --desk
 make_client cli home
 run 0 on cli herdr-desk list --json
 jq -e '.offline == false and (.tasks | length) == 1 and .tasks[0].number == 1
-  and .tasks[0].title == "first task" and .tasks[0].status == "open"' <<<"$OUT" >/dev/null ||
+  and .tasks[0].title == "first task" and .tasks[0].status == "ready"' <<<"$OUT" >/dev/null ||
   fail "the client's list does not show T1 as added"
 say "client sees: $(jq -c '.tasks[0] | {number, title, status}' <<<"$OUT")"
 
