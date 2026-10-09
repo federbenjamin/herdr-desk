@@ -60,7 +60,12 @@ type Patch struct {
 	Archived     *bool   `json:"archived,omitempty"`
 	Ref          string  `json:"ref,omitempty"`
 	Merged       bool    `json:"merged,omitempty"`
+	Question     string  `json:"question,omitempty"` // with status blocked: what the writer waits on; its run stays live; never stored in a set event
 }
+
+// WaitingNote is the note of a task blocked on an answer typed in pane: the runner's, for a pane that asks, and the
+// store's, for a run that sets its task blocked with a question.
+func WaitingNote(pane string) string { return "the worker is waiting for an answer in pane " + pane }
 
 // StepOp is one change to a task's steps, and a step event's payload.
 type StepOp struct {
