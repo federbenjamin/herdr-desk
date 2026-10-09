@@ -103,8 +103,8 @@ func (s *Store) newestLiveRun(ctx context.Context, col, value string) (model.Run
 	return runs[len(runs)-1], true, nil
 }
 
-// LeftOpenRuns returns the runs whose pane is owed a close, by id: a kill or a spawn could not close it, or StartRun
-// ended the run while idle.
+// LeftOpenRuns returns the runs whose pane is owed a close, by id: a kill or a spawn could not close it, StartRun
+// ended the run while idle, or its task was set done.
 func (s *Store) LeftOpenRuns(ctx context.Context) ([]model.Run, error) {
 	return readRuns(ctx, s.db, `WHERE left_open = 1`)
 }
@@ -381,7 +381,7 @@ func slotOpen(ctx context.Context, q querier, cap int, route RunRoute) (bool, er
 type HandBack struct {
 	From, To string       // the claim; To "" leaves the run in From
 	Status   model.Status // the task's new status; "" leaves it
-	IfStatus model.Status // "" → always; else Status is written only while the task's status is IfStatus, and a status-only hand-back (From equals To) writes nothing else then either
+	IfStatus model.Status // "" → always; else Status is written only while the task's status is IfStatus, and then neither is the note of a hand-back that leaves its run live; a status-only hand-back (From equals To) writes nothing else then either
 	Tags     []string     // the note's tags
 	Note     string       // "" writes no note
 	Reason   string       // written on the run row with the claim; "" leaves it
@@ -393,7 +393,9 @@ var ErrNoteWithheld = errors.New("the hand-back's note was withheld")
 
 // HandBack claims the run and writes hb's note, reason, and status in one transaction, as the run's actor, and
 // returns the task and whether the claim held. A claim that finds the run out of From writes nothing, and so does a
-// status-only hand-back (From equals To, IfStatus set) that finds the task out of IfStatus. A run that is
+// status-only hand-back (From equals To, IfStatus set) that finds the task out of IfStatus. Any other hand-back that
+// finds the task out of IfStatus writes the claim, and its note only when the run ends: the note of a live run's
+// hand-back is about the status it did not write. A run that is
 // not its task's newest is refused stale-run, as checkRunRules refuses its worker. The status write never ends a run:
 // To alone decides the run's state.
 //
@@ -446,6 +448,16 @@ func (s *Store) HandBack(ctx context.Context, run model.Run, hb HandBack) (model
 	if hb.Note != "" {
 		note := journalWrite(ctx, model.KindNote, run.Task, hb.Tags, nil, model.NoteData{Text: hb.Note}, nil, nil)
 		note.scan = nil // scanned above
+		if hb.IfStatus != "" && !model.RunFinal(hb.To) {
+			prepare := note.prepare
+			note.prepare = func(tx *sql.Tx) (int, any, error) {
+				cur, err := readTask(ctx, tx, run.Task)
+				if err != nil || cur.Status != hb.IfStatus {
+					return 0, nil, err
+				}
+				return prepare(tx)
+			}
+		}
 		ws = append(ws, note)
 	}
 	if hb.Status != "" {

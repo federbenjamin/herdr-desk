@@ -364,7 +364,7 @@ func (a *app) printSteps(steps []model.Step) {
 }
 
 func (a *app) setCmd() *cobra.Command {
-	var thread, root, isolation, mdl, firstMessage, ref string
+	var thread, root, isolation, mdl, firstMessage, ref, question string
 	var archive, unarchive, merged, asJSON bool
 	cmd := &cobra.Command{
 		Use:   "set <task> [<status>]",
@@ -380,7 +380,10 @@ func (a *app) setCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		p := model.Patch{Ref: ref, Merged: merged}
+		p := model.Patch{Ref: ref, Merged: merged, Question: question}
+		if cmd.Flags().Changed("question") && strings.TrimSpace(question) == "" {
+			return &model.Refusal{Code: model.CodeEmptyText, Msg: "--question needs text"}
+		}
 		if len(args) == 2 {
 			st := model.Status(args[1])
 			p.Status = &st
@@ -427,6 +430,7 @@ func (a *app) setCmd() *cobra.Command {
 	f.BoolVar(&unarchive, "unarchive", false, "bring the task back from the archive")
 	f.StringVar(&ref, "ref", "", "a file or PR this change is about")
 	f.BoolVar(&merged, "merged", false, "the PR is merged: review writes the status runner.on_merged names")
+	f.StringVar(&question, "question", "", "with blocked: what you wait on, written as a note naming your run's pane; your run goes on")
 	f.BoolVar(&asJSON, "json", false, "print the task as JSON")
 	cmd.MarkFlagsMutuallyExclusive("archive", "unarchive")
 	return cmd

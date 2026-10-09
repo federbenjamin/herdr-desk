@@ -61,8 +61,9 @@ func (r *Runner) sweepRunFiles(ctx context.Context) {
 	}
 }
 
-// sweepWorktrees removes the worktree of each done task, archived or not, whose isolation is worktree and whose
-// newest run is not live, with `git worktree remove` and no --force. A tree git refuses to remove (dirty,
+// sweepWorktrees removes the worktree of each done task, archived or not, whose isolation is worktree, whose
+// newest run is not live, and none of whose runs has a pane owed a close (one may still sit in the tree; Jobs closes
+// those first), with `git worktree remove` and no --force. A tree git refuses to remove (dirty,
 // locked, or holding submodules) stays, with one runner note on the task per time it was set done, whatever git's
 // reason on later ticks. A missing folder, or one git says is not a work tree of its own, is left alone; a folder
 // that cannot be read, or that git cannot answer for, is logged on every tick and noted nowhere. The task's branch
@@ -78,8 +79,13 @@ func (r *Runner) sweepWorktrees(ctx context.Context) {
 		}
 		tasks = append(tasks, ts...)
 	}
+	owed, err := r.o.Store.LeftOpenRuns(ctx)
+	if err != nil {
+		r.logErr("read the runs whose pane is owed a close", err)
+		return
+	}
 	for _, t := range tasks {
-		if t.Isolation != "worktree" || t.Root == "" {
+		if t.Isolation != "worktree" || t.Root == "" || slices.ContainsFunc(owed, func(run model.Run) bool { return run.Task == t.Number }) {
 			continue
 		}
 		dir := worktreeDir(t.Root, t.Number)

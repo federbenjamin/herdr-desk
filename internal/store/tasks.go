@@ -109,15 +109,43 @@ func resolveProject(ctx context.Context, q querier, project string) (string, err
 // SetTask patches a task. A patch that changes no field and carries no ref writes no event and returns the
 // task. A patch that sets Notes with NotesWere is refused stale, writing nothing, when the task's notes are no
 // longer NotesWere. An agent may ask for ready only with AutoStart; review with Merged writes the OnMerged status.
-// The notes check, checkRunRules, and the run-ending rule (endRuns) run in the write's transaction.
+// The notes check, checkRunRules, and the run-ending rule (endRuns) run in the write's transaction. A blocked patch
+// with a Question ends no run, and writes the question as a note in the same transaction (questionNote), even when
+// the task was already blocked.
 func (s *Store) SetTask(ctx context.Context, a Actor, number int, p model.Patch) (model.Task, error) {
 	p, err := s.checkPatch(a, p)
 	if err != nil {
 		return model.Task{}, err
 	}
 	var out model.Task
-	_, err = s.append(ctx, a, s.setWrite(ctx, a, number, p, "", true, &out))
+	ws := []write{s.setWrite(ctx, a, number, p, "", p.Question == "", &out)}
+	if p.Question != "" {
+		ws = append(ws, questionNote(ctx, a, number, p.Question))
+	}
+	_, err = s.append(ctx, a, ws...)
 	return out, err
+}
+
+// questionNote is the note of a blocked status set with a question. From a run with a pane it names the pane, where
+// the answer is typed, as the runner's own blocked note does (model.WaitingNote), then the question.
+func questionNote(ctx context.Context, a Actor, task int, question string) write {
+	return write{
+		kind: model.KindNote,
+		scan: []string{question},
+		prepare: func(tx *sql.Tx) (int, any, error) {
+			text := "waiting for an answer: " + question
+			if a.Run != 0 {
+				runs, err := readRuns(ctx, tx, `WHERE id = ?`, a.Run)
+				if err != nil {
+					return 0, nil, err
+				}
+				if len(runs) == 1 && runs[0].Pane != "" {
+					text = model.WaitingNote(runs[0].Pane) + ": " + question
+				}
+			}
+			return task, model.NoteData{Text: text}, nil
+		},
+	}
 }
 
 // checkPatch checks a patch's values before any transaction and maps review with Merged to the OnMerged status.
@@ -137,6 +165,14 @@ func (s *Store) checkPatch(a Actor, p model.Patch) (model.Patch, error) {
 			st = s.onMerged
 		}
 		p.Status = &st
+	}
+	if p.Question != "" {
+		if p.Status == nil || *p.Status != model.StatusBlocked {
+			return p, refuse(model.CodeBadInput, "a question goes with the status blocked")
+		}
+		if strings.TrimSpace(p.Question) == "" {
+			return p, refuse(model.CodeEmptyText, "a question needs text")
+		}
 	}
 	if p.Isolation != nil && !model.ValidIsolation(*p.Isolation) {
 		return p, refuse(model.CodeBadInput, "isolation must be self, worktree, or in-place, not %q", *p.Isolation)
@@ -219,15 +255,21 @@ func (s *Store) setWrite(ctx context.Context, a Actor, number int, p model.Patch
 	}
 }
 
-// endRuns is the run-ending rule. A status write of done, by anyone, ends the task's live run in any state. A
-// review or blocked written by the run's own worker (a.Run) ends that run, even when the task already holds the
-// status. No other status write touches a run.
+// endRuns is the run-ending rule. A status write of done, by anyone, ends the task's live run in any state, and marks
+// the pane of every ended run of the task owed a close (LeftOpenRuns): a done task's worker has nothing left to do,
+// and its worktree is removed once no pane is owed. A review or blocked written by the run's own worker (a.Run) ends
+// that run, even when the task already holds the status; SetTask does not apply it to a blocked written with a
+// question. No other status write touches a run.
 func endRuns(ctx context.Context, tx *sql.Tx, a Actor, task int, st *model.Status, ts time.Time) error {
 	switch {
 	case st == nil:
 		return nil
 	case *st == model.StatusDone:
-		return endLiveRuns(ctx, tx, ts, `task = ?`, task)
+		if err := endLiveRuns(ctx, tx, ts, `task = ?`, task); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `UPDATE runs SET left_open = 1 WHERE task = ? AND pane != '' AND state = ?`, task, model.RunEnded)
+		return err
 	case a.Run != 0 && (*st == model.StatusReview || *st == model.StatusBlocked):
 		return endLiveRuns(ctx, tx, ts, `id = ? AND task = ?`, a.Run, task)
 	}

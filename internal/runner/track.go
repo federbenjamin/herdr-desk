@@ -106,7 +106,7 @@ func outcome(run model.Run, pane herdr.Pane, found, wrote bool) (store.HandBack,
 		}
 	case pane.Status == "blocked" && (own || pane.Session == ""):
 		hb.To, hb.Status = model.RunIdle, model.StatusBlocked
-		hb.Note = "the worker is waiting for an answer in pane " + pane.ID
+		hb.Note = model.WaitingNote(pane.ID)
 		if run.State == model.RunIdle {
 			// The run went idle (its task in review), then its pane asked a question: the task is blocked now, but
 			// only from review, so a person's status stands and a task already blocked is a repeat.
@@ -114,7 +114,9 @@ func outcome(run model.Run, pane herdr.Pane, found, wrote bool) (store.HandBack,
 			return hb, true
 		}
 	case (pane.Status == "idle" || pane.Status == "done") && own && run.State == model.RunRunning:
-		hb.To, hb.Status = model.RunIdle, model.StatusReview
+		// Only from started: a task its run set blocked with a question, or a person moved, keeps its status, and the
+		// run goes idle with no note.
+		hb.To, hb.Status, hb.IfStatus = model.RunIdle, model.StatusReview, model.StatusStarted
 		hb.Note = "went idle without handing back"
 	case pane.Status == "working" && own && run.State == model.RunIdle:
 		hb.To, hb.Status = model.RunRunning, model.StatusStarted

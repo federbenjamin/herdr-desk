@@ -85,6 +85,38 @@ func TestTrackBlocksTheTaskOfAnIdleRunWhosePaneAsksAQuestion(t *testing.T) {
 	}
 }
 
+// A run that sets its task blocked with a question (a /build asking in text) keeps working: the task stays blocked
+// while its pane works, and when its turn ends, with no "went idle" note; an answer typed in the pane starts it again.
+func TestTrackKeepsAQuestionBlockedUntilThePaneWorksAgainAfterItsTurn(t *testing.T) {
+	f := newFixture(t, "", "self")
+	task, run, r := f.start()
+	blocked := model.StatusBlocked
+	if _, err := f.store.SetTask(f.ctx, store.Actor{Session: run.Session, Run: run.ID}, task.Number,
+		model.Patch{Status: &blocked, Question: "pick the support address"}); err != nil {
+		t.Fatalf("set blocked with a question: %v", err)
+	}
+	if !trackHasNote(f.task(task.Number).History, model.WaitingNote(run.Pane)+": pick the support address") {
+		t.Fatalf("history = %#v, want the question's note naming pane %s", f.task(task.Number).History, run.Pane)
+	}
+	step := func(paneStatus, wantRun string, wantTask model.Status) {
+		t.Helper()
+		f.herdr.Set(run.Pane, run.Session, paneStatus)
+		r.Jobs(f.ctx)
+		if err := r.Track(f.ctx, run.Pane); err != nil {
+			t.Fatalf("Track(%s) error = %v", paneStatus, err)
+		}
+		if got, st := f.run(task.Number).State, f.task(task.Number).Task.Status; got != wantRun || st != wantTask {
+			t.Fatalf("pane %s: run %s, task %s; want %s and %s", paneStatus, got, st, wantRun, wantTask)
+		}
+	}
+	step("working", model.RunRunning, model.StatusBlocked)
+	step("done", model.RunIdle, model.StatusBlocked)
+	if trackHasNote(f.task(task.Number).History, "went idle without handing back") {
+		t.Fatal("the turn's end wrote a went-idle note on a task blocked by its question")
+	}
+	step("working", model.RunRunning, model.StatusStarted)
+}
+
 func TestTrackLeavesAnOlderRunAloneWhenANewerRunWinsTheTask(t *testing.T) {
 	f := newFixture(t, "", "self")
 	task, old, _ := f.start()

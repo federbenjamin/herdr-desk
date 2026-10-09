@@ -20,6 +20,14 @@
   still writes nothing there; with no herdr found it says why and to run `herdr-desk setup` once herdr is
   found.
 - `herdr-desk setup` writes to `HERDR_CONFIG_PATH` when it is set, the file herdr itself reads then.
+- Setting a task `done` marks the pane of each of its ended runs owed a close. The ticker closes it, then removes
+  the task's worktree, so a worker's session no longer sits in a deleted folder after a `done` hand-back. A pane
+  that will not close keeps the worktree until a later tick closes it.
 - The runner no longer stops a run after `[runner] max_run_minutes`: a run waiting on another PR or on you was
   killed whatever its progress. `cap` and `max_runs_per_day` still bound the cost. A config that still sets
   `max_run_minutes` loads with the value ignored, and the next `herdr-desk setup` drops it.
+- `herdr-desk set T<n> blocked --question <text>` blocks a task without ending its run, and notes the question
+  naming the run's pane. A `/build` that asks in text and goes on working shows `blocked`, and an answer typed in
+  the pane returns it to `started`. A pane that goes `idle` or `done` now sets `review` only from `started`, so a
+  question's `blocked`, or a status a person set, stands. `/dispatch-build` watches for `blocked`, `idle`, and
+  `done`, and takes a run's end from `herdr-desk runs`.

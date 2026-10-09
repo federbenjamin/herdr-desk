@@ -129,6 +129,8 @@ func TestTaskCommandsReportStableRefusalCodes(t *testing.T) {
 		{"unknown task", []string{"show", "T99"}, "show", model.CodeUnknownTask, 1},
 		{"unknown status", []string{"add", "-t", "task", "--status", "later"}, "add", model.CodeBadInput, 2},
 		{"unknown step", []string{"steps", "T1", "toggle", "s1"}, "steps", model.CodeUnknownStep, 1},
+		{"question without blocked", []string{"set", "T1", "review", "--question", "why?"}, "set", model.CodeBadInput, 2},
+		{"empty question", []string{"set", "T1", "blocked", "--question", " "}, "set", model.CodeEmptyText, 1},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -220,6 +222,21 @@ func TestSetAndEditUpdateTaskAndRenderExpectedOutput(t *testing.T) {
 	}
 	if detail.Task.Title != "after" || detail.Task.Notes != "details" || detail.Task.Status != model.StatusReview || detail.Task.Thread != "reviewer" || detail.Task.Root != "/repo" || detail.Task.Isolation != "worktree" || detail.Task.Model != "fast" {
 		t.Errorf("edited task = %#v, want all set and edit fields", detail.Task)
+	}
+}
+
+func TestSetBlockedWithAQuestionNotesIt(t *testing.T) {
+	home := testutil.StartHome(t, testutil.HomeOptions{})
+	addTask(t, home, "asks")
+	result := runHomeDesk(t, home, "set", "T1", "blocked", "--question", "which repo?")
+	requireSuccess(t, result)
+	if result.stdout != "T1 blocked\n" {
+		t.Errorf("set stdout = %q, want %q", result.stdout, "T1 blocked\\n")
+	}
+	result = runHomeDesk(t, home, "show", "T1")
+	requireSuccess(t, result)
+	if !strings.Contains(result.stdout, "waiting for an answer: which repo?") {
+		t.Errorf("show output = %q, want the question's note", result.stdout)
 	}
 }
 

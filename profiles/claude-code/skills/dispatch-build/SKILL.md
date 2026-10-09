@@ -39,24 +39,30 @@ watches the run. It never briefs, builds, or answers for the build what the buil
      until this run has a `pane`, then go on.
    - A refusal (`not-allowed`, `cap-reached`, a failed run): end with one `needs you` line holding
      the refusal and the command `herdr-desk run start T<n>` for the user to run.
-6. **Watch the run.** Run `herdr agent wait <pane> --until blocked` via Bash
-   `run_in_background`. When it returns:
-   - **Blocked:** read the screen (`herdr agent read <pane> --lines 30`).
+6. **Watch the run.** Run
+   `herdr agent wait <pane> --until blocked --until idle --until done` via Bash
+   `run_in_background`: /build asks its questions in text and ends its turn, so a question shows
+   as `idle` or `done` as often as `blocked`. When it returns, ask the desk first:
+   `herdr-desk runs --json`.
+   - **The run is not listed:** it ended; the desk holds the result (`herdr-desk show T<n>`).
+     Stop watching. A pane that stays open, or one that is gone, says nothing about the run.
+   - **The run is listed:** read the screen (`herdr agent read <pane> --lines 30`) and
+     `herdr-desk show T<n>`. A `blocked` task with a note naming the pane is a question; a turn
+     that ended with no question needs nothing, so watch again.
      - **Answer** what the request file or the rules already settle (contract rule 5), and tell
        the session the answer is yours, not the user's: `herdr agent send-keys <pane> <keys>`
        for a picker (`down`, `enter`; read the screen again, since a picker can ask for a second
        `enter`), `herdr agent prompt <pane> "<text>"` for text.
      - **Escalate** the rest (a refused permission, a product decision): one `needs you` line
-       naming `T<n>` and the pane, and what it waits on. The desk also marks the task blocked and
-       notifies the user. When the user answers you, pass it on as your own decision, never as
-       theirs: `herdr agent prompt <pane> "From the launching session (<your session id>), my
-       decision, not the user's word: <answer>"`. Never quote it as a user ruling, and never
-       write in the run's session log.
+       naming `T<n>` and the pane, and what it waits on. The desk also marks the task blocked
+       and shows it on the pane's sidebar row. When the user answers you, pass it on as your own
+       decision, never as theirs: `herdr agent prompt <pane> "From the launching session (<your
+       session id>), my decision, not the user's word: <answer>"`. Never quote it as a user
+       ruling, and never write in the run's session log.
 
      Then watch again, from the session moving on:
-     `herdr agent wait <pane> --until working && herdr agent wait <pane> --until blocked`, via
-     Bash `run_in_background`, and handle its return the same way.
-   - **The agent or pane is gone:** the run ended; the desk holds the result. Stop watching.
+     `herdr agent wait <pane> --until working && herdr agent wait <pane> --until blocked --until idle --until done`,
+     via Bash `run_in_background`, and handle its return the same way.
 
    When the desk's coordinator is the launcher, it never answers a worker: it escalates every
    block.
