@@ -118,7 +118,7 @@ func TestStartCreatesWorktreeAndReusesItOnTheNextRun(t *testing.T) {
 	spawnGitRoot(t, root)
 	f := newFixture(t, root, "worktree")
 	task := f.armRoute("Ship the Test", root, "worktree")
-	worktree := filepath.Join(parent, "repo-T"+strconv.Itoa(task.Number))
+	worktree := filepath.Join(root, ".claude", "worktrees", "T"+strconv.Itoa(task.Number))
 	branch := "desk/T" + strconv.Itoa(task.Number) + "-ship-the-test"
 	r := f.runner()
 
@@ -153,7 +153,7 @@ func TestStartChecksOutExistingWorktreeBranchAndUsesBareNumberForEmptySlug(t *te
 
 	f.startRun(f.runner(), task.Number)
 	run := f.run(task.Number)
-	worktree := filepath.Join(parent, "repo-T"+strconv.Itoa(task.Number))
+	worktree := filepath.Join(root, ".claude", "worktrees", "T"+strconv.Itoa(task.Number))
 	if run.State != model.RunRunning || f.herdr.Workspaces()[0].Cwd != worktree || spawnGitBranch(t, worktree) != branch {
 		t.Fatalf("run = %#v; workspaces = %#v; branch = %q, want existing %q checked out at %q", run, f.herdr.Workspaces(), spawnGitBranch(t, worktree), branch, worktree)
 	}

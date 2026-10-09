@@ -88,8 +88,7 @@ func (r *Runner) sweepWorktrees(ctx context.Context) {
 		if t.Isolation != "worktree" || t.Root == "" || slices.ContainsFunc(owed, func(run model.Run) bool { return run.Task == t.Number }) {
 			continue
 		}
-		dir := worktreeDir(t.Root, t.Number)
-		ours, err := isWorkTree(ctx, dir)
+		dir, ours, err := taskWorktree(ctx, t.Root, t.Number)
 		if err != nil {
 			r.logErr("T%d: worktree %s left alone, it could not be checked", t.Number, dir, err)
 			continue

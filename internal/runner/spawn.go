@@ -8,7 +8,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/federbenjamin/herdr-desk/internal/gitcmd"
@@ -152,7 +151,7 @@ func shellQuote(path string) (string, error) {
 	return "'" + path + "'", nil
 }
 
-// workdir returns the folder the worker starts in: a git worktree beside the root for worktree isolation, else
+// workdir returns the folder the worker starts in: a git worktree inside the root for worktree isolation, else
 // the root, made when it is the scratch root and missing.
 func (r *Runner) workdir(ctx context.Context, t model.Task, run model.Run) (string, error) {
 	root := filepath.Clean(run.Root)
@@ -164,9 +163,14 @@ func (r *Runner) workdir(ctx context.Context, t model.Task, run model.Run) (stri
 		}
 		return root, nil
 	}
-	dir := worktreeDir(root, t.Number)
-	if ok, _ := isWorkTree(ctx, dir); ok {
+	if dir, ok, err := taskWorktree(ctx, root, t.Number); err != nil {
+		return "", err
+	} else if ok {
 		return dir, nil
+	}
+	dir := worktreeDir(root, t.Number)
+	if err := hideWorktrees(ctx, root); err != nil {
+		return "", err
 	}
 	branch := fmt.Sprintf("desk/T%d", t.Number)
 	if s := Slug(t.Title); s != "" {
@@ -180,12 +184,6 @@ func (r *Runner) workdir(ctx context.Context, t model.Task, run model.Run) (stri
 		return "", err
 	}
 	return dir, nil
-}
-
-// worktreeDir is task's worktree for worktree isolation in root: <parent of root>/<base of root>-T<task>.
-func worktreeDir(root string, task int) string {
-	root = filepath.Clean(root)
-	return filepath.Join(filepath.Dir(root), filepath.Base(root)+"-T"+strconv.Itoa(task))
 }
 
 // isWorkTree reports whether dir is the top of a git work tree. A missing dir, a dir git says is in no repository,
