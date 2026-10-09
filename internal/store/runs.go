@@ -103,8 +103,8 @@ func (s *Store) newestLiveRun(ctx context.Context, col, value string) (model.Run
 	return runs[len(runs)-1], true, nil
 }
 
-// LeftOpenRuns returns the runs whose pane is owed a close, by id: a kill or a spawn could not close it, or StartRun
-// ended the run while idle.
+// LeftOpenRuns returns the runs whose pane is owed a close, by id: a kill or a spawn could not close it, StartRun
+// ended the run while idle, or its task was set done.
 func (s *Store) LeftOpenRuns(ctx context.Context) ([]model.Run, error) {
 	return readRuns(ctx, s.db, `WHERE left_open = 1`)
 }

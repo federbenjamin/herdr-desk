@@ -25,7 +25,9 @@ learns nothing about it); `runner-off`; `runner-paused`; `no-herdr`; a route it 
 written in one transaction, so starts at once from many processes never pass the cap. A task that already
 has a `starting`, `waiting`, or `running` run prints that run and exits 0. A task whose run is `idle`
 ends that run, closes its pane, and starts a new one; while that pane may still be open (herdr would not close it)
-the new run fails, `run-failed`, and the ticker closes the pane again. Setting the task `done` ends an idle run too. An agent that sets
+the new run fails, `run-failed`, and the ticker closes the pane again. Setting the task `done` ends an idle run too,
+and marks the pane of each of its ended runs owed a close: a worker's pane stays open after its hand-back, and the
+ticker closes it before it removes the worktree it sits in. An agent that sets
 `ready` is refused unless `start_runs` is `auto`.
 
 **States.** A run is `starting`, `waiting`, `running`, or `idle` while live, and `ended`, `failed`, or
@@ -90,13 +92,15 @@ ticker does jobs 1 to 3:
    herdr never delivered;
 2. starts the oldest `waiting` run whose root is free and whose slot is open, and fails a run left
    `starting` for over a minute;
-3. closes again a pane a kill could not close, and blocks a task left `started` after its newest run ended.
+3. closes each pane owed a close (one a kill could not close, an idle run's that `run start` replaced, a `done`
+   task's), and blocks a task left `started` after its newest run ended.
 
 Jobs 4 and 5 run on every tick, with or without a live run, and never ask herdr:
 
 4. removes the first-message file of every run that ended, failed, or was killed (a live run's file stays);
-5. removes the worktree of a done task when it is clean and no run is live (a plain worktree remove, never
-   forced, since a dirty tree can hold unpushed work). A dirty one stays, with one note on the task naming it,
+5. removes the worktree of a done task when it is clean, no run is live, and no pane of its runs is owed a close
+   (a plain worktree remove, never forced, since a dirty tree can hold unpushed work). Job 3 closes those panes
+   first, so a pane that will not close keeps the tree. A dirty one stays, with one note on the task naming it,
    written once per `done`. The branch `desk/T<n>-<slug>` is left as it is.
 
 `herdr-desk runs` and `herdr-desk context` check the runs once when called; the board's refresh does not.

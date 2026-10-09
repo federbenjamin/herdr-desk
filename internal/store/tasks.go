@@ -255,15 +255,21 @@ func (s *Store) setWrite(ctx context.Context, a Actor, number int, p model.Patch
 	}
 }
 
-// endRuns is the run-ending rule. A status write of done, by anyone, ends the task's live run in any state. A
-// review or blocked written by the run's own worker (a.Run) ends that run, even when the task already holds the
-// status; SetTask does not apply it to a blocked written with a question. No other status write touches a run.
+// endRuns is the run-ending rule. A status write of done, by anyone, ends the task's live run in any state, and marks
+// the pane of every ended run of the task owed a close (LeftOpenRuns): a done task's worker has nothing left to do,
+// and its worktree is removed once no pane is owed. A review or blocked written by the run's own worker (a.Run) ends
+// that run, even when the task already holds the status; SetTask does not apply it to a blocked written with a
+// question. No other status write touches a run.
 func endRuns(ctx context.Context, tx *sql.Tx, a Actor, task int, st *model.Status, ts time.Time) error {
 	switch {
 	case st == nil:
 		return nil
 	case *st == model.StatusDone:
-		return endLiveRuns(ctx, tx, ts, `task = ?`, task)
+		if err := endLiveRuns(ctx, tx, ts, `task = ?`, task); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `UPDATE runs SET left_open = 1 WHERE task = ? AND pane != '' AND state = ?`, task, model.RunEnded)
+		return err
 	case a.Run != 0 && (*st == model.StatusReview || *st == model.StatusBlocked):
 		return endLiveRuns(ctx, tx, ts, `id = ? AND task = ?`, a.Run, task)
 	}

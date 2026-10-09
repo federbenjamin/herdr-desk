@@ -138,3 +138,43 @@ func TestHandBackGatesStatusAndRefusesAStaleRunWithoutWrites(t *testing.T) {
 		t.Fatalf("current run after stale HandBack = (%#v, %t, %v), want unchanged second run %#v", current, ok, err, second)
 	}
 }
+
+func TestSetTaskDoneOwesAClosedPaneToEveryEndedRunWithOne(t *testing.T) {
+	ctx := context.Background()
+	st := openStore(t, store.Options{})
+	task := mustAdd(t, st, "done after review", model.StatusReady, "")
+	first, err := st.StartRun(ctx, task.Number, startRoute, store.RunCaps{Slots: 2, PerDay: 1000})
+	if err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	if ok, err := st.UpdateRun(ctx, first.ID, model.RunStarting, store.RunUpdate{State: model.RunRunning, Pane: "w1:p1"}); err != nil || !ok {
+		t.Fatalf("run it = (%t, %v)", ok, err)
+	}
+	review := model.StatusReview
+	if _, err := st.SetTask(ctx, store.Actor{Session: "worker", Run: first.ID}, task.Number, model.Patch{Status: &review}); err != nil {
+		t.Fatalf("worker hands back: %v", err)
+	}
+	second, err := st.StartRun(ctx, task.Number, startRoute, store.RunCaps{Slots: 2, PerDay: 1000})
+	if err != nil {
+		t.Fatalf("start second run: %v", err)
+	}
+	if ok, err := st.UpdateRun(ctx, second.ID, model.RunStarting, store.RunUpdate{State: model.RunRunning, Pane: "w2:p1"}); err != nil || !ok {
+		t.Fatalf("run the second = (%t, %v)", ok, err)
+	}
+	other := mustAdd(t, st, "another task", model.StatusReady, "")
+	if _, err := st.StartRun(ctx, other.Number, startRoute, store.RunCaps{Slots: 2, PerDay: 1000}); err != nil {
+		t.Fatalf("start the other task's run: %v", err)
+	}
+
+	done := model.StatusDone
+	if _, err := st.SetTask(ctx, store.Actor{}, task.Number, model.Patch{Status: &done}); err != nil {
+		t.Fatalf("set done: %v", err)
+	}
+	owed, err := st.LeftOpenRuns(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(owed) != 2 || owed[0].ID != first.ID || owed[1].ID != second.ID || owed[1].State != model.RunEnded {
+		t.Fatalf("runs owed a close after done = %#v, want runs %d and %d, both ended", owed, first.ID, second.ID)
+	}
+}
