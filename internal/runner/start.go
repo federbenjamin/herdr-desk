@@ -55,7 +55,7 @@ func (r *Runner) Start(ctx context.Context, a store.Actor, task int, route store
 	if root, _ := FindRoot(roots, resolved.Root); deferred && !root.AgentsMayStart {
 		return model.Run{}, &model.Refusal{Code: model.CodeNotAllowed, Msg: "only a person or the desk's coordinator may start a run"}
 	}
-	run, err := r.o.Store.StartRun(ctx, task, resolved, store.RunCaps{Slots: c.Runner.Cap, PerDay: c.Runner.MaxRunsPerDay, Since: r.midnight()})
+	run, err := r.o.Store.StartRun(ctx, a, task, resolved, store.RunCaps{Slots: c.Runner.Cap, PerDay: c.Runner.MaxRunsPerDay, Since: r.midnight()})
 	if errors.Is(err, store.ErrRunLive) {
 		return run, nil
 	}

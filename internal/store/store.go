@@ -168,17 +168,20 @@ func private(path string) error {
 // Close closes the database.
 func (s *Store) Close() error { return s.db.Close() }
 
-// Actor is who makes a write. A non-empty Session means an agent.
+// Actor is who makes a write. A non-empty Session means an agent; a Run with no Session means the runner.
 type Actor struct {
 	Session string     `json:"session,omitempty"`
 	Run     int64      `json:"run,omitempty"`
 	TS      *time.Time `json:"ts,omitempty"` // set only by an outbox replay; nil → Options.Now()
 }
 
-// Who is agent when the actor names a session, else user.
+// Who is agent when the actor names a session, runner when it names only a run, else user.
 func (a Actor) Who() model.Who {
-	if a.Session != "" {
+	switch {
+	case a.Session != "":
 		return model.WhoAgent
+	case a.Run != 0:
+		return model.WhoRunner
 	}
 	return model.WhoUser
 }

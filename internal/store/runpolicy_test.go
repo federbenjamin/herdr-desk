@@ -188,7 +188,7 @@ func TestRunMethodsReturnTheStoreErrorOnceClosed(t *testing.T) {
 	}
 	for name, call := range map[string]func() error{
 		"StartRun": func() error {
-			_, err := st.StartRun(ctx, 1, policyRoute, store.RunCaps{Slots: 1, PerDay: 1000})
+			_, err := st.StartRun(ctx, store.Actor{}, 1, policyRoute, store.RunCaps{Slots: 1, PerDay: 1000})
 			return err
 		},
 		"UpdateRun":  func() error { _, err := st.UpdateRun(ctx, 1, model.RunStarting, store.RunUpdate{}); return err },
@@ -468,7 +468,7 @@ func startRunPolicy(t *testing.T, st *store.Store, title string) (model.Task, mo
 func startRunPolicyOnTask(t *testing.T, st *store.Store, task int) (model.Run, error) {
 	t.Helper()
 	// A cap no test reaches, so every run starts.
-	return st.StartRun(context.Background(), task, policyRoute, store.RunCaps{Slots: 100, PerDay: 1000})
+	return st.StartRun(context.Background(), store.Actor{}, task, policyRoute, store.RunCaps{Slots: 100, PerDay: 1000})
 }
 
 func assertRunPolicyRefusal(t *testing.T, err error, want string) {

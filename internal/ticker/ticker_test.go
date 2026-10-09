@@ -236,7 +236,7 @@ func TestTickReconcilesALiveRunWithTheRunnerOff(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add task: %v", err)
 	}
-	run, err := st.StartRun(ctx, task.Number, store.RunRoute{Root: t.TempDir(), Isolation: "self"}, store.RunCaps{Slots: 1, PerDay: 1000})
+	run, err := st.StartRun(ctx, store.Actor{}, task.Number, store.RunRoute{Root: t.TempDir(), Isolation: "self"}, store.RunCaps{Slots: 1, PerDay: 1000})
 	if err != nil {
 		t.Fatalf("start run: %v", err)
 	}

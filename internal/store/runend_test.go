@@ -26,7 +26,7 @@ func TestSetTaskDoneEndsRunsAndOtherPersonStatusesLeaveThemLive(t *testing.T) {
 			if err != nil {
 				t.Fatalf("add task: %v", err)
 			}
-			run, err := st.StartRun(ctx, task.Number, startRoute, store.RunCaps{Slots: 1, PerDay: 1000})
+			run, err := st.StartRun(ctx, store.Actor{}, task.Number, startRoute, store.RunCaps{Slots: 1, PerDay: 1000})
 			if err != nil {
 				t.Fatalf("start run: %v", err)
 			}
@@ -56,7 +56,7 @@ func TestSetTaskWorkerRepeatedBlockedEndsIdleRunAndReleasesInPlaceRoot(t *testin
 		t.Fatalf("add task: %v", err)
 	}
 	route := store.RunRoute{Root: "/repos/desk", Isolation: "in-place", Model: "model-a"}
-	run, err := st.StartRun(ctx, task.Number, route, store.RunCaps{Slots: 1, PerDay: 1000})
+	run, err := st.StartRun(ctx, store.Actor{}, task.Number, route, store.RunCaps{Slots: 1, PerDay: 1000})
 	if err != nil {
 		t.Fatalf("start run: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestSetTaskWorkerRepeatedBlockedEndsIdleRunAndReleasesInPlaceRoot(t *testin
 		t.Fatalf("run after worker hand-back = (%#v, %t, %v), want ended with a timestamp", got, ok, err)
 	}
 
-	next, err := st.StartRun(ctx, task.Number, route, store.RunCaps{Slots: 1, PerDay: 1000})
+	next, err := st.StartRun(ctx, store.Actor{}, task.Number, route, store.RunCaps{Slots: 1, PerDay: 1000})
 	if err != nil || next.State != model.RunStarting || next.ID == run.ID {
 		t.Fatalf("start after idle hand-back = (%#v, %v), want a new starting run", next, err)
 	}
@@ -97,7 +97,7 @@ func TestHandBackGatesStatusAndRefusesAStaleRunWithoutWrites(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add task: %v", err)
 	}
-	run, err := st.StartRun(ctx, task.Number, startRoute, store.RunCaps{Slots: 1, PerDay: 1000})
+	run, err := st.StartRun(ctx, store.Actor{}, task.Number, startRoute, store.RunCaps{Slots: 1, PerDay: 1000})
 	if err != nil {
 		t.Fatalf("start run: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestHandBackGatesStatusAndRefusesAStaleRunWithoutWrites(t *testing.T) {
 	if err != nil || !ok || first.State != model.RunEnded {
 		t.Fatalf("first run after HandBack = (%#v, %t, %v), want ended", first, ok, err)
 	}
-	second, err := st.StartRun(ctx, task.Number, startRoute, store.RunCaps{Slots: 1, PerDay: 1000})
+	second, err := st.StartRun(ctx, store.Actor{}, task.Number, startRoute, store.RunCaps{Slots: 1, PerDay: 1000})
 	if err != nil {
 		t.Fatalf("start second run: %v", err)
 	}

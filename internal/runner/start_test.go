@@ -19,7 +19,7 @@ import (
 func stBreak(f *fixture, task int) {
 	f.t.Helper()
 	f.config.Runner.MaxRunsPerDay = 1
-	if _, err := f.store.StartRun(f.ctx, task, store.RunRoute{Root: f.root, Isolation: "self"}, store.RunCaps{Slots: 3, PerDay: 1000}); err != nil {
+	if _, err := f.store.StartRun(f.ctx, store.Actor{}, task, store.RunRoute{Root: f.root, Isolation: "self"}, store.RunCaps{Slots: 3, PerDay: 1000}); err != nil {
 		f.t.Fatalf("spend the day's cap: %v", err)
 	}
 }
@@ -504,7 +504,7 @@ func TestJobsStartsWhatWaitsAndFailsStaleStartingRunsInOnePass(t *testing.T) {
 	// A run another process left starting: the spawn happens within one call, so a minute on it is dead.
 	stuck := f.armThread("stuck", "agent")
 	f.config.Runner.Cap = 5
-	if _, err := f.store.StartRun(f.ctx, stuck.Number, store.RunRoute{Root: f.root, Isolation: "self"}, store.RunCaps{Slots: 5, PerDay: 1000}); err != nil {
+	if _, err := f.store.StartRun(f.ctx, store.Actor{}, stuck.Number, store.RunRoute{Root: f.root, Isolation: "self"}, store.RunCaps{Slots: 5, PerDay: 1000}); err != nil {
 		t.Fatalf("leave a run starting: %v", err)
 	}
 	f.now = f.now.Add(2 * time.Minute)

@@ -23,7 +23,7 @@ func TestStartRunCreatesAStartingRunAndMarksTaskStartedWithItsRoute(t *testing.T
 		t.Fatalf("add ready task: %v", err)
 	}
 
-	run, err := st.StartRun(ctx, task.Number, startRoute, store.RunCaps{Slots: 100, PerDay: 1000})
+	run, err := st.StartRun(ctx, store.Actor{}, task.Number, startRoute, store.RunCaps{Slots: 100, PerDay: 1000})
 	if err != nil {
 		t.Fatalf("StartRun() error = %v", err)
 	}
@@ -81,7 +81,7 @@ func TestStartRunRefusesDoneArchivedAndUnknownTasks(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			before := eventCount(t, st)
-			_, err := st.StartRun(ctx, tc.task, startRoute, store.RunCaps{Slots: 100, PerDay: 1000})
+			_, err := st.StartRun(ctx, store.Actor{}, tc.task, startRoute, store.RunCaps{Slots: 100, PerDay: 1000})
 			if got := refusalCode(t, err); got != tc.code {
 				t.Errorf("StartRun(T%d) refusal = %q, want %q", tc.task, got, tc.code)
 			}
@@ -109,7 +109,7 @@ func TestCurrentRunReturnsTheTaskRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add ready task: %v", err)
 	}
-	want, err := st.StartRun(ctx, task.Number, startRoute, store.RunCaps{Slots: 100, PerDay: 1000})
+	want, err := st.StartRun(ctx, store.Actor{}, task.Number, startRoute, store.RunCaps{Slots: 100, PerDay: 1000})
 	if err != nil {
 		t.Fatalf("StartRun() error = %v", err)
 	}
@@ -129,14 +129,14 @@ func TestCurrentRunReturnsTheNewestRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add ready task: %v", err)
 	}
-	first, err := st.StartRun(ctx, task.Number, startRoute, store.RunCaps{Slots: 100, PerDay: 1000})
+	first, err := st.StartRun(ctx, store.Actor{}, task.Number, startRoute, store.RunCaps{Slots: 100, PerDay: 1000})
 	if err != nil {
 		t.Fatalf("start first run: %v", err)
 	}
 	if _, err := st.UpdateRun(ctx, first.ID, model.RunStarting, store.RunUpdate{State: model.RunEnded}); err != nil {
 		t.Fatalf("end first run: %v", err)
 	}
-	want, err := st.StartRun(ctx, task.Number, startRoute, store.RunCaps{Slots: 100, PerDay: 1000})
+	want, err := st.StartRun(ctx, store.Actor{}, task.Number, startRoute, store.RunCaps{Slots: 100, PerDay: 1000})
 	if err != nil {
 		t.Fatalf("start second run: %v", err)
 	}
@@ -149,16 +149,22 @@ func TestCurrentRunReturnsTheNewestRun(t *testing.T) {
 	}
 }
 
-func TestRunWroteRequiresAnEventWithBothRunAndSession(t *testing.T) {
+func TestRunWroteRequiresAnEventWithTheRunAndItsOwnSession(t *testing.T) {
 	ctx := context.Background()
 	st := openStore(t, store.Options{})
 	task, err := st.AddTask(ctx, store.Actor{}, store.AddTaskInput{TaskData: model.TaskData{Title: "ready", Status: model.StatusReady}})
 	if err != nil {
 		t.Fatalf("add ready task: %v", err)
 	}
-	run, err := st.StartRun(ctx, task.Number, startRoute, store.RunCaps{Slots: 100, PerDay: 1000})
+	run, err := st.StartRun(ctx, store.Actor{Session: "launcher-session"}, task.Number, startRoute, store.RunCaps{Slots: 100, PerDay: 1000})
 	if err != nil {
 		t.Fatalf("StartRun() error = %v", err)
+	}
+	if ok, err := st.UpdateRun(ctx, run.ID, model.RunStarting, store.RunUpdate{Session: "worker-session"}); err != nil || !ok {
+		t.Fatalf("give the run its session = (%t, %v)", ok, err)
+	}
+	if wrote, err := st.RunWrote(ctx, run.ID); err != nil || wrote {
+		t.Fatalf("RunWrote() after only the launcher's start = (%t, %v), want false", wrote, err)
 	}
 	if _, err := st.Note(ctx, store.Actor{Run: run.ID}, store.NoteInput{Task: task.Number, NoteData: model.NoteData{Text: "runner update"}}); err != nil {
 		t.Fatalf("write runner note: %v", err)
@@ -179,5 +185,45 @@ func TestRunWroteRequiresAnEventWithBothRunAndSession(t *testing.T) {
 	}
 	if !wrote {
 		t.Error("RunWrote() after a session event with the run id = false, want true")
+	}
+}
+
+func TestStartAndHandBackWritesNameWhoMadeThem(t *testing.T) {
+	ctx := context.Background()
+	st := openStore(t, store.Options{})
+	for _, tc := range []struct {
+		name    string
+		starter store.Actor
+		want    model.Who
+	}{
+		{"an agent session starts the run", store.Actor{Session: "launcher-session"}, model.WhoAgent},
+		{"a person starts the run", store.Actor{}, model.WhoUser},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			task := mustAdd(t, st, tc.name, model.StatusReady, "")
+			run, err := st.StartRun(ctx, tc.starter, task.Number, startRoute, store.RunCaps{Slots: 100, PerDay: 1000})
+			if err != nil {
+				t.Fatalf("StartRun() error = %v", err)
+			}
+			if _, claimed, err := st.HandBack(ctx, run, store.HandBack{From: model.RunStarting, To: model.RunEnded,
+				Status: model.StatusReview, Tags: []string{model.TagRunner}, Note: "the pane closed"}); err != nil || !claimed {
+				t.Fatalf("HandBack() = (%t, %v)", claimed, err)
+			}
+			d, err := st.GetTask(ctx, task.Number)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got []model.Who
+			for _, e := range d.History[1:] {
+				got = append(got, e.Who)
+			}
+			want := []model.Who{tc.want, model.WhoRunner, model.WhoRunner}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("writers after the task's own = %q, want %q (the start, then the hand-back's note and status)", got, want)
+			}
+			if start := d.History[1]; start.Session != tc.starter.Session || start.Run != run.ID {
+				t.Fatalf("start event = session %q run %d, want session %q run %d", start.Session, start.Run, tc.starter.Session, run.ID)
+			}
+		})
 	}
 }

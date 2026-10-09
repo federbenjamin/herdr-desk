@@ -185,7 +185,7 @@ func TestW1StartRunStoresRouteFirstMessageWithoutChangingTheTask(t *testing.T) {
 	message := "Begin with {" + model.TaskFile + "}."
 	route := store.RunRoute{Root: "/repo", Isolation: "worktree", Model: "model-a", FirstMessage: message}
 
-	run, err := st.StartRun(ctx, task.Number, route, store.RunCaps{Slots: 1, PerDay: 1000})
+	run, err := st.StartRun(ctx, store.Actor{}, task.Number, route, store.RunCaps{Slots: 1, PerDay: 1000})
 	if err != nil {
 		t.Fatalf("StartRun() error = %v", err)
 	}

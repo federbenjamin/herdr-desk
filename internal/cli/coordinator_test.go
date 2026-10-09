@@ -493,7 +493,7 @@ func TestContextReconcilesOnceSoAVanishedPaneIsNotALiveRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	run, err := st.StartRun(context.Background(), task, store.RunRoute{Root: t.TempDir(), Isolation: "in-place", Model: "m"}, store.RunCaps{Slots: 5, PerDay: 1000})
+	run, err := st.StartRun(context.Background(), store.Actor{}, task, store.RunRoute{Root: t.TempDir(), Isolation: "in-place", Model: "m"}, store.RunCaps{Slots: 5, PerDay: 1000})
 	if err == nil {
 		_, err = st.UpdateRun(context.Background(), run.ID, run.State, store.RunUpdate{State: model.RunRunning, Session: "worker-session", Workspace: "w99", Pane: "p99"})
 	}

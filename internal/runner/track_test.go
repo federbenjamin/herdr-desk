@@ -94,7 +94,7 @@ func TestTrackLeavesAnOlderRunAloneWhenANewerRunWinsTheTask(t *testing.T) {
 			race.err = fmt.Errorf("end first run = (%t, %v)", changed, err)
 			return
 		}
-		_, race.err = f.store.StartRun(f.ctx, task.Number, store.RunRoute{Root: f.root, Isolation: "self", Model: "model-a"}, store.RunCaps{Slots: f.config.Runner.Cap, PerDay: 1000})
+		_, race.err = f.store.StartRun(f.ctx, store.Actor{}, task.Number, store.RunRoute{Root: f.root, Isolation: "self", Model: "model-a"}, store.RunCaps{Slots: f.config.Runner.Cap, PerDay: 1000})
 	}
 	r := f.runnerWith(race)
 	f.herdr.Set(old.Pane, old.Session, "idle")

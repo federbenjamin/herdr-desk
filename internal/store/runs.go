@@ -154,10 +154,12 @@ func runsSince(ctx context.Context, q querier, t time.Time) (int, error) {
 	return n, rows.Err()
 }
 
-// RunWrote reports whether any event carries this run's id and a session: whether its worker wrote anything.
+// RunWrote reports whether any event carries this run's id and the run's own session: whether its worker wrote
+// anything. The start's own event carries the run's id and the session of whoever started it, never the run's.
 func (s *Store) RunWrote(ctx context.Context, run int64) (bool, error) {
 	var wrote bool
-	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM events WHERE run = ? AND session != '')`, run).Scan(&wrote)
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM events e JOIN runs r ON r.id = e.run
+		WHERE e.run = ? AND e.session != '' AND e.session = r.session)`, run).Scan(&wrote)
 	return wrote, err
 }
 
@@ -224,14 +226,15 @@ type RunCaps struct {
 }
 
 // StartRun creates the task's run on the route and sets the task started with the route's root, isolation, and model,
-// in one transaction of two writes: the run insert, then the task's set event, which carries the run's id and no
-// session. The route's FirstMessage is recorded on the run only, so a root's template never becomes the task's
+// in one transaction of two writes: the run insert, then the task's set event, which carries the run's id and the
+// session of a, who started it (none for a person). The route's FirstMessage is recorded on the run only, so a root's template never becomes the task's
 // and the tiers keep their order on every later start. The run is starting
 // when slotOpen allows it under caps.Slots, else waiting. The task must exist, be neither archived nor done, and have
 // no starting, waiting, or running run (ErrRunLive, with that run). Then, while caps.PerDay runs started at or after
 // caps.Since, the start is refused cap-reached and writes nothing. An idle run of the task is ended in the same
 // transaction and, when it has a pane, marked left_open: its pane is owed a close (LeftOpenRuns).
-func (s *Store) StartRun(ctx context.Context, task int, route RunRoute, caps RunCaps) (model.Run, error) {
+func (s *Store) StartRun(ctx context.Context, a Actor, task int, route RunRoute, caps RunCaps) (model.Run, error) {
+	starter := Actor{Session: a.Session}
 	var run, live model.Run
 	insert := write{
 		scan: []string{route.FirstMessage},
@@ -300,17 +303,17 @@ func (s *Store) StartRun(ctx context.Context, task int, route RunRoute, caps Run
 	}
 	started := model.StatusStarted
 	var after model.Task
-	set := s.setWrite(ctx, Actor{}, task, model.Patch{Status: &started, Root: &route.Root, Isolation: &route.Isolation, Model: &route.Model},
+	set := s.setWrite(ctx, starter, task, model.Patch{Status: &started, Root: &route.Root, Isolation: &route.Isolation, Model: &route.Model},
 		"", false, &after)
 	apply := set.apply
 	set.apply = func(tx *sql.Tx, ev model.Event) error {
-		// The set event is inserted with the actor's run, none, so it learns the new run's id here.
+		// The set event is inserted with the starter's run, none, so it learns the new run's id here.
 		if _, err := tx.ExecContext(ctx, `UPDATE events SET run = ? WHERE id = ?`, run.ID, ev.ID); err != nil {
 			return err
 		}
 		return apply(tx, ev)
 	}
-	_, err := s.append(ctx, Actor{}, insert, set)
+	_, err := s.append(ctx, starter, insert, set)
 	if errors.Is(err, ErrRunLive) {
 		return live, err
 	}
