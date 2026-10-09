@@ -49,6 +49,11 @@ watches the run. It never briefs, builds, or answers for the build what the buil
    - **The run is listed:** read the screen (`herdr agent read <pane> --lines 30`) and
      `herdr-desk show T<n>`. A `blocked` task with a note naming the pane is a question; a turn
      that ended with no question needs nothing, so watch again.
+     - **Claude's folder-trust question** ("Is this a project you created or one you trust?", the
+       pane `blocked` before /build starts): Claude Code keys trust on the main checkout's root, so
+       it asks only when `claude` has never been trusted in `<repo>`. Trusting a folder is the
+       user's choice, never yours: escalate it as below, with the fix in the line (answer it in
+       the pane, or run `claude` once in `<repo>`). Either trusts every later worktree of the repo.
      - **Answer** what the request file or the rules already settle (contract rule 5), and tell
        the session the answer is yours, not the user's: `herdr agent send-keys <pane> <keys>`
        for a picker (`down`, `enter`; read the screen again, since a picker can ask for a second
