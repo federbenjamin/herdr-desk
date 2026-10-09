@@ -54,10 +54,11 @@ type Runner struct {
 	MaxRunMinutes int `toml:"max_run_minutes,omitempty"`
 }
 
-// Root: written by `herdr-desk roots`; read by run start's route. FirstMessage is written by hand and is the last tier
-// of a run's first_message, after run start's flag and the task's own field: when a run has one, it is the worker's
-// {message}, with {task_file} replaced by the path of a file that holds the first message the worker would otherwise
-// get. AgentsMayStart is written by hand: it lets agent sessions other than the coordinator start runs in this root.
+// Root: written by `herdr-desk roots` or by hand; read by run start's route. FirstMessage is the last tier of a run's
+// first_message, after run start's flag and the task's own field: when a run has one, it is the worker's {message},
+// with {task_file} replaced by the path of a file that holds the first message the worker would otherwise get.
+// AgentsMayStart lets agent sessions other than the coordinator start runs in this root; `roots add` lets only a
+// person set it.
 type Root struct {
 	Path           string `toml:"path"`
 	About          string `toml:"about"`
@@ -312,6 +313,9 @@ func (c *Config) AddRoot(r Root) error {
 	}
 	if !model.ValidIsolation(r.Isolation) {
 		return fmt.Errorf("isolation must be self, worktree, or in-place, not %q", r.Isolation)
+	}
+	if !model.ValidFirstMessage(r.FirstMessage) {
+		return fmt.Errorf("first_message must hold {%s}, the path of the task's file, not %q", model.TaskFile, r.FirstMessage)
 	}
 	r.Path = filepath.Clean(r.Path)
 	for i := range c.Roots {
